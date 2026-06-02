@@ -51,7 +51,7 @@
 | GET | `/journal?from=&to=` | 投資日記の取得 |
 | GET | `/proposals?status=` | AI 提案の取得（pending/approved/rejected）|
 | POST | `/proposals/{id}/approve` / `/reject` | 提案の承認・却下 |
-| POST | `/chat` | 相談チャット（軸2）。ストリーミング対応は実装時に決定 |
+| POST | `/chat` | 相談チャット（軸2）。body に **画面コンテキスト** `context: { page, focus?: { type, code } }` を含む（軽量ヒント・**数値は含めない**＝[ADR-025](decisions.md)・[advisor.md §6.1](advisor.md)・[screens.md §5](screens.md)）。ストリーミング対応は実装時に決定 |
 
 ## 5. 銘柄ドシエ・watchlist（Phase 4〜）
 
@@ -73,5 +73,6 @@
 ## 7. 未確定（実装時に OpenAPI で確定）
 
 - 各エンドポイントのリクエスト/レスポンスの詳細スキーマ。
-- `/chat` のストリーミング（SSE）有無とメッセージ形式。
+- `/chat` のストリーミング（SSE）有無とメッセージ形式。`context`（画面コンテキスト）の詳細スキーマも実装時に OpenAPI で確定。
+- `GET /policy` のレスポンスで構造化コアと `rationale`（自由文）を分けて返す形（画面で見せ方が違うため＝[screens.md §3](screens.md)）。
 - ページネーション方式（`/quotes` `/journal` 等）。
