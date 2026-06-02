@@ -102,6 +102,20 @@ docker compose up              # backend(:8000) ＋ frontend(:3000) を同時起
 
 > 秘密情報（J-Quants / LLM のキー）は **backend/.env のみ**に置く（frontend には渡さない＝[ADR-005](docs/decisions.md)）。frontend が叩く API の場所は Compose 内で `NEXT_PUBLIC_API_BASE_URL` を渡している。LLM キーが無くても Phase 0（J-Quants のみ）は起動する。
 
+**データ投入（Phase 0）**: 起動しただけでは DB が空。数銘柄の日足を取得して SQLite に入れる（CLI バックフィル）。Compose の DB はリポジトリ直下 `data/assetvane.db`（named volume）なので、**コンテナ内で**実行する。
+
+```bash
+docker compose exec backend uv run python -m app.scripts.backfill   # 既定 3 銘柄（7203/6758/9984）
+```
+
+これで `/stocks` と銘柄詳細の株価チャートにデータが出る。再実行しても重複しない（冪等 UPSERT＝[ADR-002](docs/decisions.md)）。Free は 12 週間遅延なので最新は約 3 か月前まで。
+
+> ⚠️ **依存を足したときの落とし穴**: `node_modules` / `.venv` はコンテナの**匿名ボリュームにイメージビルド時へ焼かれる**ため、`package.json` / `pyproject.toml` に依存を足しても起動中のコンテナには入らない（`Module not found` 等）。ソースは bind mount で hot reload されるが、**依存だけは別**。次のどちらかで反映する。
+> - 速い: `docker compose exec frontend npm install`（or `backend uv sync`）→ `docker compose restart <svc>`
+> - 確実: `docker compose up --build -V`（`-V`＝`--renew-anon-volumes`。ただの `--build` だと古い匿名ボリュームが残って効かない）
+>
+> lockfile（`package-lock.json` / `uv.lock`）は必ずコミットすること。デプロイ時のイメージビルドが `npm ci` / `uv sync` で**同じ依存を再現**する（dev は exec install で回し、本番はビルドして Pi は pull だけ＝[ADR-021/006](docs/decisions.md)）。
+
 ### 3. 代替: ホスト直で起動（2 プロセス）
 
 backend の依存は **uv 管理**（`pip`/`requirements.txt` は使わない）。

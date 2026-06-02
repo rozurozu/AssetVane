@@ -69,12 +69,14 @@ export const journal = {
 export const trendPath =
   "M0,96 L60,90 L120,98 L180,76 L240,84 L300,60 L360,68 L420,48 L480,56 L540,38 L600,44 L660,24 L720,20";
 
+// href があるものは遷移可能（Next Link）。無いものは未投入 Phase（非活性）。
+// アクティブ表示は Sidebar が usePathname() で判定する（ハードコードしない）。
 export const nav = [
   {
     group: null,
     items: [
-      { label: "Dashboard", icon: "▦", active: true },
-      { label: "Stocks", icon: "≣" },
+      { label: "Dashboard", icon: "▦", href: "/" },
+      { label: "Stocks", icon: "≣", href: "/stocks" },
     ],
   },
   {

@@ -1,11 +1,12 @@
 "use client";
 
+import { API_BASE } from "@/lib/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 // 相談チャットAI（軸2）の常駐フローティング UI（ADR-024）。
 // 実 LLM 配線版（最小）。会話はクライアント保持（ステートレスなサーバへ毎ターン messages を送る）。
 // 永続化（localStorage / DB）・ストリーミング・画面コンテキスト送信は後続（下の TODO 参照）。
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API = API_BASE;
 
 type Msg = { role: "user" | "assistant"; content: string };
 

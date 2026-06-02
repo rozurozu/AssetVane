@@ -79,6 +79,8 @@ curl -G https://api.jquants.com/v2/equities/bars/daily \
 2. **V2 の財務詳細（BS/PL/CF）の提供範囲**: V2 では `/v2/fins/summary` に統一。V1 で Premium 限定だった詳細財務が V2 で別エンドポイントとして残るか不明。
 3. **個別 ETF（1617〜1633）の名指し提供**: 「全銘柄対象」記述からは取得可だが、実機で 1 件確認推奨。
 4. **各エンドポイントの実レスポンスのフィールド名**: `data-model.md` の列名は設計案。実際の JSON キー名は実機で確認して合わせる。
+   - ✅ **確認済み（2026-06）**: `master` と `bars/daily`。**V2 は略記キー**（`O/H/L/C/Vo/Va/AdjC/AdjFactor`、`CoName/S33/S17/Mkt` 等）でエンベロープは `{"data":[...]}`（`pagination_key` 付き）。対応表は [data-model.md](data-model.md) の各テーブル節。**ネットの V1 記事はフルネーム（`Open/CompanyName`…）なので流用不可**。
+   - ⬜ 未確認: `fins/summary`（財務）。Phase 2 で確認する。
 
 ---
 

@@ -8,6 +8,8 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic-settings>=2.6",
     "openai>=2.40.0",
+    "sqlalchemy>=2.0",
+    "httpx>=0.27",
 ]
 
 # アプリケーション（ライブラリではない）なので非パッケージモードで扱う。
@@ -27,6 +29,10 @@ target-version = "py312"
 [tool.ruff.lint]
 # E/F(pyflakes/pycodestyle), I(isort), UP(pyupgrade), B(bugbear) を基本に。
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI は Depends()/Query() を既定引数に置くのが定石。B008（既定引数での関数呼び出し）の対象外にする。
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 
 [tool.pyright]
 include = ["app"]
