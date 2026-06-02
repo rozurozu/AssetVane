@@ -10,10 +10,15 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+from alembic.config import Config
 from sqlalchemy import Connection, Engine, create_engine, event, text
 
+from alembic import command
 from app.config import settings
 from app.db.schema import metadata
+
+# backend/ ディレクトリ（alembic/ と alembic.ini の置き場）。engine.py = backend/app/db/engine.py。
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 _engine: Engine | None = None
 
@@ -50,12 +55,36 @@ def get_engine() -> Engine:
     return _engine
 
 
-def init_db() -> None:
-    """スキーマを作成する（冪等＝CREATE TABLE IF NOT EXISTS 相当）。
+def reset_engine() -> None:
+    """テスト用: Engine キャッシュを破棄する（settings.database_path を差し替えた後に呼ぶ）。"""
+    global _engine
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
 
-    Phase 0 は create_all で足りる。スキーマが育って差分管理が要る段になったら
-    Alembic を同じ metadata の上に導入する（計画の「移行規律」）。
+
+def _alembic_config() -> Config:
+    """プログラムから alembic を叩くための設定（script_location を絶対パスで固定）。
+
+    接続 URL/エンジンは alembic/env.py が settings・db.engine から導出する（二重管理しない）。
     """
+    cfg = Config()
+    cfg.set_main_option("script_location", str(_BACKEND_DIR / "alembic"))
+    return cfg
+
+
+def init_db() -> None:
+    """スキーマを最新化する（`alembic upgrade head`）。
+
+    baseline マイグレーションは `metadata.create_all` 方式なので、既に create_all で作られた
+    既存 DB に対して upgrade しても**非破壊**（CREATE は IF NOT EXISTS 相当）で alembic_version を
+    付与でき、fresh DB なら全テーブルを作る。スキーマ変更は autogenerate で別リビジョンに刻む。
+    """
+    command.upgrade(_alembic_config(), "head")
+
+
+def create_schema() -> None:
+    """テスト用: マイグレーションを介さず metadata から直接スキーマを作る（高速・分離）。"""
     metadata.create_all(get_engine())
 
 
