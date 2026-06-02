@@ -1,0 +1,43 @@
+# AssetVane — 開発/本番の土台（ADR-021）。今回は dev を通すまで。
+# SQLite はファイルなので DB コンテナは作らず ./data を bind mount で永続化（ADR-002/021）。
+# uv / npm はすべてコンテナ内で動かし、ホストに node_modules/.venv を作らない。
+#
+# ポートはホスト側だけ環境変数で上書き可能（コンテナ内は固定）。衝突時は
+#   FRONTEND_PORT=3100 BACKEND_PORT=8100 docker compose up
+# のように起動する。既定は 3000 / 8000（どちらもホストで空いていることを確認済み）。
+
+services:
+  backend:
+    build: ./backend
+    # dev は --reload。ソースはバインドマウントなのでホスト編集が即反映される。
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - /app/.venv # ← anonymous volume。ホスト側の .venv 不在でコンテナ内を上書きしない（ADR-021）
+      - ./data:/app/data # SQLite 置き場（git 管理外）
+    env_file:
+      - ./backend/.env
+    environment:
+      # Docker volume 上では inotify が効かないことがあるため polling で reload を担保。
+      - WATCHFILES_FORCE_POLLING=true
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+
+  frontend:
+    build: ./frontend
+    command: npm run dev
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules # ← anonymous volume。ホストに node_modules を作らない（ADR-021）
+    environment:
+      # NEXT_PUBLIC_* はブラウザに焼き込まれるため、ブラウザから到達できる名前を使う
+      # （内部 DNS backend:8000 はブラウザから解決不可＝architecture.md §7.1 の落とし穴）。
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:${BACKEND_PORT:-8000}
+      # Docker volume 上での HMR を polling で担保。
+      - WATCHPACK_POLLING=true
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - backend

@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/* =========================================================================
+   DESIGN.md トークン → Tailwind v4 @theme
+   density-first・near-black・単一アクセント青・損益 緑/赤・pill 廃止・tnum。
+   ここで定義した色は bg-canvas / text-ink-muted / border-hairline のように使える。
+   ========================================================================= */
+@theme {
+  /* surface（階層は色ではなく lift で作る） */
+  --color-canvas: #090909;
+  --color-surface-1: #141414;
+  --color-surface-2: #1c1c1c;
+  --color-surface-3: #242424;
+  --color-hairline: #262626;
+  --color-hairline-soft: #1a1a1a;
+
+  /* ink（3 段固定） */
+  --color-ink: #f2f2f2;
+  --color-ink-muted: #9a9a9a;
+  --color-ink-subtle: #5f5f5f;
+
+  /* accent（単一・signal 専用・面塗りは primary ボタンのみ） */
+  --color-accent: #0099ff;
+  --color-accent-weak: #0d2c44;
+
+  /* 損益・方向（緑=上昇 / 赤=下落） */
+  --color-up: #22c55e;
+  --color-up-weak: #0f2e1c;
+  --color-down: #ef4444;
+  --color-down-weak: #3a1717;
+  --color-flat: #9a9a9a;
+
+  /* セマンティック（UI 状態。損益とは用途を分ける） */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #0099ff;
+
+  /* チャート系列色（Framer gradient を系列色に転用） */
+  --color-chart-1: #0099ff;
+  --color-chart-2: #6a4cf5;
+  --color-chart-3: #d44df0;
+  --color-chart-4: #ff7a3d;
+  --color-chart-5: #22c55e;
+  --color-chart-6: #2dd4bf;
+  --color-chart-7: #ff5577;
+  --color-chart-8: #f5c518;
+
+  /* 角丸（pill 廃止＝控えめ） */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* フォント（Inter Variable。next/font が --font-inter を供給） */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11";
+    font-size: 14px;
+    line-height: 1.45;
+    letter-spacing: -0.1px;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* 数値専用：価格・損益・株数・比率は桁を揃える（tabular figures 必須）。 */
+.num {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}

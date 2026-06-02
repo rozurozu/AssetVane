@@ -1,0 +1,35 @@
+[project]
+name = "assetvane-backend"
+version = "0.1.0"
+description = "AssetVane backend — FastAPI / 数理計算 / AI Advisor / DB の単一所有者"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic-settings>=2.6",
+]
+
+# アプリケーション（ライブラリではない）なので非パッケージモードで扱う。
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F(pyflakes/pycodestyle), I(isort), UP(pyupgrade), B(bugbear) を基本に。
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+include = ["app"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
