@@ -8,7 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **AssetVane** は、日米の株式を分析し、**AI と投資方針を相談しながら銘柄・配分を提案する**、個人投資家 1 人用の投資ダッシュボード。自動売買はせず、提示に徹する。
 
-**現状は「設計フェーズ」で、アプリのコードはまだ無い**（`frontend/` も `backend/` も未作成）。設計の真実は `docs/` にある。実装を始める前に必ず `docs/` を読むこと。
+**現状は「設計フェーズ終盤〜Phase 0 実装中」**。設計の真実は `docs/` にある。実装を始める前に必ず `docs/` を読むこと。
+
+- **できている**: `backend/`（FastAPI 本体・`/health`・config）と `frontend/`（App Router シェル＋モックデータの Dashboard）の scaffold、Docker Compose（dev）の土台、AI Advisor の**最小チャット**（軸2・`POST /chat`・CORE プロンプト＋LLM アダプタ。**Tool 未接続**で一般論ベース）。
+- **未達**: **Phase 0 の完了条件**（`JQuantsAdapter` V2 → SQLite `stocks`/`daily_quotes` → `/stocks`・`/quotes/{code}` → 株価チャートの実データ配線）。`adapters/`・`batch/` は空のまま、DB 層も未実装。
 
 ## ドキュメントの地図（実装前に読む）
 
@@ -39,21 +42,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **通知は Discord Webhook**。LINE Notify は終了済みなので使わない（ADR-007）。
 - **SQLite（WAL）。書き手は夜間バッチ（Python）1 つに限定**してロック競合を避ける（ADR-002）。再取得で壊れないよう UPSERT で冪等にする。
 - **単一ユーザー・認証なし**（ADR-001）。`user_id` を足さない。家庭内 LAN 前提で外部公開しない。
-- **データソースはアダプタ越し**（`JQuantsAdapter` / `IndexAdapter` / `UsEquityAdapter` / `NewsAdapter`）。直結ハードコードしない（ADR-010）。
+- **データソースはアダプタ越し**（`JQuantsAdapter` / `IndexAdapter` / `UsEquityAdapter` / `NewsAdapter` / `FxAdapter`）。直結ハードコードしない（ADR-010）。
 - **銘柄ドシエは DB に保存**（`stock_dossiers` の markdown 列）＋ソース台帳（`dossier_sources`、本文は持たず要約＋URL）。リポジトリ markdown には置かない（AI が頻繁に自動更新するため＝ADR-020）。逆に CORE プロンプト・手法カード（参照知識）は安定資産なのでリポジトリ markdown に置く。
 - **重い処理の置き場所**: ML 学習は別 PC（ラズパイは `.pkl` で推論のみ＝ADR-006）。LLM 推論は OpenRouter（クラウド、`.env` で差替可＝ADR-012）。MCP によるニュース取得は昼チャットでは使えるが、**無人 cron では使えないことがある**ので夜は軽め（ADR-020）。
 
-## 開発コマンド（Phase 0 で scaffold 後に有効）
+## 開発コマンド
 
-2 プロセス構成（backend ＋ frontend）。両方起動する。
+**開発・本番とも Docker Compose で動かす（ADR-021）。** リポジトリ直下で:
+
+```bash
+docker compose up    # backend(:8000) ＋ frontend(:3000)。backend/.env 編集で自動リロード
+# ポート衝突時: FRONTEND_PORT=3100 BACKEND_PORT=8100 docker compose up
+```
+
+コンテナを使わずホスト直で動かす場合（2 プロセス・両方起動）。**backend の依存は uv 管理**（`pip`/`requirements.txt` は使わない＝ADR-023）:
 
 ```bash
 # Backend (FastAPI) — 別端末から見るため 0.0.0.0 で待ち受け
-cd backend && source .venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+cd backend && uv sync && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 # Frontend (Next.js)
-cd frontend && npm run dev
+cd frontend && npm install && npm run dev
 ```
 
 - 接続先は frontend の `NEXT_PUBLIC_API_BASE_URL`、CORS は backend の `.env` の `CORS_ALLOW_ORIGINS`。
