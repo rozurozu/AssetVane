@@ -1,0 +1,31 @@
+# 環境変数（秘密情報）
+.env
+**/.env
+!.env.example
+
+# データベース・データ
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 機械学習モデル
+*.pkl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# OS / エディタ
+.DS_Store
+.idea/
+.vscode/
