@@ -1,6 +1,8 @@
 "use client";
 
+import appIcon from "@/app/icon.png";
 import { nav } from "@/lib/mock-data";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -31,9 +33,8 @@ export function Sidebar() {
   return (
     <aside className="flex flex-col border-hairline border-r bg-surface-1">
       <div className="flex h-12 items-center gap-2 border-hairline border-b px-3.5">
-        <span className="grid h-5 w-5 place-items-center rounded-md bg-accent font-bold text-[12px] text-white">
-          ⚲
-        </span>
+        {/* ブランドマーク＝アプリアイコン（app/icon.png をそのまま流用＝画像の一元管理） */}
+        <Image src={appIcon} alt="AssetVane" width={20} height={20} className="h-5 w-5" priority />
         <b className="font-semibold text-[14px] tracking-[-0.2px]">AssetVane</b>
       </div>
 
