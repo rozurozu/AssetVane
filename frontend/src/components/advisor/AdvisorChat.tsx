@@ -1,15 +1,62 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // 相談チャットAI（軸2）の常駐フローティング UI（ADR-024）。
-// 今回はダミー会話＋開閉＋ドラッグのみ（配線は Phase 3）。Tool 実行の可視化も見た目だけ。
-// 会話・窓位置の永続（localStorage）と /chat 配線は実装時に足す（screens.md §4）。
+// 実 LLM 配線版（最小）。会話はクライアント保持（ステートレスなサーバへ毎ターン messages を送る）。
+// 永続化（localStorage / DB）・ストリーミング・画面コンテキスト送信は後続（下の TODO 参照）。
+const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+type Msg = { role: "user" | "assistant"; content: string };
+
 export function AdvisorChat() {
   const [open, setOpen] = useState(true);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 新しいメッセージが来たら最下部へ。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messages 変化時に末尾へスクロール
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages.length, busy]);
+
+  const send = useCallback(async () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    const next: Msg[] = [...messages, { role: "user", content: text }];
+    setMessages(next);
+    setInput("");
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: next }),
+      });
+      if (!r.ok) {
+        const detail = await r
+          .json()
+          .then((j) => j.detail as string)
+          .catch(() => `HTTP ${r.status}`);
+        throw new Error(detail);
+      }
+      const data = (await r.json()) as { reply: string };
+      setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: `⚠ Advisor に繋がらなかった: ${msg}` },
+      ]);
+    } finally {
+      setBusy(false);
+    }
+  }, [input, busy, messages]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -89,39 +136,53 @@ export function AdvisorChat() {
         </button>
       </div>
 
-      {/* 画面コンテキスト（指示語解決のヒント・数値は渡さない＝ADR-025） */}
+      {/* 画面コンテキスト（指示語解決のヒント・数値は渡さない＝ADR-025）。
+          TODO(adr-025): いまは静的表示のみ。将来 page/focus を /chat の body に載せて送る。 */}
       <div className="border-hairline-soft border-b bg-canvas px-3 py-1.5 text-[11px] text-ink-muted">
         📍 見ているページ: <b className="text-accent">Dashboard</b> ・ 画面の数字を文脈に相談できる
       </div>
 
-      <div className="flex flex-1 flex-col gap-2.5 overflow-auto p-3">
-        <Bubble who="a">
-          おかえり。今朝の状況だと
-          <strong className="font-semibold text-ink">半導体の集中度が方針と擦れてる</strong>
-          （最大 <span className="num">18.2%</span> / 上限 <span className="num">15%</span>
-          ）。承認待ちを2件出してる。気になる点ある？
-        </Bubble>
-        <Bubble who="u">1銘柄上限、上げてもいい？</Bubble>
-        <Bubble who="a">
-          <span className="mb-1.5 inline-block text-[11px] text-accent">
-            ⚙ get_asset_overview / get_signals
-          </span>
-          <br />
-          事実だと最大比率は<span className="num text-up"> 18.2%</span>（上限超過）、6920 は
-          momentum <span className="num">0.88</span>・出来高<span className="num">3.4倍</span>
-          。上げるなら
-          <strong className="font-semibold text-ink">現金25%維持を条件</strong>
-          に。トレードオフは集中リスク。上げ幅は <span className="num">20%</span>{" "}
-          が妥当。レバレッジ不可は維持。
-        </Bubble>
+      <div ref={scrollRef} className="flex flex-1 flex-col gap-2.5 overflow-auto p-3">
+        {messages.length === 0 && (
+          <div className="m-auto px-4 text-center text-[12px] text-ink-subtle leading-[1.6]">
+            投資方針や銘柄の考え方を相談できるのだ。
+            <br />
+            （いまは事実取得 Tool 未接続＝一般論ベース）
+          </div>
+        )}
+        {messages.map((m, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: 追記のみで並びは不変
+          <Bubble key={i} who={m.role === "user" ? "u" : "a"}>
+            {m.content}
+          </Bubble>
+        ))}
+        {busy && (
+          <Bubble who="a">
+            <span className="text-ink-subtle">考え中…</span>
+          </Bubble>
+        )}
       </div>
 
       <div className="flex gap-2 border-hairline border-t px-3 py-2.5">
         <input
-          placeholder="この画面について質問…（例: 4063 を調査して）"
-          className="flex-1 rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-accent"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              send();
+            }
+          }}
+          disabled={busy}
+          placeholder="この画面について質問…（例: 短期で攻める方針を相談したい）"
+          className="flex-1 rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-accent disabled:opacity-60"
         />
-        <button type="button" className="w-[34px] rounded-md bg-accent text-white">
+        <button
+          type="button"
+          onClick={send}
+          disabled={busy || !input.trim()}
+          className="w-[34px] rounded-md bg-accent text-white disabled:opacity-50"
+        >
           ➤
         </button>
       </div>
@@ -130,7 +191,7 @@ export function AdvisorChat() {
 }
 
 function Bubble({ who, children }: { who: "u" | "a"; children: React.ReactNode }) {
-  const base = "max-w-[88%] rounded-lg px-3 py-2 text-[13px] leading-[1.45]";
+  const base = "max-w-[88%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px] leading-[1.45]";
   return who === "u" ? (
     <div className={`${base} self-end bg-accent-weak text-ink`}>{children}</div>
   ) : (

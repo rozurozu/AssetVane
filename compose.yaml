@@ -10,14 +10,18 @@ services:
   backend:
     build: ./backend
     # dev は --reload。ソースはバインドマウントなのでホスト編集が即反映される。
-    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # --reload-include .env: .env を編集したら自動リロード（pydantic が読み直して設定反映）。
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-include .env
     working_dir: /app
     volumes:
       - ./backend:/app
       - /app/.venv # ← anonymous volume。ホスト側の .venv 不在でコンテナ内を上書きしない（ADR-021）
       - ./data:/app/data # SQLite 置き場（git 管理外）
-    env_file:
-      - ./backend/.env
+    # ⚠️ env_file はあえて使わない。compose の env_file はコンテナ「作成時」に env を注入し、
+    # それが pydantic の .env 読みを上書きするため、.env を変えても --force-recreate しないと
+    # 反映されない（切り替えが激重）。代わりに backend/.env はバインドマウント（/app/.env）越しに
+    # pydantic-settings が直接読む（config.py の env_file=".env"）。これで .env 編集 →
+    # 自動リロード（--reload-include .env）だけで切り替わる。秘密は backend/.env のみ（ADR-005）。
     environment:
       # Docker volume 上では inotify が効かないことがあるため polling で reload を担保。
       - WATCHFILES_FORCE_POLLING=true

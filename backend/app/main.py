@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.advisor import router as advisor_router
 from app.config import settings
 
 app = FastAPI(
@@ -25,6 +26,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# AI Advisor（軸2・相談チャット）。POST /chat（advisor/router.py）。
+app.include_router(advisor_router)
 
 
 @app.get("/health")

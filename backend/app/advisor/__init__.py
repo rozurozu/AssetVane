@@ -2,3 +2,7 @@
 
 設計: docs/advisor.md / docs/decisions.md ADR-011〜016。
 """
+
+from app.advisor.router import router
+
+__all__ = ["router"]
