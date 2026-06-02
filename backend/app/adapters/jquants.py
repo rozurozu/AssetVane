@@ -127,6 +127,17 @@ class JQuantsAdapter:
         raw = self._get_paginated("/v2/equities/bars/daily", params)
         return [self._normalize_quote(r) for r in raw]
 
+    def fetch_daily_quotes_by_date(self, date: str) -> list[dict[str, Any]]:
+        """指定 1 営業日の**全銘柄**の日足を取得する（内部列名に正規化）。
+
+        実機確認済み（2026-06）: `code` を渡さず `date` だけ指定すると、その日の東証全銘柄
+        （ETF/REIT 含む・約 4400 行）が 1 リクエスト（＋ページング）で返る。これにより Phase 1
+        の初回バックフィルを「銘柄ループ（約4000 req・13時間超）」ではなく「**営業日ループ**
+        （2年で約 500 req）」で回せる（docs/jquants.md §4）。`date` は 'YYYY-MM-DD' / 'YYYYMMDD'。
+        """
+        raw = self._get_paginated("/v2/equities/bars/daily", {"date": date})
+        return [self._normalize_quote(r) for r in raw]
+
     @staticmethod
     def _normalize_quote(r: dict[str, Any]) -> dict[str, Any]:
         return {

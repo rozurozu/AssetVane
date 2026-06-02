@@ -8,10 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **AssetVane** は、日米の株式を分析し、**AI と投資方針を相談しながら銘柄・配分を提案する**、個人投資家 1 人用の投資ダッシュボード。自動売買はせず、提示に徹する。
 
-**現状は「設計フェーズ終盤〜Phase 0 実装中」**。設計の真実は `docs/` にある。実装を始める前に必ず `docs/` を読むこと。
+**現状は「Phase 0（縦スライス）完了。次は Phase 1（Trend Vane）」**。設計の真実は `docs/` にある。実装を始める前に必ず `docs/` を読むこと。
 
-- **できている**: `backend/`（FastAPI 本体・`/health`・config）と `frontend/`（App Router シェル＋モックデータの Dashboard）の scaffold、Docker Compose（dev）の土台、AI Advisor の**最小チャット**（軸2・`POST /chat`・CORE プロンプト＋LLM アダプタ。**Tool 未接続**で一般論ベース）。
-- **未達**: **Phase 0 の完了条件**（`JQuantsAdapter` V2 → SQLite `stocks`/`daily_quotes` → `/stocks`・`/quotes/{code}` → 株価チャートの実データ配線）。`adapters/`・`batch/` は空のまま、DB 層も未実装。
+- **Phase 0 完了済み**: `JQuantsAdapter`（V2・`x-api-key`）→ SQLite `stocks`/`daily_quotes`（`db/schema.py`・`repo.py`、**UPSERT で冪等**）→ `/stocks`・`/stocks/{code}`・`/quotes/{code}`（`routers/stocks.py`）→ frontend の銘柄一覧・詳細で**実データのローソク足**（`CandleChart`・`lib/api.ts`）。手動バックフィル（`app.scripts.backfill`・数銘柄）、Alembic 移行（`0001_baseline`）、pytest 基盤も入っている。`/health`・config・Docker Compose（dev）・App Router シェル（Sidebar/Topbar）も稼働。AI Advisor の**最小チャット**（軸2・`POST /chat`・CORE プロンプト＋LLM アダプタ。**Tool 未接続**で一般論ベース）あり。
+- **これから（Phase 1〜）**: 全銘柄バッチ＋差分取得（`fetch_meta`）と **cron 夜間バッチ**（`batch/` は現状空）、`signals` テーブルと momentum/volume_spike、`/signals` と一覧画面（TA-Lib は ARM ビルド難のため `pandas-ta` 等の代替を要検証）。**Dashboard 本体は今はモックのまま**で正解（`/asset-overview`・`/proposals`・`/policy` など Phase 2〜3 のデータが揃ってから本配線する）。Advisor の **Tool Calling は Phase 3**。
 
 ## ドキュメントの地図（実装前に読む）
 
@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/data-model.md` | DB スキーマ（全テーブル） |
 | `docs/api.md` | REST API 契約（Next ↔ FastAPI の境界） |
 | `docs/jquants.md` | J-Quants API V2 の認証・プラン・エンドポイント |
-| `docs/roadmap.md` | Phase 0〜7。**Phase 0 の縦スライスから着手する** |
+| `docs/roadmap.md` | Phase 0〜7。**Phase 0 完了済み。次は Phase 1（Trend Vane）から** |
 
 ## アーキテクチャの不変条件（default の直感を上書きする。違反しないこと）
 
@@ -68,6 +68,43 @@ cd frontend && npm install && npm run dev
 - 接続先は frontend の `NEXT_PUBLIC_API_BASE_URL`、CORS は backend の `.env` の `CORS_ALLOW_ORIGINS`。
 - 秘密情報（J-Quants / LLM のキー）は **backend の `.env` のみ**。frontend には渡さない。
 - 開発は J-Quants **Free プラン**（株価 12 週間遅延）で進む。評価額・P/L も遅延値になる点に注意。
+
+データ投入・テスト・移行（`backend/` で。Compose なら `docker compose exec backend …`）:
+
+```bash
+uv run python -m app.scripts.backfill            # 既定 3 銘柄（7203/6758/9984）を取得
+uv run python -m app.scripts.backfill 7203 6758  # 任意銘柄。再実行しても重複しない（冪等 UPSERT）
+uv run pytest -q                                  # テスト（DB は触らず一時 SQLite で回る）
+uv run ruff check . && uv run ruff format .       # lint / format（ADR-023）
+uv run alembic upgrade head                       # スキーマ移行（起動時の init_db とは別に手動でも）
+```
+
+frontend は `npm run lint`（Biome）/ `npm run format`（Biome）/ `npm run build`。`dev` のみ Turbopack、`build` は現状 webpack（ADR-022 の「不安定なら webpack へフォールバック」に従った状態）。
+
+## コーディング作法（既存コードの流儀。新規もこれに合わせる）
+
+設計の「なぜ」は ADR、ここは「どう書くか」。Phase 0 のコードで確立した型なので踏襲する（batch/signals/Tool の型は Phase 1 以降で固まったら追記する）。
+
+**共通**
+- **コメント・docstring・PR・会話はすべて日本語**。モジュール/関数の docstring 冒頭で**該当 ADR 番号や `docs/` 参照**を書く（例: `（ADR-005）`・`（docs/api.md §1）`）。意図の出所を辿れるようにする。
+- 設計判断を勝手に作らない。迷ったら `docs/` が真実。ズレを見つけたらドキュメント側も直す。
+- lint/format で差分を出さない（backend=Ruff、frontend=Biome）。`ignore` する時は**理由をコメントで添える**（既存の `biome-ignore … : 理由` に倣う）。
+
+**backend（FastAPI / Python）**
+- 全モジュール先頭に `from __future__ import annotations`。型注釈は省略しない（pyright 前提）。
+- **レイヤを薄く分ける**:
+  - `routers/` … HTTP の入出力のみ。Pydantic モデルで受け/返し、ロジックは持たない。
+  - `db/repo.py` … クエリ（SQLAlchemy **Core**）。戻り値は**素の `dict`**（Pydantic 変換はルータ側）。
+  - `db/schema.py` … `Table` 定義（スキーマの一元管理）。
+  - `adapters/` … 外部 API。**「外部キー名 → 内部列名」の対応をこのファイルに閉じ込める**（DB 列は安定した内部名のまま）。リトライ・スロットルもアダプタ内に隠す。
+- **書き込みは UPSERT で冪等**（`on_conflict_do_update`）。再取得で壊れない（ADR-002）。
+- 例外は用途別の独自例外（例 `JQuantsError`）にして、ルータ境界で `HTTPException` に翻訳する。
+
+**frontend（Next.js / TS）**
+- **DB に触れない。データ取得は `lib/api.ts` 経由のみ**（ADR-005）。型（`Stock`/`Quote` 等）も api.ts に集約し backend の Pydantic と対応させる。
+- 接続先は `NEXT_PUBLIC_API_BASE_URL`。ブラウザ fetch（`"use client"`）で取る。秘密情報は frontend に置かない。
+- スタイルは **Tailwind v4 トークン（`DESIGN.md`）・density-first**。生の色やマジック値を散らさず、既存トークン（`surface-1`・`hairline`・`accent`・`num` 等）を使う。
+- コンポーネント冒頭コメントで `screens.md` の対応箇所や ADR を参照する。
 
 ## バージョン管理・言語
 

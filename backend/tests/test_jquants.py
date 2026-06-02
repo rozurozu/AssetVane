@@ -72,6 +72,27 @@ def test_normalize_quote() -> None:
     }
 
 
+def test_fetch_daily_quotes_by_date() -> None:
+    """date だけ指定の全銘柄取得が、正しいパス/パラメータで叩き正規化して返すか。
+
+    実機確認済みの挙動（code 無し → その日の全銘柄）をコード側で固定する。ネットは叩かず
+    `_get_paginated` を差し替えて、呼び出し引数と正規化結果だけを検証する。
+    """
+    adapter = JQuantsAdapter(api_key="dummy")  # settings 非依存・ネットも張らない
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get_paginated(path: str, params: dict[str, object]) -> list[dict[str, object]]:
+        calls.append((path, params))
+        return [BARS_ROW, {**BARS_ROW, "Code": "67580"}]  # 2 銘柄ぶん
+
+    adapter._get_paginated = fake_get_paginated  # type: ignore[method-assign]
+    rows = adapter.fetch_daily_quotes_by_date("2025-12-15")
+
+    assert calls == [("/v2/equities/bars/daily", {"date": "2025-12-15"})]
+    assert [r["code"] for r in rows] == ["72030", "67580"]
+    assert rows[0]["close"] == 3393.0  # 正規化（C → close）が効いている
+
+
 def test_normalize_stock() -> None:
     s = JQuantsAdapter._normalize_stock(MASTER_ROW, "2026-06-02T00:00:00+00:00")
     assert s["code"] == "72030"
