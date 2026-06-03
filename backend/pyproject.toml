@@ -14,6 +14,8 @@ dependencies = [
     "numpy>=2.0",       # quant 自前指標（Phase 1・spec §7）
     "pandas>=2.2",      # 時系列（Phase 1・spec §7）
     "apscheduler>=3.10",  # cron 方式 C・APScheduler 同居（Phase 1・spec §3.7）
+    "scipy>=1.13",      # 相関・統計・SLSQP（Phase 2・spec §7）
+    "pyportfolioopt>=1.5",  # 平均分散最適化（内部 cvxpy・Phase 2・spec §7・ARM ゲート）
 ]
 
 # アプリケーション（ライブラリではない）なので非パッケージモードで扱う。

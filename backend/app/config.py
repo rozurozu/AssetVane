@@ -50,10 +50,22 @@ class Settings(BaseSettings):
     # J-Quants 取得のスロットル間隔（秒）。Free=13.0 / Light=1.0（ADR-008・spec §3.4・L-6）。
     jquants_min_interval_seconds: float = 13.0
 
+    # --- IndexAdapter（主要指数・Phase 2〜・phase2-spec.md §3.1・ADR-010） ---
+    # Stooq を既定ソースとして使用（裁定 L-10）。シンボルはカンマ区切りで指定。
+    # Stooq シンボル例: ^SPX（S&P500）・^NKX（日経225）・^TPX（TOPIX）。
+    # [OPEN] TOPIX/日経の J-Quants 指数 API 有無は実機確認待ち（spec §3.1）。
+    index_source: str = "stooq"
+    index_symbols: str = "^SPX,^NKX,^TPX"
+
     @property
     def cors_origins(self) -> list[str]:
         """カンマ区切りの CORS オリジンをリストにする。"""
         return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+
+    @property
+    def index_symbol_list(self) -> list[str]:
+        """カンマ区切りの指数シンボルをリストにする（phase2-spec.md §3.1）。"""
+        return [s.strip() for s in self.index_symbols.split(",") if s.strip()]
 
     def env_status(self) -> dict[str, dict[str, object]]:
         """各キーの充足状況を「どの Phase で要るか」付きで返す（/health 用）。

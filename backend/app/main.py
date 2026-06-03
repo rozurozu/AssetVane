@@ -18,7 +18,9 @@ from app.advisor import router as advisor_router
 from app.batch import run_nightly
 from app.config import settings
 from app.db.engine import healthcheck, init_db
+from app.routers.assets import router as assets_router
 from app.routers.batch import router as batch_router
+from app.routers.portfolio import router as portfolio_router
 from app.routers.signals import router as signals_router
 from app.routers.stocks import router as stocks_router
 
@@ -89,6 +91,10 @@ app.include_router(signals_router)
 app.include_router(batch_router)
 # AI Advisor（軸2・相談チャット）。POST /chat（advisor/router.py）。
 app.include_router(advisor_router)
+# ポートフォリオ（Phase 2）。GET /portfolios・GET /holdings・POST /transactions・metrics・optimize。
+app.include_router(portfolio_router)
+# 資産概要・現金・外部資産（Phase 2）。GET /cash・/external-assets・/asset-overview。
+app.include_router(assets_router)
 
 
 @app.get("/health")
@@ -98,7 +104,7 @@ def health() -> dict[str, object]:
         "status": "ok",
         "service": "assetvane-backend",
         "version": app.version,
-        "phase": 1,
+        "phase": 2,
         "db": "ok" if healthcheck() else "error",
         "env": settings.env_status(),
     }

@@ -1,20 +1,7 @@
-// Dashboard 表示用のダミーデータ（配線なし）。
-// 後で REST（/asset-overview, /signals, /proposals, /policy, /journal …）に差し替える。
+// Dashboard 表示用のダミーデータ（Phase 3/4 まで配線なし）。
+// kpis / allocation / trendPath は Phase 2 で /asset-overview に配線済み（app/page.tsx）。
+// proposals / policy / journal / watchlist / signals は Phase 3/4 で本配線予定。
 // 設計: docs/api.md / docs/screens.md §3。
-
-export const kpis = [
-  { label: "総資産", value: "¥4,820,000", sub: "▲ +¥312,000 (+6.92%)", tone: "up" as const },
-  { label: "株式", value: "¥3,640,000", sub: "75.5% ・ 8銘柄", dot: "var(--color-chart-1)" },
-  { label: "現金", value: "¥980,000", sub: "20.3% ・ 目標 25%", dot: "var(--color-chart-2)" },
-  { label: "投信", value: "¥200,000", sub: "4.1%", dot: "var(--color-chart-4)" },
-  { label: "評価損益", value: "+¥312,000", sub: "含み益", tone: "up" as const },
-];
-
-export const allocation = [
-  { name: "株式", pct: 75.5, color: "var(--color-chart-1)", dash: "75.5 24.5", offset: 25 },
-  { name: "現金", pct: 20.3, color: "var(--color-chart-2)", dash: "20.3 79.7", offset: -50.5 },
-  { name: "投信", pct: 4.1, color: "var(--color-chart-4)", dash: "4.1 95.9", offset: -70.8 },
-];
 
 export const proposals = [
   {
@@ -65,10 +52,6 @@ export const journal = {
   body: "全体は含み益 +6.9% で推移。半導体の強さが続く一方、1銘柄集中（最大18.2% / 上限15%）が方針の「大損回避」と擦れてきた。現金は20.3%で目標25%をやや下回る。今晩のシグナルは momentum 上位に半導体が集中し過熱の兆候。上限緩和を提案するなら現金25%維持を条件にしたい。レバレッジ不可は崩さない。",
 };
 
-// 資産推移スパークライン（mock の SVG path 座標をそのまま流用）。
-export const trendPath =
-  "M0,96 L60,90 L120,98 L180,76 L240,84 L300,60 L360,68 L420,48 L480,56 L540,38 L600,44 L660,24 L720,20";
-
 // href があるものは遷移可能（Next Link）。無いものは未投入 Phase（非活性）。
 // アクティブ表示は Sidebar が usePathname() で判定する（ハードコードしない）。
 export const nav = [
@@ -83,7 +66,7 @@ export const nav = [
     group: "分析",
     items: [
       { label: "Signals", icon: "📈", href: "/signals" },
-      { label: "Portfolio", icon: "⚖", phase: "P2" },
+      { label: "Portfolio", icon: "⚖", href: "/portfolio" },
       { label: "Watchlist", icon: "👁", phase: "P4" },
     ],
   },

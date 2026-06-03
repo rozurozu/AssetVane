@@ -6,7 +6,7 @@ conftest の create_schema 経路とは別に、本番の起動経路（init_db 
 
 from __future__ import annotations
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from app.config import settings
 from app.db.engine import get_engine, init_db, reset_engine
@@ -21,13 +21,34 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
 
     with get_engine().connect() as conn:
         names = set(inspect(conn).get_table_names())
+
+        # Phase 2（0004/0005）で追加したテーブルが存在することを確認する。
+        assert {
+            "stocks",
+            "daily_quotes",
+            "fetch_meta",
+            "signals",
+            # Phase 2（0004_portfolio_and_assets）
+            "portfolios",
+            "transactions",
+            "holdings",
+            "cash",
+            "external_assets",
+            "index_quotes",
+            "asset_snapshots",
+            # Phase 2（0005_financials）
+            "financials",
+            "alembic_version",
+        } <= names
+
+        # 0004 マイグレーションで seed した portfolios の初期行（id=1, name='Default'）を確認。
+        row = (
+            conn.execute(text("SELECT portfolio_id, name FROM portfolios WHERE portfolio_id = 1"))
+            .mappings()
+            .first()
+        )
+        assert row is not None, "portfolios に seed 行（id=1）が存在しない"
+        assert row["portfolio_id"] == 1
+        assert row["name"] == "Default"
+
     reset_engine()
-    # 業務テーブル（Phase 0 の2表＋ Phase 1 の fetch_meta/signals）＋ alembic 管理表。
-    # 0001 を2表に凍結し 0002/0003 で追加表を作るチェーンが fresh DB で通ることを確かめる。
-    assert {
-        "stocks",
-        "daily_quotes",
-        "fetch_meta",
-        "signals",
-        "alembic_version",
-    } <= names

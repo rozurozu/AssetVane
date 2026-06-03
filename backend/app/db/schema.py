@@ -14,6 +14,7 @@ from __future__ import annotations
 from sqlalchemy import (
     Column,
     Float,
+    ForeignKey,
     Index,
     Integer,
     MetaData,
@@ -88,4 +89,112 @@ signals = Table(
     UniqueConstraint("date", "code", "signal_type", name="uq_signals_date_code_type"),
     Index("ix_signals_date_type", "date", "signal_type"),  # 一覧・通知の主クエリ
     Index("ix_signals_code", "code"),  # 銘柄詳細横断
+)
+
+# ===== Phase 2: Portfolio Optimizer（phase2-spec.md §2.1・ADR-001/002/019） =====
+
+# ポートフォリオ器（ADR-001: 単一ユーザー。当面 portfolio_id=1 の Default 1 つのみ）。
+# seed 行は 0004_portfolio_and_assets マイグレーション内で挿入する（spec §2 注記）。
+portfolios = Table(
+    "portfolios",
+    metadata,
+    Column("portfolio_id", Integer, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False),
+    Column("created_at", String),  # ISO8601
+)
+
+# 取引記録（ADR-019: 一次データ。holdings はここから導出）。
+# 自分データ（手入力）なので FK を張る（裁定 L-7：誤入力防止）。
+transactions = Table(
+    "transactions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("portfolio_id", Integer, ForeignKey("portfolios.portfolio_id"), nullable=False),
+    Column("code", String, ForeignKey("stocks.code"), nullable=False),
+    Column("side", String, nullable=False),  # 'buy' / 'sell'
+    Column("shares", Float, nullable=False),
+    Column("price", Float, nullable=False),  # 約定単価
+    Column("fee", Float),  # 手数料（任意）
+    Column("traded_at", String, nullable=False),  # 約定日 'YYYY-MM-DD'
+    Index("ix_transactions_portfolio", "portfolio_id"),
+    Index("ix_transactions_code", "code"),
+)
+
+# 保有銘柄（ADR-019: transactions からの導出値。直接編集しない）。
+# (portfolio_id, code) に UNIQUE を張り、UPSERT キーとする。
+holdings = Table(
+    "holdings",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("portfolio_id", Integer, ForeignKey("portfolios.portfolio_id"), nullable=False),
+    Column("code", String, ForeignKey("stocks.code"), nullable=False),
+    Column("shares", Float, nullable=False),  # 導出: Σbuy.shares − Σsell.shares
+    Column("avg_cost", Float),  # 導出: 移動平均取得単価
+    UniqueConstraint("portfolio_id", "code", name="uq_holdings_portfolio_code"),
+)
+
+# 投資用待機現金（JPY・通貨列は Phase 7 まで持たない）。
+cash = Table(
+    "cash",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("balance", Float, nullable=False),
+    Column("updated_at", String),
+)
+
+# 外部資産（投信・コモディティ等の手入力・proxy 指数付き）。
+external_assets = Table(
+    "external_assets",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False),  # 「オルカン」等
+    Column("category", String),  # 投信/コモディティ等
+    Column("value", Float),  # 評価額（手入力）
+    Column("proxy_symbol", String),  # 概算 proxy（指数等）
+    Column("monthly_contribution", Float),  # 毎月積立（任意）
+    Column("as_of", String),  # 基準日
+)
+
+# 主要指数の水準（daily_quotes とは別粒度・別出所・IndexAdapter 供給）。
+# (symbol, date) を複合主キーにし UPSERT で冪等（ADR-002）。
+# `code` への FK は張らない（指数シンボルは stocks に存在しない・生データ流儀）。
+index_quotes = Table(
+    "index_quotes",
+    metadata,
+    Column("symbol", String, nullable=False),  # 'TOPIX' / '^GSPC' 等
+    Column("date", String, nullable=False),  # 'YYYY-MM-DD'
+    Column("close", Float),  # 終値（水準）
+    PrimaryKeyConstraint("symbol", "date", name="pk_index_quotes"),
+    Index("ix_index_quotes_symbol", "symbol"),
+)
+
+# 日次総資産（夜間バッチが焼く・1 日 1 行）。
+# 保有評価額（遅延株価）＋ 現金 ＋ 外部資産の合計（spec §3.3）。
+asset_snapshots = Table(
+    "asset_snapshots",
+    metadata,
+    Column("date", String, primary_key=True),  # 'YYYY-MM-DD'
+    Column("total_value", Float),
+    Column("stock_value", Float),
+    Column("cash_value", Float),
+    Column("external_value", Float),
+    Column("pnl", Float),
+)
+
+# 財務・決算（0005_financials・data-model.md §2・spec §2.1）。
+# 自分データ（保有銘柄）なので code → stocks.code に FK を張る（裁定 L-7）。
+# 実フィールド名は V2 財務エンドポイント実機確認待ち（jquants.md §6 要再確認）。
+financials = Table(
+    "financials",
+    metadata,
+    Column("code", String, ForeignKey("stocks.code"), nullable=False),
+    Column("disclosed_date", String, nullable=False),  # 開示日 'YYYY-MM-DD'
+    Column("fiscal_period", String, nullable=False),  # 会計期間（例 '2025Q1' / 'FY2024'）
+    Column("net_sales", Float),  # 売上高
+    Column("operating_profit", Float),  # 営業利益
+    Column("profit", Float),  # 純利益
+    Column("eps", Float),  # EPS
+    Column("bps", Float),  # BPS
+    PrimaryKeyConstraint("code", "disclosed_date", "fiscal_period", name="pk_financials"),
+    Index("ix_financials_code", "code"),
 )

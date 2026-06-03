@@ -1,0 +1,496 @@
+"""ポートフォリオ・資産概要 API のテスト（Phase 2・phase2-spec.md §8）。
+
+TestClient（alembic 経路）で各エンドポイントを叩き、
+Pydantic 形・valuation_meta・is_delayed/as_of・0..1 単位を検証する。
+quant は実際に呼ぶ（外部 API は叩かない）。
+"""
+
+from __future__ import annotations
+
+from app.db import repo
+
+# テスト用の銘柄データ
+STOCK_A = {
+    "code": "72030",
+    "company_name": "トヨタ自動車",
+    "sector33_code": "3700",
+    "sector17_code": "6",
+    "market_code": "0111",
+    "is_etf": 0,
+    "updated_at": "2026-06-01T00:00:00+00:00",
+}
+STOCK_B = {
+    "code": "67580",
+    "company_name": "ソニーグループ",
+    "sector33_code": "3600",
+    "sector17_code": "7",
+    "market_code": "0111",
+    "is_etf": 0,
+    "updated_at": "2026-06-01T00:00:00+00:00",
+}
+
+
+def _seed_daily_quotes(code: str, prices: list[float], start_date: str = "2025-01-02") -> None:
+    """テスト用の日足データを seed する。prices は時系列順の終値リスト。"""
+    from datetime import date, timedelta
+
+    base = date.fromisoformat(start_date)
+    rows = []
+    for i, p in enumerate(prices):
+        d = (base + timedelta(days=i)).isoformat()
+        rows.append(
+            {
+                "code": code,
+                "date": d,
+                "open": p,
+                "high": p * 1.01,
+                "low": p * 0.99,
+                "close": p,
+                "volume": 1000.0,
+                "adj_close": p,
+            }
+        )
+    repo.upsert_daily_quotes(rows)
+
+
+def _get_portfolio_id(client) -> int:
+    """先頭ポートフォリオの id を返す。"""
+    resp = client.get("/portfolios")
+    assert resp.status_code == 200
+    return resp.json()[0]["portfolio_id"]
+
+
+# ---------------------------------------------------------------------------
+# GET /portfolios
+# ---------------------------------------------------------------------------
+
+
+def test_portfolios_returns_default(client) -> None:
+    """GET /portfolios は Default ポートフォリオを返す（seed 済み）。"""
+    resp = client.get("/portfolios")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) >= 1
+    assert body[0]["name"] == "Default"
+    assert "portfolio_id" in body[0]
+
+
+# ---------------------------------------------------------------------------
+# GET /holdings（空）
+# ---------------------------------------------------------------------------
+
+
+def test_holdings_empty(client) -> None:
+    """保有銘柄がない場合、holdings は空配列・valuation_meta は正しい形。"""
+    pid = _get_portfolio_id(client)
+    resp = client.get(f"/holdings?portfolio_id={pid}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["portfolio_id"] == pid
+    assert body["holdings"] == []
+    meta = body["valuation_meta"]
+    assert "is_delayed" in meta
+    assert meta["is_delayed"] is True
+    assert meta["plan"] == "free"
+
+
+# ---------------------------------------------------------------------------
+# POST /transactions → TransactionResult
+# ---------------------------------------------------------------------------
+
+
+def test_post_transaction_creates_holding(client) -> None:
+    """POST /transactions 後に TransactionResult.holdings に再計算後値が入る。"""
+    repo.upsert_stocks([STOCK_A])
+    pid = _get_portfolio_id(client)
+
+    resp = client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1500,
+            "traded_at": "2026-01-10",
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert "transaction_id" in body
+    assert isinstance(body["transaction_id"], int)
+
+    h_resp = body["holdings"]
+    assert h_resp["portfolio_id"] == pid
+    holdings = h_resp["holdings"]
+    assert len(holdings) == 1
+    h = holdings[0]
+    assert h["code"] == "72030"
+    assert h["shares"] == 100.0
+    assert h["avg_cost"] == 1500.0
+    assert h["company_name"] == "トヨタ自動車"
+
+    # valuation_meta の検証
+    meta = h_resp["valuation_meta"]
+    assert meta["is_delayed"] is True
+    assert meta["plan"] == "free"
+
+
+def test_post_transaction_with_market_value(client) -> None:
+    """daily_quotes が seed されていれば market_value / unrealized_pnl / weight が計算される。"""
+    repo.upsert_stocks([STOCK_A])
+    _seed_daily_quotes("72030", [1400, 1500, 1600])
+    pid = _get_portfolio_id(client)
+
+    resp = client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1500,
+            "traded_at": "2026-01-10",
+        },
+    )
+    assert resp.status_code == 201
+    h = resp.json()["holdings"]["holdings"][0]
+
+    # last_close は最新日の close（1600）
+    assert h["last_close"] == 1600.0
+    # market_value = 100 * 1600 = 160000
+    assert h["market_value"] == 160000.0
+    # unrealized_pnl = 160000 - 100*1500 = 10000
+    assert h["unrealized_pnl"] == 10000.0
+    # weight（1銘柄なので 1.0）
+    assert h["weight"] == 1.0
+
+    # as_of は daily_quotes の最新日
+    meta = resp.json()["holdings"]["valuation_meta"]
+    assert meta["as_of"] is not None
+
+
+# ---------------------------------------------------------------------------
+# GET /holdings
+# ---------------------------------------------------------------------------
+
+
+def test_get_holdings_after_transactions(client) -> None:
+    """POST /transactions 後に GET /holdings で最新 holdings が返る。"""
+    repo.upsert_stocks([STOCK_A, STOCK_B])
+    pid = _get_portfolio_id(client)
+
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1000,
+            "traded_at": "2026-01-10",
+        },
+    )
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "67580",
+            "side": "buy",
+            "shares": 50,
+            "price": 2000,
+            "traded_at": "2026-01-10",
+        },
+    )
+
+    resp = client.get(f"/holdings?portfolio_id={pid}")
+    assert resp.status_code == 200
+    holdings = resp.json()["holdings"]
+    assert len(holdings) == 2
+    codes = {h["code"] for h in holdings}
+    assert codes == {"72030", "67580"}
+
+
+# ---------------------------------------------------------------------------
+# GET/PUT /cash
+# ---------------------------------------------------------------------------
+
+
+def test_cash_not_found(client) -> None:
+    """cash 未登録で GET /cash は 404。"""
+    resp = client.get("/cash")
+    assert resp.status_code == 404
+
+
+def test_put_cash_creates_and_updates(client) -> None:
+    """PUT /cash で作成・更新できる。"""
+    resp = client.put("/cash", json={"balance": 500000.0})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["balance"] == 500000.0
+    assert "updated_at" in body
+
+    # 更新
+    resp2 = client.put("/cash", json={"balance": 300000.0})
+    assert resp2.status_code == 200
+    assert resp2.json()["balance"] == 300000.0
+
+    # GET で確認
+    resp3 = client.get("/cash")
+    assert resp3.status_code == 200
+    assert resp3.json()["balance"] == 300000.0
+
+
+# ---------------------------------------------------------------------------
+# /external-assets CRUD
+# ---------------------------------------------------------------------------
+
+
+def test_external_assets_crud(client) -> None:
+    """外部資産の CRUD が正常に動作する。"""
+    # 最初は空
+    resp = client.get("/external-assets")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    # POST
+    resp = client.post(
+        "/external-assets",
+        json={"name": "eMAXIS Slim オルカン", "category": "投信", "value": 1200000.0},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    asset_id = body["id"]
+    assert body["name"] == "eMAXIS Slim オルカン"
+    assert body["value"] == 1200000.0
+
+    # GET 一覧
+    resp = client.get("/external-assets")
+    assert len(resp.json()) == 1
+
+    # PUT
+    resp = client.put(
+        f"/external-assets/{asset_id}",
+        json={"name": "eMAXIS Slim オルカン", "value": 1300000.0},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["value"] == 1300000.0
+
+    # DELETE
+    resp = client.delete(f"/external-assets/{asset_id}")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+    # 削除後は空
+    resp = client.get("/external-assets")
+    assert resp.json() == []
+
+
+def test_external_asset_delete_404(client) -> None:
+    """存在しない外部資産を DELETE すると 404。"""
+    resp = client.delete("/external-assets/99999")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /asset-overview
+# ---------------------------------------------------------------------------
+
+
+def test_asset_overview_empty(client) -> None:
+    """保有・現金・外部資産が空の場合は total_value=0 で is_delayed=True。"""
+    resp = client.get("/asset-overview")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_value"] == 0.0
+    assert body["is_delayed"] is True
+    assert body["plan"] == "free"
+    assert "allocation" in body
+    assert "deviations" in body
+    assert "trend" in body
+    assert "policy_targets" in body
+
+
+def test_asset_overview_with_stocks_and_cash(client) -> None:
+    """株式・現金・外部資産がある場合、正しく集計される。"""
+    repo.upsert_stocks([STOCK_A])
+    _seed_daily_quotes("72030", [2000, 2100, 2200])
+    pid = _get_portfolio_id(client)
+
+    # 株を buy
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 2000,
+            "traded_at": "2026-01-10",
+        },
+    )
+    # 現金を set
+    client.put("/cash", json={"balance": 500000.0})
+    # 外部資産を追加
+    client.post(
+        "/external-assets",
+        json={"name": "オルカン", "category": "投信", "value": 300000.0},
+    )
+
+    resp = client.get("/asset-overview")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # stock_value = 100 * 2200 = 220000
+    assert body["stock_value"] == 220000.0
+    assert body["cash_value"] == 500000.0
+    assert body["external_value"] == 300000.0
+    assert body["total_value"] == 1020000.0
+
+    # allocation の weight の合計は 1.0（誤差許容）
+    import pytest
+
+    total_weight = sum(s["weight"] for s in body["allocation"])
+    assert total_weight == pytest.approx(1.0, abs=1e-6)
+
+    # policy_targets の単位確認（0..1）
+    targets = body["policy_targets"]
+    assert 0 <= (targets.get("target_cash_ratio") or 0) <= 1
+    assert 0 <= (targets.get("max_position_weight") or 0) <= 1
+
+
+# ---------------------------------------------------------------------------
+# GET /portfolio/{id}/metrics
+# ---------------------------------------------------------------------------
+
+
+def test_portfolio_metrics_empty(client) -> None:
+    """保有銘柄がない場合は指標が null でも 200 を返す。"""
+    pid = _get_portfolio_id(client)
+    resp = client.get(f"/portfolio/{pid}/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["portfolio_id"] == pid
+    assert body["is_delayed"] is True
+    # 保有なし → 指標は null
+    assert body["annual_return"] is None
+    assert body["sharpe"] is None
+    assert body["correlation"]["codes"] == []
+
+
+def test_portfolio_metrics_with_holdings(client) -> None:
+    """2 銘柄 + 日足があれば相関・シャープが計算される。"""
+    repo.upsert_stocks([STOCK_A, STOCK_B])
+    # 252 日分の日足を seed（metrics 計算には最低 2 行必要）
+    import random
+
+    random.seed(42)
+    prices_a = [1000.0]
+    prices_b = [2000.0]
+    for _ in range(100):
+        prices_a.append(prices_a[-1] * (1 + random.uniform(-0.02, 0.02)))
+        prices_b.append(prices_b[-1] * (1 + random.uniform(-0.02, 0.02)))
+
+    _seed_daily_quotes("72030", prices_a)
+    _seed_daily_quotes("67580", prices_b)
+
+    pid = _get_portfolio_id(client)
+
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1000,
+            "traded_at": "2026-01-10",
+        },
+    )
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "67580",
+            "side": "buy",
+            "shares": 50,
+            "price": 2000,
+            "traded_at": "2026-01-10",
+        },
+    )
+
+    resp = client.get(f"/portfolio/{pid}/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["portfolio_id"] == pid
+    assert body["is_delayed"] is True
+
+    # 2 銘柄があれば correlation.codes は 2 要素
+    corr = body["correlation"]
+    assert len(corr["codes"]) == 2
+    assert len(corr["matrix"]) == 2
+
+    # deviations が返る（policy の DEFAULT_POLICY から）
+    assert isinstance(body["deviations"], list)
+
+
+# ---------------------------------------------------------------------------
+# POST /portfolio/{id}/optimize
+# ---------------------------------------------------------------------------
+
+
+def test_portfolio_optimize(client) -> None:
+    """2 銘柄 + 日足があれば最適化が動く（infeasible でなければウェイトが返る）。"""
+    repo.upsert_stocks([STOCK_A, STOCK_B])
+    import random
+
+    random.seed(0)
+    prices_a = [1000.0]
+    prices_b = [2000.0]
+    for _ in range(100):
+        prices_a.append(prices_a[-1] * (1 + random.uniform(-0.02, 0.02)))
+        prices_b.append(prices_b[-1] * (1 + random.uniform(-0.02, 0.02)))
+
+    _seed_daily_quotes("72030", prices_a)
+    _seed_daily_quotes("67580", prices_b)
+
+    pid = _get_portfolio_id(client)
+
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1000,
+            "traded_at": "2026-01-10",
+        },
+    )
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "67580",
+            "side": "buy",
+            "shares": 50,
+            "price": 2000,
+            "traded_at": "2026-01-10",
+        },
+    )
+
+    resp = client.post(f"/portfolio/{pid}/optimize")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["portfolio_id"] == pid
+    assert body["is_delayed"] is True
+    assert "infeasible" in body
+    assert "weights" in body
+
+    # infeasible でなければ weights に company_name が付く
+    if not body["infeasible"]:
+        for w in body["weights"]:
+            assert "code" in w
+            assert "target_weight" in w
+            # target_weight は 0..1
+            assert 0 <= w["target_weight"] <= 1

@@ -196,3 +196,46 @@ class JQuantsAdapter:
             "is_etf": is_etf,
             "updated_at": fetched_at,
         }
+
+    # --- 財務・決算（Phase 2・0005_financials） --------------------------------
+
+    def fetch_financials(
+        self,
+        code: str | None = None,
+        date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """財務・決算データを取得し、内部列名に正規化して返す（phase2-spec.md §3.2）。
+
+        V2 財務エンドポイント（/v2/fins/statements）を使用する想定だが、
+        パス名・実フィールド名は未確定（jquants.md §6 要再確認）。
+        `code` 指定で 1 銘柄、`date` 指定でその日開示の全銘柄を取得する
+        （日付一括が有効かも実機確認待ち）。
+
+        フィールド名は `_first` の候補キーフォールバックで略記・フルネーム両対応にする。
+        """
+        params: dict[str, Any] = {}
+        if code:
+            params["code"] = _to_jq_code(code)
+        if date:
+            params["date"] = date
+        raw = self._get_paginated("/v2/fins/statements", params)
+        return [self._normalize_financial(r) for r in raw]
+
+    @staticmethod
+    def _normalize_financial(r: dict[str, Any]) -> dict[str, Any]:
+        """財務行を内部列名に正規化する（phase2-spec.md §3.2・外部キー名→内部列名）。
+
+        V2 の実フィールド名は未確定のため、`_first` で略記・フルネーム両対応にする
+        （jquants.md §6 要再確認）。候補キーの順序は「短縮形 → フルネーム → 内部名」。
+        """
+        return {
+            "code": _first(r, ["Code", "code"]),
+            "disclosed_date": _norm_date(_first(r, ["DisclosedDate", "disclosed_date", "Date"])),
+            # TypeOfCurrentPeriod: 'FY', '1Q', '2Q', '3Q' 等（実機確認待ち）
+            "fiscal_period": _first(r, ["TypeOfCurrentPeriod", "FiscalPeriod", "fiscal_period"]),
+            "net_sales": _first(r, ["NetSales", "Sales", "net_sales"]),
+            "operating_profit": _first(r, ["OperatingProfit", "operating_profit"]),
+            "profit": _first(r, ["Profit", "NetIncome", "profit"]),
+            "eps": _first(r, ["EarningsPerShare", "EPS", "eps"]),
+            "bps": _first(r, ["BookValuePerShare", "BPS", "bps"]),
+        }

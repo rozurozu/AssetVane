@@ -1,0 +1,102 @@
+"""主要指数取得ジョブ — IndexAdapter で日次終値を取得し index_quotes に UPSERT する。
+
+phase2-spec.md §3.1。`config.index_symbol_list` のシンボルごとに
+`IndexAdapter.fetch_index_quotes` を呼び、差分は
+`fetch_meta['index_quotes:<symbol>']` で管理する（既存 `fetch_meta` 流儀・ADR-018）。
+例外はジョブ境界で握り `JobResult(ok=False)` で返す（fetch_quotes.py の構造を踏襲）。
+書き込みは UPSERT で冪等（ADR-002）。
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import date, timedelta
+
+from app.adapters.index import IndexAdapter, IndexAdapterError
+from app.batch.runner import JobResult
+from app.config import settings
+from app.db import repo
+from app.db.engine import get_engine
+
+logger = logging.getLogger(__name__)
+
+_SOURCE_PREFIX = "index_quotes"  # fetch_meta の source キー接頭辞
+
+
+def _source_key(symbol: str) -> str:
+    """シンボルごとの fetch_meta source キーを返す（例: 'index_quotes:^SPX'）。"""
+    return f"{_SOURCE_PREFIX}:{symbol}"
+
+
+def _start_date_for_symbol(symbol: str, today: str) -> str:
+    """シンボルの取得開始日を fetch_meta から決める（差分取得・ADR-018 部分失敗からの再開）。
+
+    fetch_meta 未存在 → BACKFILL_YEARS 分を頭から。
+    fetch_meta あり → last_fetched_date の翌日から today まで。
+    """
+    last = date.fromisoformat(today)
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, _source_key(symbol))
+        last_fetched = meta.get("last_fetched_date") if meta else None
+
+    if last_fetched is None:
+        return last.replace(year=last.year - settings.backfill_years).isoformat()
+
+    return (date.fromisoformat(last_fetched) + timedelta(days=1)).isoformat()
+
+
+def run() -> JobResult:
+    """主要指数の日次終値を取得し index_quotes / fetch_meta を前進させる（spec §3.1）。
+
+    config.index_symbol_list のシンボルをループし、それぞれ差分取得して UPSERT する。
+    シンボルごとに例外が発生しても後続シンボルを継続し、最終的に 1 件でも失敗なら ok=False。
+    例外はジョブ境界で握り runner が Discord 通知する（ADR-018）。
+    """
+    today = date.today().isoformat()
+    symbols = settings.index_symbol_list
+
+    total_rows = 0
+    failed_symbols: list[str] = []
+
+    adapter = IndexAdapter()
+
+    for symbol in symbols:
+        start = _start_date_for_symbol(symbol, today)
+        if start > today:
+            logger.info(
+                "fetch_index: %s は最新（start=%s > today=%s）。スキップ。", symbol, start, today
+            )
+            continue
+
+        try:
+            rows = adapter.fetch_index_quotes(symbol, from_=start, to=today)
+            # symbol/date が欠けた行は弾く（PK が NULL だと UPSERT が壊れる）
+            rows = [r for r in rows if r.get("symbol") and r.get("date")]
+            if rows:
+                total_rows += repo.upsert_index_quotes(rows)
+                # fetch_meta を最新取得日まで前進させる（ADR-018 部分失敗からの再開）
+                max_date = max(r["date"] for r in rows)
+                repo.upsert_fetch_meta(_source_key(symbol), max_date)
+            else:
+                # 空配列でも fetch_meta を today まで前進させる（再実行で空振りを繰り返さない）
+                repo.upsert_fetch_meta(_source_key(symbol), today)
+            logger.info("fetch_index: %s %s〜%s・%d 行 UPSERT", symbol, start, today, len(rows))
+        except (IndexAdapterError, Exception) as exc:  # noqa: BLE001 — ジョブ境界で握る
+            logger.exception("fetch_index: %s が失敗（start=%s）", symbol, start)
+            failed_symbols.append(f"{symbol}: {exc}")
+
+    if failed_symbols:
+        detail = f"失敗シンボル: {', '.join(failed_symbols)}"
+        return JobResult(
+            name="fetch_index",
+            ok=False,
+            rows=total_rows,
+            detail=detail,
+        )
+
+    return JobResult(
+        name="fetch_index",
+        ok=True,
+        rows=total_rows,
+        detail=f"シンボル {len(symbols)} 件・{total_rows} 行 UPSERT（〜{today}）",
+    )

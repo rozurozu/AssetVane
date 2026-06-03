@@ -101,3 +101,53 @@ def test_normalize_stock() -> None:
     assert s["sector17_code"] == "6"
     assert s["market_code"] == "0111"
     assert s["is_etf"] == 0
+
+
+# V2 財務エンドポイントの実フィールド名は未確定（jquants.md §6 要再確認）。
+# 以下は _first フォールバックの動作を確認するためのサンプル dict を使用する。
+FINANCIALS_ROW_FULL = {
+    "Code": "72030",
+    "DisclosedDate": "2026-05-10",
+    "TypeOfCurrentPeriod": "FY2025",
+    "NetSales": 45000000000.0,
+    "OperatingProfit": 3500000000.0,
+    "Profit": 2800000000.0,
+    "EarningsPerShare": 850.5,
+    "BookValuePerShare": 7200.0,
+}
+
+# 略記形式（実機確認後に修正・フォールバック機構の動作確認用）。
+FINANCIALS_ROW_SHORT = {
+    "code": "67580",
+    "disclosed_date": "2025-11-15",
+    "fiscal_period": "2Q2025",
+    "net_sales": 22000000000.0,
+    "operating_profit": 1800000000.0,
+    "profit": 1400000000.0,
+    "eps": 420.0,
+    "bps": 6800.0,
+}
+
+
+def test_normalize_financial_full_keys() -> None:
+    """V2 フルネームキーが内部列名に正規化される（_first フォールバック確認）。"""
+    row = JQuantsAdapter._normalize_financial(FINANCIALS_ROW_FULL)
+    assert row["code"] == "72030"
+    assert row["disclosed_date"] == "2026-05-10"
+    assert row["fiscal_period"] == "FY2025"
+    assert row["net_sales"] == 45000000000.0
+    assert row["operating_profit"] == 3500000000.0
+    assert row["profit"] == 2800000000.0
+    assert row["eps"] == 850.5
+    assert row["bps"] == 7200.0
+
+
+def test_normalize_financial_short_keys() -> None:
+    """内部列名キー（略記形式）も _first フォールバックで正規化される。"""
+    row = JQuantsAdapter._normalize_financial(FINANCIALS_ROW_SHORT)
+    assert row["code"] == "67580"
+    assert row["disclosed_date"] == "2025-11-15"
+    assert row["fiscal_period"] == "2Q2025"
+    assert row["net_sales"] == 22000000000.0
+    assert row["eps"] == 420.0
+    assert row["bps"] == 6800.0
