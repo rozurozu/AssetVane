@@ -179,6 +179,7 @@ J-Quants V2 `/v2/fins/summary` 由来。
 
 - インデックス `(date, signal_type)`。
 - **UNIQUE 制約 `(date, code, signal_type)`**: 夜間バッチの再計算が冪等 UPSERT（`on_conflict_do_update`）で壊れないための土台（[ADR-002](decisions.md)）。PK は `id` のみのため、論理的な一意性はこの複合 UNIQUE で担保する（`0003_signals`・定義レーン=quant）。
+- **`score` は連続値（0..1）の「材料」**（[ADR-026](decisions.md)）: signals は **AI Advisor に渡す材料**で、閾値は破壊的ゲートにせず `payload.notable` フラグ＋読み取り時カットオフに留める。夜間バッチは**低フロア以上を広めに保存**して near-miss を残し、絞り込みは AI（`screen_stocks`）と一覧 UI が行う。個別銘柄の素の指標（SMA/RSI 等）は保存せず `get_indicators(code)` で都度計算する（初期・[ADR-016](decisions.md) のコード手法を共有）。手法パラメータの管理は [ADR-027](decisions.md)。
 
 ---
 
