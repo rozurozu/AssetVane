@@ -27,11 +27,22 @@ def temp_db(tmp_path, monkeypatch) -> Iterator[None]:
 
 
 @pytest.fixture
-def client(temp_db) -> Iterator[object]:
-    """TestClient（lifespan 発火 = init_db）。temp_db 上で動く。"""
+def client(tmp_path, monkeypatch) -> Iterator[object]:
+    """TestClient（lifespan 発火 = init_db）。一時 SQLite を alembic 経路で用意する。
+
+    `temp_db`（create_schema）には依存しない。lifespan の `init_db()`（alembic upgrade）が
+    スキーマを作るので、create_schema と二重に作ると `op.create_table`（0002/0003）が
+    "table already exists" で落ちるため。本番と同じ alembic 経路でスキーマを得る。
+    """
+    db_file = tmp_path / "test.db"
+    monkeypatch.setattr(settings, "database_path", str(db_file))
+    db_engine.reset_engine()
+
     from fastapi.testclient import TestClient
 
     from app.main import app
 
     with TestClient(app) as c:
         yield c
+
+    db_engine.reset_engine()

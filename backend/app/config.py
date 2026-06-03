@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     # --- 通知 (Discord) --- Phase 6〜
     discord_webhook_url: str = ""
 
+    # --- 夜間バッチ / cron --- Phase 1〜（spec §3.7・ADR-021・ADR-011）
+    # APScheduler を FastAPI プロセスに同居させる（追加コンテナ 0）。
+    # dev の --reload 二重起動を避けるため既定は false（prod で true）。
+    batch_scheduler_enabled: bool = False
+    batch_cron_hour: int = 2  # 既定 02:00 JST（U-9・spec §3.7）
+    batch_cron_minute: int = 0
+    batch_tz: str = "Asia/Tokyo"
+    # 初回バックフィルで頭から取り直す年数（spec §3.4）。
+    backfill_years: int = 2
+    # J-Quants 取得のスロットル間隔（秒）。Free=13.0 / Light=1.0（ADR-008・spec §3.4・L-6）。
+    jquants_min_interval_seconds: float = 13.0
+
     @property
     def cors_origins(self) -> list[str]:
         """カンマ区切りの CORS オリジンをリストにする。"""

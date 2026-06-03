@@ -76,10 +76,13 @@ class JQuantsAdapter:
             )
         self._base_url = base_url
         self._last_request_ts = 0.0  # スロットル用（monotonic 時刻）
+        # スロットル間隔は設定から読む（Free=13.0 / Light=1.0・ADR-008・spec §3.4・L-6）。
+        # モジュール定数 _MIN_INTERVAL_SECONDS はフォールバック既定。
+        self._min_interval = settings.jquants_min_interval_seconds or _MIN_INTERVAL_SECONDS
 
     def _throttle(self) -> None:
-        """前回リクエストから最低 _MIN_INTERVAL_SECONDS あける（Free 5 req/分対策）。"""
-        wait = _MIN_INTERVAL_SECONDS - (time.monotonic() - self._last_request_ts)
+        """前回リクエストから最低 self._min_interval あける（Free 5 req/分対策）。"""
+        wait = self._min_interval - (time.monotonic() - self._last_request_ts)
         if wait > 0:
             time.sleep(wait)
         self._last_request_ts = time.monotonic()
@@ -161,6 +164,21 @@ class JQuantsAdapter:
             raw = self._get_paginated("/v2/equities/master", {"code": _to_jq_code(code)})
             out.extend(self._normalize_stock(r, now) for r in raw)
         return out
+
+    def fetch_master_all(self) -> list[dict[str, Any]]:
+        """全銘柄マスタを `code` 無しで一括取得する（spec §3.6・sync_master）。
+
+        `bars/daily` の日付一括と同じパターンで `/v2/equities/master` を `code` を渡さずに叩き、
+        全銘柄（約4000・ETF/REIT 含む）を 1〜数 req で取得することを試みる版。`fetch_master`
+        （1 件ずつループ＝全件で14時間超）の代替（裁定 L-5）。
+
+        全件返れば正規化して返す。空配列が返った場合（このエンドポイントが code 必須だった等）も
+        そのまま `[]` を返し、呼び出し側（sync_master）が daily の code 補完にフォールバックできる
+        ようにする。HTTP 失敗は JQuantsError として送出（呼び出し側が握る）。
+        """
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        raw = self._get_paginated("/v2/equities/master", {})
+        return [self._normalize_stock(r, now) for r in raw]
 
     @staticmethod
     def _normalize_stock(r: dict[str, Any], fetched_at: str) -> dict[str, Any]:

@@ -1,10 +1,13 @@
-"""Phase 0 バックフィル（手動・数銘柄）。
+"""Phase 0 バックフィル（手動・数銘柄）＋ Phase 1 夜間バッチの手動起動。
 
-    uv run python -m app.scripts.backfill            # 既定 3 銘柄
-    uv run python -m app.scripts.backfill 7203 6758  # 任意の銘柄
+    uv run python -m app.scripts.backfill            # 既定 3 銘柄（Phase 0 互換）
+    uv run python -m app.scripts.backfill 7203 6758  # 任意の銘柄（Phase 0 互換）
+    uv run python -m app.scripts.backfill --nightly  # 全銘柄バッチ（full_backfill・Phase 1）
 
 J-Quants V2 → SQLite（stocks / daily_quotes）を UPSERT で冪等に投入する。
-再実行しても重複行は増えない（ADR-002・Phase 0 完了条件）。全銘柄・差分・cron は Phase 1。
+再実行しても重複行は増えない（ADR-002・Phase 0 完了条件）。`--nightly` は `run_nightly`
+（全銘柄バッチ・signals 計算）を full_backfill で呼ぶ薄い分岐（spec §3.3）。flock で同居
+スケジューラと相互排他される（spec §3.5）。
 """
 
 from __future__ import annotations
@@ -41,8 +44,35 @@ def backfill(codes: list[str]) -> int:
     return total_quotes
 
 
+def run_nightly_cli() -> int:
+    """`--nightly`: 全銘柄バッチを full_backfill で 1 回流す（spec §3.3）。
+
+    既存の 3 銘柄バックフィルとは別経路。run_nightly 内で init_db・ロック取得・通知まで完結する。
+    """
+    # 重い依存（pandas/apscheduler 連鎖）を Phase 0 互換経路に引き込まないよう遅延 import する。
+    from app.batch import run_nightly
+    from app.batch.lock import BatchAlreadyRunning
+    from app.db.engine import init_db
+
+    init_db()
+    try:
+        results = run_nightly(full_backfill=True)
+    except BatchAlreadyRunning as exc:
+        print(f"✖ 既にバッチが実行中です: {exc}", file=sys.stderr)
+        return 1
+
+    for r in results:
+        mark = "✔" if r.ok else "✖"
+        print(f"  {mark} {r.name}: rows={r.rows} {r.detail}")
+    return 0 if all(r.ok for r in results) else 1
+
+
 def main() -> int:
-    codes = sys.argv[1:] or DEFAULT_CODES
+    args = sys.argv[1:]
+    if "--nightly" in args:
+        return run_nightly_cli()
+
+    codes = args or DEFAULT_CODES
     try:
         backfill(codes)
     except JQuantsError as exc:

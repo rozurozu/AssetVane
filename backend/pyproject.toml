@@ -11,6 +11,9 @@ dependencies = [
     "sqlalchemy>=2.0",
     "httpx>=0.27",
     "alembic>=1.13",
+    "numpy>=2.0",       # quant 自前指標（Phase 1・spec §7）
+    "pandas>=2.2",      # 時系列（Phase 1・spec §7）
+    "apscheduler>=3.10",  # cron 方式 C・APScheduler 同居（Phase 1・spec §3.7）
 ]
 
 # アプリケーション（ライブラリではない）なので非パッケージモードで扱う。

@@ -82,7 +82,7 @@ export const nav = [
   {
     group: "分析",
     items: [
-      { label: "Signals", icon: "📈", phase: "P1" },
+      { label: "Signals", icon: "📈", href: "/signals" },
       { label: "Portfolio", icon: "⚖", phase: "P2" },
       { label: "Watchlist", icon: "👁", phase: "P4" },
     ],

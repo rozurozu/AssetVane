@@ -42,6 +42,8 @@ def _build_engine() -> Engine:
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA foreign_keys=ON")
+        # 夜間バッチと昼 API の稀な書×書競合をリトライ吸収する（Phase 1・spec §3.5・ADR-002）。
+        cur.execute("PRAGMA busy_timeout=5000")
         cur.close()
 
     return engine

@@ -22,5 +22,12 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
     with get_engine().connect() as conn:
         names = set(inspect(conn).get_table_names())
     reset_engine()
-    # 業務テーブル＋ alembic のバージョン管理テーブルが揃う。
-    assert {"stocks", "daily_quotes", "alembic_version"} <= names
+    # 業務テーブル（Phase 0 の2表＋ Phase 1 の fetch_meta/signals）＋ alembic 管理表。
+    # 0001 を2表に凍結し 0002/0003 で追加表を作るチェーンが fresh DB で通ることを確かめる。
+    assert {
+        "stocks",
+        "daily_quotes",
+        "fetch_meta",
+        "signals",
+        "alembic_version",
+    } <= names
