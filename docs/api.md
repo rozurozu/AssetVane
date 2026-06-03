@@ -51,7 +51,14 @@
 | GET | `/journal?from=&to=` | 投資日記の取得 |
 | GET | `/proposals?status=` | AI 提案の取得（pending/approved/rejected）|
 | POST | `/proposals/{id}/approve` / `/reject` | 提案の承認・却下 |
-| POST | `/chat` | 相談チャット（軸2）。body に **画面コンテキスト** `context: { page, focus?: { type, code } }` を含む（軽量ヒント・**数値は含めない**＝[ADR-025](decisions.md)・[advisor.md §6.1](advisor.md)・[screens.md §5](screens.md)）。ストリーミング対応は実装時に決定 |
+| POST | `/chat` | 相談チャット（軸2）。下記の **画面コンテキスト** と **Tool 実行可視化** を持つ（軽量ヒント・**数値は含めない**＝[ADR-025](decisions.md)・[advisor.md §6.1](advisor.md)・[screens.md §5](screens.md)）。ストリーミング対応は実装時に決定 |
+
+**`/chat` の context / tool_runs（`_arbitration.md` 決定3）**
+
+- **body の画面コンテキスト**: `context: { page, focus?: { type, code?, id? } }`。
+  - `focus.type` は `"stock" | "portfolio" | "signal" | "proposal"`。`stock`/`signal` は `code`、`portfolio`/`proposal` は `code` を持たないため `id`（数値）を使う（両対応）。対象が無いページ（Dashboard 等）は `focus` 省略。
+  - 数値・画面データは載せない。AI は事実が要れば該当 Tool で取り直す（[ADR-025](decisions.md)）。
+- **レスポンスの Tool 実行可視化**: `tool_runs: [{ name, args? }]`。UI で「⚙ get_signals 実行」のように呼んだ Tool（と引数）を出す（[screens.md §4](screens.md)）。**Tool 結果の数値はレスポンスに載せない**（[ADR-025](decisions.md)）。`tool_calls_made: string[]` は廃止。
 
 ## 5. 銘柄ドシエ・watchlist（Phase 4〜）
 
@@ -73,6 +80,27 @@
 ## 7. 未確定（実装時に OpenAPI で確定）
 
 - 各エンドポイントのリクエスト/レスポンスの詳細スキーマ。
-- `/chat` のストリーミング（SSE）有無とメッセージ形式。`context`（画面コンテキスト）の詳細スキーマも実装時に OpenAPI で確定。
-- `GET /policy` のレスポンスで構造化コアと `rationale`（自由文）を分けて返す形（画面で見せ方が違うため＝[screens.md §3](screens.md)）。
-- ページネーション方式（`/quotes` `/journal` 等）。
+- `/chat` のストリーミング（SSE）有無とメッセージ形式。`context`（画面コンテキスト）の正本形は §4 に確定済み（実キーの細部は OpenAPI で確定）。
+
+### `GET /policy` のレスポンス（構造化コア／rationale 分離・確定）
+
+画面で見せ方が違うため（構造化コアはチップ/グリッド・`rationale` は引用調＝[screens.md §3](screens.md)）、**構造化コア（`core`）と自由文（`rationale`）を分けて返す**（`_arbitration.md`・[DOC-7]）。
+
+```jsonc
+GET /policy ->
+  {
+    core: {
+      risk_tolerance, time_horizon, target_cash_ratio, max_position_weight,
+      sector_caps, target_return, no_leverage, exclusions
+    },
+    rationale,   // 自由文の理念・機微（引用調で表示）
+    updated_at
+  }
+  // 比率系（target_cash_ratio / max_position_weight 等）は 0..1。UI でのみ %。
+```
+
+`PUT /policy` も `core` と `rationale` を分けて受ける（構造化コアの更新は承認制、`rationale` は即時＝[ADR-013](decisions.md)・`_arbitration.md` U-7）。
+
+### ページネーション
+
+- `/quotes`・`/journal` の**ページネーションは当面なし**。期間は `from`/`to` の範囲指定で代替する（[DOC-6]）。データ量が問題になった段階で導入を検討する。

@@ -82,6 +82,10 @@ curl -G https://api.jquants.com/v2/equities/bars/daily \
 4. **各エンドポイントの実レスポンスのフィールド名**: `data-model.md` の列名は設計案。実際の JSON キー名は実機で確認して合わせる。
    - ✅ **確認済み（2026-06）**: `master` と `bars/daily`。**V2 は略記キー**（`O/H/L/C/Vo/Va/AdjC/AdjFactor`、`CoName/S33/S17/Mkt` 等）でエンベロープは `{"data":[...]}`（`pagination_key` 付き）。対応表は [data-model.md](data-model.md) の各テーブル節。**ネットの V1 記事はフルネーム（`Open/CompanyName`…）なので流用不可**。
    - ⬜ 未確認: `fins/summary`（財務）。Phase 2 で確認する。
+5. **`/v2/equities/master` の `code` 無し全件取得可否**: 銘柄マスタを `code` を渡さず叩いて全上場銘柄を一括で取れるか（`bars/daily` の日付一括と同様に成立するか）を実機確認する。不可なら `bars/daily` で得た `code` 集合から不足分を補完する（Phase 1・`_arbitration.md` L-5）。
+6. **V2 の取引日カレンダー API の有無**: 営業日（取引日）の一覧を返す V2 エンドポイントがあるか。無ければ営業日判定は「曜日で土日除外＋祝日は空レスポンスで吸収」で代替する（Phase 1・`_arbitration.md` L-3）。
+7. **V2 の主要指数 API（TOPIX / 日経平均）の有無**: TOPIX・日経平均等の指数水準を返す V2 エンドポイントがあるか。無ければ `IndexAdapter`（Stooq 既定）で取得する（Phase 2・`index_quotes`・`_arbitration.md` L-10）。
+8. **V2 財務（statements）エンドポイント**: `/v2/fins/summary` 以外に決算明細を返すエンドポイントが V2 に残るか、`financials`（[data-model.md §2](data-model.md)）の取得に必要なフィールド（売上/営業利益/純利益/EPS/BPS・開示日・会計期間）が summary で揃うかを実機確認する（Phase 2・`fetch_financials` ジョブの前提）。
 
 ---
 

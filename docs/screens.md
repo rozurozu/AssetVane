@@ -93,7 +93,7 @@ AssetVane の画面構成（情報設計）、ナビゲーション、Dashboard 
 画面に落として浮かんだ、**まだ決めていない**設計上の宿題。決定ではなく記録として残す。
 
 - **(a) 提案間の依存**: `proposals` テーブルに「この提案は別の提案の承認が前提」を表す列が無い（例: policy 変更 → buy）。承認順序の制御が要るなら列追加を検討（[data-model.md](data-model.md)）。
-- **(b) 逸脱の計算主体**: 「現状 vs policy の逸脱」（最大銘柄比率 18.2% / 上限15% 等）は **Python が事実として計算**すべき（AI に計算させない）。`get_asset_overview` の戻り値に含めるか、新 Tool を立てるか未定（[advisor.md §4](advisor.md)）。
+- **(b) 逸脱の計算主体（確定）**: 「現状 vs policy の逸脱」（最大銘柄比率 18.2% / 上限15% 等）は **Python が事実として計算**する（AI に計算させない＝[ADR-014](decisions.md)）。**計算は quant の単一関数（1 か所）が行い、出力先は 2 つ** — 画面用は `/asset-overview.deviations`、AI のリスク文脈用は Tool `get_portfolio_metrics.deviations` に**同じ値を供給**する（`_arbitration.md` 決定6・[DOC-5]）。逸脱の `current`/`limit` は 0..1（UI でのみ %）。
 - **(c) Buy 提案承認の扱い（取引機能は持たない・方針確定）**: AssetVane は**発注・取引実行機能を持たない**（自動売買せず提示に徹する＝[ADR-001](decisions.md)・README）。Buy 提案の「承認」は `proposals.status` 上の状態遷移にすぎず、**約定を起こさない**。ユーザーは自分で発注し、約定したら `transactions` に手入力する（[ADR-019](decisions.md)）。残る UI 詳細は「承認時に取引記録の入力を促すか」程度。
 - **(d) Dashboard の集約**: `/asset-overview` 1 本に総資産・配分・逸脱・推移を集約しすぎる懸念。分割か集約エンドポイントかは Phase 2 着手時に決める（[api.md](api.md)）。
 
