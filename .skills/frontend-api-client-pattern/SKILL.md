@@ -1,0 +1,102 @@
+---
+name: frontend-api-client-pattern
+description: frontend から backend(FastAPI) を呼ぶ処理を追加・変更するときに必ず使う。データ取得・送信は lib/api.ts 経由のブラウザ fetch のみ（ADR-005・Next は DB に触らない）。fetch ラッパ・ApiError・NEXT_PUBLIC_API_BASE_URL・型を Pydantic と 1:1 で api.ts に集約する規約を規定する。Server Component 取得・Server Actions・Route Handler でのデータ取得を禁ずる。
+---
+
+# frontend API クライアント規約
+
+**Next は UI 専用。DB に触らず、backend とのやり取りは `lib/api.ts` 経由のブラウザ fetch に一本化する**（ADR-005）。型も `lib/api.ts` に集約し、backend の Pydantic モデルと 1:1 で対応させる。コンポーネント/フックは `lib/api.ts` の関数と型だけを使う（詳細な使い方は [[frontend-component-pattern]] の `useApi`）。
+
+## 絶対にやらないこと（ADR-005）
+
+- **Server Component での `await fetch()` データ取得**（page/layout のサーバー実行でデータを取る）。一般的な Next 標準パターンだが採用しない。理由: データ取得経路が「ブラウザ fetch」と「サーバー fetch」の 2 系統になり、CORS 設計・秘密情報の置き場・通信前提が崩れる。
+- **Server Actions / Route Handlers（`app/api/route.ts`）でのデータ取得・ミューテーション**。Next に「DB/バックエンドへの第二経路」を作らない。書き込み・取得はすべて FastAPI に集約。
+- **Next 側に DB アクセス（Prisma 等）を足す**。
+
+データ非依存の静的シェルを Server Component に保つのは OK（[[frontend-component-pattern]]）。禁じるのは「Next サーバーでのデータ取得・DB アクセス」。
+
+## 接続先と秘密情報
+
+- 接続先は **`process.env.NEXT_PUBLIC_API_BASE_URL`**（既定 `http://localhost:8000`）。`NEXT_PUBLIC_*` はブラウザに焼き込まれるので、**ブラウザから到達できる名前**を使う。
+- **秘密情報（J-Quants / LLM キー等）を frontend に置かない**。それらは backend の `.env` のみ。
+
+```ts
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+```
+
+## fetch ラッパと ApiError
+
+生 fetch をコンポーネントに散らさない。共通ラッパを 1 つ置き、各エンドポイント関数はそれを呼ぶ。
+
+```ts
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit & { signal?: AbortSignal }): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    ...init,
+  });
+  if (!res.ok) {
+    // FastAPI は {detail: "..."} で返す。detail を拾ってメッセージにする。
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {
+      // JSON でない/空ボディはステータス文のまま
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.json() as Promise<T>;
+}
+```
+
+規約:
+- **エラーは `throw`（`ApiError`）**。戻り値に `{ ok, error }` を混ぜない。`useApi`/呼び出し側が `catch` する（UI は `error: Error | null` で受ける）。
+- **`signal` を受け取り fetch に渡す**（`useApi` の `AbortController` でキャンセルできるように）。
+- レスポンスのエラーメッセージは FastAPI の `{ "detail": ... }` から拾う（router 境界で `HTTPException(detail=...)` に翻訳されている＝[[backend-router-pattern]]）。
+
+## エンドポイント関数
+
+各エンドポイントに薄い関数を 1 つ。GET は `signal` を受け、POST/PUT は body を受ける。
+
+```ts
+export function getQuotes(code: string, signal?: AbortSignal): Promise<Quote[]> {
+  return request<Quote[]>(`/quotes/${code}`, { signal });
+}
+
+export function postTransaction(input: TransactionInput): Promise<TransactionResult> {
+  return request<TransactionResult>("/transactions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+```
+
+- 関数名は `getXxx`/`postXxx`/`putXxx`/`deleteXxx`（動詞＋対象）。
+- パスは backend の `docs/api.md` 契約に一致させる。
+
+## 型は Pydantic と 1:1
+
+- レスポンス/リクエストの型を **`lib/api.ts` に `export interface`（または `type`）で集約**し、backend の Pydantic モデルと**フィールド名・null 許容・単位まで 1:1** に対応させる。型をコンポーネント側で個別定義しない。
+- **比率・weight・current/limit は内部 0..1**。UI でのみ ×100 して % 表示（ADR-008）。型コメントに単位を明記する（`weight: number | null; // 株式内比率 0..1（UI で ×100）`）。
+- backend の `Literal`（signal_type 等）は TS の union（`"momentum" | "volume_spike"`）に対応させる。
+- backend のモデルを変えたら api.ts の型も同じコミットで揃える（契約のズレを残さない）。
+
+## チェックリスト
+
+- [ ] 取得・送信は `lib/api.ts` 経由のブラウザ fetch のみ（Server 取得 / Server Action / Route Handler / DB アクセスを足していない）
+- [ ] 接続先は `NEXT_PUBLIC_API_BASE_URL`。秘密情報を frontend に置いていない
+- [ ] 共通 `request` ラッパ経由で、エラーは `ApiError` を throw（`{ok,error}` を返していない）
+- [ ] GET 関数は `signal` を受けて fetch に渡す（キャンセル対応）
+- [ ] エラーメッセージは FastAPI の `detail` を拾っている
+- [ ] 型は api.ts に集約し Pydantic と 1:1（フィールド名・null・単位）。比率は 0..1 でコメント明記
+- [ ] backend のモデル変更時に api.ts の型も同コミットで更新した
