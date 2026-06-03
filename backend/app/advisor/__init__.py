@@ -6,3 +6,6 @@
 from app.advisor.router import router
 
 __all__ = ["router"]
+
+# service / nightly は必要に応じて `from app.advisor import service` で参照する
+# （ここで eager import すると router → service → router の循環を招くため re-export しない）。

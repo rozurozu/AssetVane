@@ -28,6 +28,7 @@ docs/data-model.md §4。
 from __future__ import annotations
 
 from app.quant.backtest import backtest_portfolio
+from app.quant.indicators import compute_indicators
 from app.quant.momentum import compute_momentum
 from app.quant.optimize import optimize_portfolio
 from app.quant.portfolio import compute_deviations, compute_portfolio_metrics
@@ -36,6 +37,7 @@ from app.quant.volume_spike import compute_volume_spike
 __all__ = [
     "backtest_portfolio",
     "compute_deviations",
+    "compute_indicators",
     "compute_momentum",
     "compute_portfolio_metrics",
     "compute_volume_spike",

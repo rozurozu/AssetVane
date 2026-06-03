@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_model: str = "anthropic/claude-sonnet-4-6"
+    # LLM 呼び出しのタイムアウト・リトライ（phase3-spec.md §4.3/§7・data-arch §3.3・ADR-012/018）。
+    # AsyncOpenAI の timeout / max_retries に渡す。指数バックオフは base × 2^n。
+    llm_timeout_seconds: float = 60.0
+    llm_max_retries: int = 3
+    llm_retry_base_seconds: float = 2.0
+    # LLM コストガードレール（ADR-028・spec §7.1）。クラウド LLM 期間限定の月額ガード。
+    # mode: "off"（監視しない）/ "warn"（既定・止めず通知）/ "block"（超過で呼び出しを止める）。
+    # OpenRouter 実コスト（usage.cost）を llm_usage に積み、当月累計で判定。Ollama は $0。
+    llm_cost_limit_usd: float = 50.0
+    llm_cost_guard_mode: str = "warn"
 
     # --- API サーバ ---
     api_host: str = "0.0.0.0"

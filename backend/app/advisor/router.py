@@ -1,63 +1,89 @@
 """AI Advisor の REST ルータ（軸2・相談チャット）。
 
-`POST /chat`（api.md §4）。いまは「ただ LLM と話すだけ」の最小実装。
-サーバはステートレスで、会話履歴は frontend が保持して毎ターン messages 配列で送る。
+設計の真実: docs/phase-specs/phase3-spec.md §6.3・ADR-014/015/024/025。
 
-プロンプトの組み立て（CORE を先頭に差し込む）はここで行い、LLM アダプタ（llm.py）は
-運搬役に徹する（ADR-015）。POLICY・Tool・手法カード・文脈・画面コンテキストは後続フェーズで
-この組み立てに「層」として足していく（docs/advisor.md §6）。
+`POST /chat`（api.md §4）。CORE（不変・リポジトリ）＋ POLICY（DB）＋ 文脈（直近 journal）＋
+画面コンテキスト（軽量ヒント）を build_messages で組み、Tool ループ（service.run_tool_loop）で
+事実を Tool 経由で引きながら最終応答を返す（ADR-014）。サーバはステートレスで、会話履歴は
+frontend が保持し毎ターン messages 配列で送る（ADR-024・§6.4）。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from openai import OpenAIError
 from pydantic import BaseModel
 
-from app.advisor.llm import complete
+from app.advisor.llm import CostGuardError
+from app.advisor.prompt_builder import Message, ScreenContext, build_messages
+from app.advisor.service import run_tool_loop
+from app.advisor.tools.registry import CURRENT_PHASE
+from app.db import repo
+from app.db.engine import get_engine
+from app.services import policy as policy_service
 
 router = APIRouter(tags=["advisor"])
 
 # CORE プロンプトはリポジトリ内のファイル（ADR-015）。意図的なコミットでしか変わらない。
 # 起動時に1度だけ読む（チャットでは書き換えない）。
-_CORE_PROMPT = (Path(__file__).parent / "core_prompt.md").read_text(encoding="utf-8")
-
-
-class Message(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
+_CORE = (Path(__file__).parent / "core_prompt.md").read_text(encoding="utf-8")
 
 
 class ChatRequest(BaseModel):
+    """`POST /chat` のリクエスト（spec §6.3）。messages は user/assistant のみ（system 不可）。"""
+
     messages: list[Message]
-    # TODO(adr-025): 画面コンテキスト（page / focus）を context として受け取り、1 行の自然文に
-    #   compile して system の後ろに差す。数値は載せない（必要なら AI が Tool で取り直す）。
+    context: ScreenContext | None = None  # 画面コンテキスト（軽量ヒント・ADR-025）
+
+
+class ToolRun(BaseModel):
+    """チャットが呼んだ Tool の記録（UI 可視化用・spec §4.2）。結果の数値は載せない（ADR-025）。"""
+
+    name: str
+    args: dict[str, object] | None = None
 
 
 class ChatResponse(BaseModel):
+    """`POST /chat` のレスポンス（spec §6.3）。{reply} 契約は維持し tool_runs を足すだけ。"""
+
     reply: str
+    tool_runs: list[ToolRun] = []
 
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
-    """相談チャット。CORE を先頭に差し、会話を LLM に渡して応答を返すだけ。"""
-    # 組み立て: [CORE(system)] + 会話履歴。
-    # TODO(advisor): ここに POLICY（DB の policy をコンパイル）・手法カード・Tool Calling の
-    #   事実・直近の投資日記（文脈）を層として足す（docs/advisor.md §6）。
-    messages: list[dict[str, str]] = [{"role": "system", "content": _CORE_PROMPT}]
-    messages += [{"role": m.role, "content": m.content} for m in req.messages]
+    """相談チャット。POLICY/文脈/画面コンテキストを組み、Tool ループで応答を返す（spec §6.3）。"""
+    # POLICY（DEFAULT マージ済み）と直近 journal は読み取り接続で引く（ADR-005）。
+    with get_engine().connect() as conn:
+        policy = policy_service.get_policy(conn)
+        recent = repo.get_recent_journal_summary(conn)
+
+    messages = build_messages(
+        core_prompt=_CORE,
+        policy=policy,
+        conversation=req.messages,
+        screen_context=req.context,
+        recent_journal=recent,
+    )
 
     try:
-        reply = await complete(messages)
+        reply, tool_runs = await run_tool_loop(messages, phase=CURRENT_PHASE, source="chat")
+    except CostGuardError as exc:
+        # 月額コスト上限超過（block）。frontend が detail を吹き出しに出す（spec §7.1・ADR-028）。
+        raise HTTPException(
+            status_code=429,
+            detail=f"LLM 月額上限超過のため応答できません: {exc}",
+        ) from exc
     except OpenAIError as exc:
-        # 対話的なチャットなので、ここでは Discord 通知はしない（あれは無人バッチ＝ADR-018）。
-        # frontend がこの detail をエラー吹き出しとして表示する。
+        # 対話的なチャットなので Discord 通知はしない（あれは無人バッチ＝ADR-018）。
         raise HTTPException(
             status_code=502,
             detail=f"LLM への接続に失敗しました（base_url / モデル / Ollama 稼働を確認）: {exc}",
         ) from exc
 
-    return ChatResponse(reply=reply)
+    return ChatResponse(
+        reply=reply,
+        tool_runs=[ToolRun(name=r["name"], args=r.get("args")) for r in tool_runs],
+    )

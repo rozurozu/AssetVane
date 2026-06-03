@@ -1,24 +1,76 @@
 "use client";
 
-import { API_BASE } from "@/lib/api";
+// 相談チャットAI（軸2）の常駐フローティング UI（ADR-024・screens.md §4・spec §9.1）。
+// root layout に置きページ遷移で会話を保持。Tool 接続済みサーバへ毎ターン全 messages を送る（ステートレス）。
+// - 画面コンテキスト送信（ADR-025）: usePathname → ChatContext（数値は載せない）。
+// - tool_runs 可視化（screens.md §4）: AI が呼んだ Tool をチップ表示（結果値は出さない）。
+// - 会話の永続（U-6/ADR-029）: localStorage（同一ブラウザで永続）。サーバはステートレス維持。
+// - journal 昇格（ADR-029）: 「この会話を要約して journal に残す」アクション（ユーザー承認後のみ）。
+// - ドラッグ／リサイズ／最小化: 依存を増やさず自前 pointer ハンドル（OPEN-H）。
+
+import { onOpenAdvisorChat } from "@/lib/advisor-bus";
+import { type ChatMessage, type ToolRun, sendChat } from "@/lib/api";
+import { contextLabel, pathnameToContext } from "@/lib/chat-context";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-// 相談チャットAI（軸2）の常駐フローティング UI（ADR-024）。
-// 実 LLM 配線版（最小）。会話はクライアント保持（ステートレスなサーバへ毎ターン messages を送る）。
-// 永続化（localStorage / DB）・ストリーミング・画面コンテキスト送信は後続（下の TODO 参照）。
-const API = API_BASE;
+// assistant バブルは tool_runs を併せ持つ（user は持たない）。
+type Msg = ChatMessage & { tool_runs?: ToolRun[] };
 
-type Msg = { role: "user" | "assistant"; content: string };
+// localStorage キー（同一ブラウザで永続・ADR-029）。サイズ/位置は別キー。
+const LS_MESSAGES = "advisor.messages.v1";
+const LS_RECT = "advisor.rect.v1";
+
+const MIN_W = 320;
+const MIN_H = 360;
+
+type Rect = { w: number; h: number };
 
 export function AdvisorChat() {
+  const pathname = usePathname();
   const [open, setOpen] = useState(true);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [rect, setRect] = useState<Rect>({ w: 360, h: 520 });
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const resize = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // localStorage から会話・窓サイズを復元（マウント後 1 回・ADR-029）。
+  useEffect(() => {
+    try {
+      const m = localStorage.getItem(LS_MESSAGES);
+      if (m) setMessages(JSON.parse(m) as Msg[]);
+      const r = localStorage.getItem(LS_RECT);
+      if (r) setRect(JSON.parse(r) as Rect);
+    } catch {
+      // 壊れた JSON は無視して空から始める。
+    }
+    setHydrated(true);
+  }, []);
+
+  // 会話が変わるたび localStorage へ保存（同一ブラウザで永続）。
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(LS_MESSAGES, JSON.stringify(messages));
+    } catch {}
+  }, [messages, hydrated]);
+
+  // 窓サイズの永続。
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(LS_RECT, JSON.stringify(rect));
+    } catch {}
+  }, [rect, hydrated]);
+
+  // nav「Advisor」等からの open 要求を購読（OPEN-I・advisor-bus）。
+  useEffect(() => onOpenAdvisorChat(() => setOpen(true)), []);
 
   // 新しいメッセージが来たら最下部へ。
   // biome-ignore lint/correctness/useExhaustiveDependencies: messages 変化時に末尾へスクロール
@@ -26,38 +78,57 @@ export function AdvisorChat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages.length, busy]);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
-    if (!text || busy) return;
-    const next: Msg[] = [...messages, { role: "user", content: text }];
-    setMessages(next);
-    setInput("");
-    setBusy(true);
-    try {
-      const r = await fetch(`${API}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next }),
-      });
-      if (!r.ok) {
-        const detail = await r
-          .json()
-          .then((j) => j.detail as string)
-          .catch(() => `HTTP ${r.status}`);
-        throw new Error(detail);
+  // 1 ターン送信（context を載せる・数値は載せない＝ADR-025）。
+  const sendText = useCallback(
+    async (text: string) => {
+      const t = text.trim();
+      if (!t || busy) return;
+      const next: Msg[] = [...messages, { role: "user", content: t }];
+      setMessages(next);
+      setInput("");
+      setBusy(true);
+      try {
+        // 送信時の context は messages（user/assistant のみ）と分離して載せる。
+        const payloadMessages: ChatMessage[] = next.map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+        const data = await sendChat({
+          messages: payloadMessages,
+          context: pathnameToContext(pathname),
+        });
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", content: data.reply, tool_runs: data.tool_runs },
+        ]);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", content: `⚠ Advisor に繋がらなかった: ${msg}` },
+        ]);
+      } finally {
+        setBusy(false);
       }
-      const data = (await r.json()) as { reply: string };
-      setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: `⚠ Advisor に繋がらなかった: ${msg}` },
-      ]);
-    } finally {
-      setBusy(false);
-    }
-  }, [input, busy, messages]);
+    },
+    [busy, messages, pathname],
+  );
+
+  const send = useCallback(() => sendText(input), [sendText, input]);
+
+  // 会話を journal に残す（承認後のみ＝黙って自動保存しない・ADR-029/ADR-014）。
+  // TODO(phase3+): 専用の昇格 API 接続は後続。当面は定型メッセージを sendChat に送る簡易実装。
+  const promoteToJournal = useCallback(() => {
+    if (busy || messages.length === 0) return;
+    if (!window.confirm("この会話を要約して journal に残すのだ？（AI が要約を作る）")) return;
+    void sendText("この会話を要約して journal（投資日記）に残してほしいのだ。");
+  }, [busy, messages.length, sendText]);
+
+  const clearChat = useCallback(() => {
+    if (busy) return;
+    if (!window.confirm("この端末の会話履歴を消すのだ？")) return;
+    setMessages([]);
+  }, [busy]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -91,6 +162,28 @@ export function AdvisorChat() {
     drag.current = null;
   }, []);
 
+  // リサイズハンドル（右下角・自前 pointer・依存なし＝OPEN-H）。
+  const onResizeDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.stopPropagation();
+      resize.current = { x: e.clientX, y: e.clientY, w: rect.w, h: rect.h };
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    [rect],
+  );
+
+  const onResizeMove = useCallback((e: React.PointerEvent) => {
+    const r = resize.current;
+    if (!r) return;
+    const w = Math.max(MIN_W, Math.min(r.w + (e.clientX - r.x), window.innerWidth - 8));
+    const h = Math.max(MIN_H, Math.min(r.h + (e.clientY - r.y), window.innerHeight - 8));
+    setRect({ w, h });
+  }, []);
+
+  const onResizeUp = useCallback(() => {
+    resize.current = null;
+  }, []);
+
   if (!open) {
     return (
       <button
@@ -104,14 +197,23 @@ export function AdvisorChat() {
   }
 
   const style = pos
-    ? { left: pos.left, top: pos.top, right: "auto" as const, bottom: "auto" as const }
-    : { right: 16, bottom: 16 };
+    ? {
+        left: pos.left,
+        top: pos.top,
+        right: "auto" as const,
+        bottom: "auto" as const,
+        width: rect.w,
+        height: rect.h,
+      }
+    : { right: 16, bottom: 16, width: rect.w, height: rect.h };
+
+  const ctxLabel = contextLabel(pathnameToContext(pathname));
 
   return (
     <div
       ref={chatRef}
       style={style}
-      className="fixed z-[65] flex h-[520px] w-[360px] flex-col overflow-hidden rounded-xl border border-hairline bg-surface-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
+      className="fixed z-[65] flex flex-col overflow-hidden rounded-xl border border-hairline bg-surface-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
     >
       {/* ヘッダー：掴んでドラッグ移動 */}
       <div
@@ -138,9 +240,9 @@ export function AdvisorChat() {
       </div>
 
       {/* 画面コンテキスト（指示語解決のヒント・数値は渡さない＝ADR-025）。
-          TODO(adr-025): いまは静的表示のみ。将来 page/focus を /chat の body に載せて送る。 */}
+          usePathname → ChatContext を実値で表示し、/chat の body に context として送る。 */}
       <div className="border-hairline-soft border-b bg-canvas px-3 py-1.5 text-[11px] text-ink-muted">
-        📍 見ているページ: <b className="text-accent">Dashboard</b> ・ 画面の数字を文脈に相談できる
+        📍 見ているページ: <b className="text-accent">{ctxLabel}</b> ・ 指示語はこの文脈で解決
       </div>
 
       <div ref={scrollRef} className="flex flex-1 flex-col gap-2.5 overflow-auto p-3">
@@ -148,12 +250,12 @@ export function AdvisorChat() {
           <div className="m-auto px-4 text-center text-[12px] text-ink-subtle leading-[1.6]">
             投資方針や銘柄の考え方を相談できるのだ。
             <br />
-            （いまは事実取得 Tool 未接続＝一般論ベース）
+            数値は AI が Tool で取り直して答える（ADR-014）。
           </div>
         )}
         {messages.map((m, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: 追記のみで並びは不変
-          <Bubble key={i} who={m.role === "user" ? "u" : "a"}>
+          <Bubble key={i} who={m.role === "user" ? "u" : "a"} toolRuns={m.tool_runs}>
             {m.content}
           </Bubble>
         ))}
@@ -163,6 +265,28 @@ export function AdvisorChat() {
           </Bubble>
         )}
       </div>
+
+      {/* 会話アクション：journal 昇格（承認後のみ）／履歴クリア。 */}
+      {messages.length > 0 && (
+        <div className="flex items-center gap-2 border-hairline-soft border-t px-3 py-1.5">
+          <button
+            type="button"
+            onClick={promoteToJournal}
+            disabled={busy}
+            className="rounded-md border border-hairline px-2 py-1 text-[11px] text-ink-muted hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+          >
+            📓 この会話を journal に残す
+          </button>
+          <button
+            type="button"
+            onClick={clearChat}
+            disabled={busy}
+            className="ml-auto rounded-md px-2 py-1 text-[11px] text-ink-subtle hover:text-down disabled:opacity-50"
+          >
+            履歴を消す
+          </button>
+        </div>
+      )}
 
       <div className="flex gap-2 border-hairline border-t px-3 py-2.5">
         <input
@@ -187,15 +311,51 @@ export function AdvisorChat() {
           ➤
         </button>
       </div>
+
+      {/* リサイズハンドル（右下角・自前 pointer・OPEN-H）。 */}
+      <div
+        onPointerDown={onResizeDown}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeUp}
+        className="absolute right-0 bottom-0 h-4 w-4 cursor-nwse-resize"
+        style={{
+          background:
+            "linear-gradient(135deg, transparent 50%, var(--color-ink-subtle) 50%, var(--color-ink-subtle) 60%, transparent 60%)",
+        }}
+      />
     </div>
   );
 }
 
-function Bubble({ who, children }: { who: "u" | "a"; children: React.ReactNode }) {
+function Bubble({
+  who,
+  toolRuns,
+  children,
+}: {
+  who: "u" | "a";
+  toolRuns?: ToolRun[];
+  children: React.ReactNode;
+}) {
   const base = "max-w-[88%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px] leading-[1.45]";
-  return who === "u" ? (
-    <div className={`${base} self-end bg-accent-weak text-ink`}>{children}</div>
-  ) : (
-    <div className={`${base} self-start border border-hairline bg-canvas`}>{children}</div>
+  if (who === "u") {
+    return <div className={`${base} self-end bg-accent-weak text-ink`}>{children}</div>;
+  }
+  return (
+    <div className="flex max-w-[88%] flex-col gap-1 self-start">
+      {/* tool_runs 可視化（screens.md §4）。呼んだ Tool 名のみ・結果値は出さない（ADR-025）。 */}
+      {toolRuns && toolRuns.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {toolRuns.map((t, i) => (
+            <span
+              key={`${t.name}-${i}`}
+              className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-muted"
+            >
+              ⚙ {t.name} 実行
+            </span>
+          ))}
+        </div>
+      )}
+      <div className={`${base} border border-hairline bg-canvas`}>{children}</div>
+    </div>
   );
 }

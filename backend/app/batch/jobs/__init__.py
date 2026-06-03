@@ -15,6 +15,7 @@ from app.batch.jobs import (
     fetch_financials,
     fetch_index,
     fetch_quotes,
+    run_advisor,
     snapshot_assets,
     sync_master,
 )
@@ -26,4 +27,5 @@ NIGHTLY_JOBS = [
     fetch_financials.run,
     calc_signals.run,
     snapshot_assets.run,  # Phase 2: 今日の株価確定後に評価額を焼く（phase2-spec.md §3.3）
+    run_advisor.run,  # Phase 3: 事実が揃ってから夜の分析AI を回す（phase3-spec.md §5）
 ]

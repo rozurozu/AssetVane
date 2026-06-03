@@ -3,34 +3,8 @@
 // proposals / policy / journal / watchlist / signals は Phase 3/4 で本配線予定。
 // 設計: docs/api.md / docs/screens.md §3。
 
-export const proposals = [
-  {
-    kind: "POLICY",
-    title: "1銘柄上限を 15% → 20% に引き上げ",
-    rationale:
-      "6920 レーザーテックが出来高急増＋モメンタム上位で、現方針「短期は攻める」と整合。集中投資になるため「大損回避」とトレードオフ。現金20%維持を前提に上限を一時緩和する提案。レバレッジは使わない（ゼロカット許容）。",
-  },
-  {
-    kind: "BUY",
-    title: "6920 レーザーテック ・ 100 株",
-    rationale:
-      "出来高が20日平均の3.4倍、25日線を上抜け（momentum 0.88）。get_indicators / get_signals の事実に基づく。半導体は既に 18.2% を占め集中度が上がる点に注意。上の policy 承認が前提。承認しても発注はしない（記録のみ・約定後に手入力）。",
-  },
-];
-
-export const policy = {
-  rationale:
-    "攻めるが退場はしない。資産が小さいうちは短期にリスクを取りリターンを狙う。ただし信用・レバレッジは使わない（個別の全損は受容するが借金は負わない）。全体の大損は現金バッファと1銘柄上限で避ける。",
-  core: [
-    { label: "リスク許容度", value: "高" },
-    { label: "時間軸", value: "短〜中" },
-    { label: "現金目標", value: "25%" },
-    { label: "1銘柄上限", value: "15%" },
-    { label: "目標リターン", value: "年+15%" },
-    { label: "レバレッジ", value: "不可", warn: true },
-  ],
-  footer: "業種上限: 半導体 30% ／ 除外: なし ・ 最終更新 2026-05-28（チャット）",
-};
+// proposals / policy / journal の mock は削除（Dashboard が GET /proposals・/policy・/journal に実配線・spec §9.6）。
+// signals / watchlist は Dashboard でまだモック表示なので残す（Phase 1/4 で本配線）。
 
 export const signals = [
   { code: "6920", name: "レーザーテック", score: 0.88, d5: "+7.4%", up: true, sig: "25MA上抜け" },
@@ -47,12 +21,7 @@ export const watchlist = [
   { code: "9433", name: "KDDI", last: "未調査", stale: true, action: "調査" },
 ];
 
-export const journal = {
-  meta: "2026-06-02 ・ openrouter",
-  body: "全体は含み益 +6.9% で推移。半導体の強さが続く一方、1銘柄集中（最大18.2% / 上限15%）が方針の「大損回避」と擦れてきた。現金は20.3%で目標25%をやや下回る。今晩のシグナルは momentum 上位に半導体が集中し過熱の兆候。上限緩和を提案するなら現金25%維持を条件にしたい。レバレッジ不可は崩さない。",
-};
-
-// href があるものは遷移可能（Next Link）。無いものは未投入 Phase（非活性）。
+// href があるものは遷移可能（Next Link）。action があるものはトリガ（Advisor=チャット起動）。無いものは未投入 Phase（非活性）。
 // アクティブ表示は Sidebar が usePathname() で判定する（ハードコードしない）。
 export const nav = [
   {
@@ -73,10 +42,11 @@ export const nav = [
   {
     group: "Advisor",
     items: [
-      { label: "Advisor", icon: "🧠", phase: "P3" },
-      { label: "Policy", icon: "🧭", phase: "P3" },
-      { label: "Journal", icon: "📓", phase: "P3" },
-      { label: "Proposals", icon: "✓", phase: "P3" },
+      // Advisor は専用ページを作らずチャット起動トリガ（onClick で open・OPEN-I・spec §9.6）。
+      { label: "Advisor", icon: "🧠", action: "advisor" },
+      { label: "Policy", icon: "🧭", href: "/policy" },
+      { label: "Journal", icon: "📓", href: "/journal" },
+      { label: "Proposals", icon: "✓", href: "/proposals" },
     ],
   },
   { group: "システム", items: [{ label: "Settings", icon: "⚙" }] },

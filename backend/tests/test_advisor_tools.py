@@ -1,0 +1,315 @@
+"""Tool Calling 層・LLM アダプタ拡張のテスト（phase3-spec.md §4・§7・§10）。
+
+DB は temp_db（一時 SQLite）、LLM・ネットは必ずモック（ネットを叩かない）。検証対象:
+- openai_tools(phase) の Phase ゲート（min_phase 超は出さない）。
+- handler の薄い橋渡し（検証→実関数→dict）と例外時 {"error": ...}。
+- compute_indicators の既知系列（sma/rsi 妥当・データ不足で None）。
+- complete のコストガード（block で CostGuardError・warn で続行・usage 計上）。
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import pandas as pd
+import pytest
+
+from app.advisor.tools import handlers
+from app.advisor.tools.registry import CURRENT_PHASE, REGISTRY, openai_tools
+from app.quant.indicators import compute_indicators
+
+# ---------------------------------------------------------------------------
+# Phase ゲート（openai_tools）
+# ---------------------------------------------------------------------------
+
+
+def test_openai_tools_phase1_only_p1_tools() -> None:
+    """openai_tools(1) は P1 Tool だけ（metrics/optimize/submit_journal を含まない）。"""
+    names = {t["function"]["name"] for t in openai_tools(1)}  # type: ignore[index]
+    assert names == {"get_indicators", "get_signals", "screen_stocks"}
+
+
+def test_openai_tools_phase3_includes_submit_journal() -> None:
+    """openai_tools(3) は submit_journal（min_phase=3）まで含む。"""
+    names = {t["function"]["name"] for t in openai_tools(3)}  # type: ignore[index]
+    assert "submit_journal" in names
+    assert "get_portfolio_metrics" in names  # P2 も含む
+    # dossier 系（P4）は登録自体しない。
+    assert "get_dossier" not in names
+
+
+def test_openai_tools_default_is_current_phase() -> None:
+    """既定引数は CURRENT_PHASE（=3）。"""
+    assert {t["function"]["name"] for t in openai_tools()} == {  # type: ignore[index]
+        t["function"]["name"]  # type: ignore[index]
+        for t in openai_tools(CURRENT_PHASE)
+    }
+
+
+def test_openai_tools_shape() -> None:
+    """各要素は {type: function, function: {name, description, parameters}} 形。"""
+    for tool in openai_tools(3):
+        assert tool["type"] == "function"
+        fn = tool["function"]  # type: ignore[index]
+        assert set(fn) == {"name", "description", "parameters"}  # type: ignore[arg-type]
+
+
+def test_registry_handlers_are_registered() -> None:
+    """REGISTRY の各 handler が handlers.py の関数に紐づく。"""
+    expected = {
+        "get_indicators",
+        "get_signals",
+        "screen_stocks",
+        "get_portfolio_metrics",
+        "optimize_portfolio",
+        "get_financials",
+        "get_asset_overview",
+        "submit_journal",
+    }
+    assert set(REGISTRY) == expected
+
+
+# ---------------------------------------------------------------------------
+# compute_indicators（既知系列・データ不足）
+# ---------------------------------------------------------------------------
+
+
+def test_compute_indicators_known_series() -> None:
+    """上昇系列で sma25<sma75 が崩れ、各指標が妥当な範囲に入る。"""
+    n = 120
+    df = pd.DataFrame(
+        {
+            "date": [f"2025-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(n)],
+            "adj_close": [100.0 + i for i in range(n)],  # 単調増加
+            "volume": [1000.0 + i for i in range(n)],
+        }
+    )
+    out = compute_indicators(df)
+    assert out["adj_close"] == pytest.approx(219.0)
+    # 単調増加なので短期 SMA > 長期 SMA。
+    assert out["sma25"] is not None and out["sma75"] is not None
+    assert out["sma25"] > out["sma75"]
+    # 連騰 → RSI は 100 付近（上端）。
+    assert out["rsi14"] == pytest.approx(100.0, abs=1e-6)
+    assert out["vol_ma20"] is not None
+    assert out["as_of"] == df["date"].iloc[-1]
+
+
+def test_compute_indicators_insufficient_data_none() -> None:
+    """データ不足（30 日）では sma75 が None（数字を作らない＝ADR-014）。"""
+    df = pd.DataFrame(
+        {
+            "date": [f"2025-01-{i + 1:02d}" for i in range(30)],
+            "adj_close": [float(100 + i) for i in range(30)],
+        }
+    )
+    out = compute_indicators(df)
+    assert out["sma25"] is not None  # 25 日は足りる
+    assert out["sma75"] is None  # 75 日に足りない
+    assert out["vol_ma20"] is None  # volume 列が無い
+
+
+def test_compute_indicators_empty() -> None:
+    """空 DataFrame は全 None。"""
+    out = compute_indicators(pd.DataFrame())
+    assert all(out[k] is None for k in out)
+
+
+# ---------------------------------------------------------------------------
+# handler の橋渡し（quant/data をモック）
+# ---------------------------------------------------------------------------
+
+
+def _run(coro: Any) -> Any:
+    return asyncio.run(coro)
+
+
+def test_handle_get_indicators_bridges(monkeypatch: pytest.MonkeyPatch) -> None:
+    """handle_get_indicators: get_quotes→compute_indicators→平坦 dict（is_delayed 付与）。"""
+
+    class _FakeConn:
+        def __enter__(self) -> _FakeConn:
+            return self
+
+        def __exit__(self, *_: Any) -> None:
+            return None
+
+    monkeypatch.setattr(handlers, "get_engine", lambda: type("E", (), {"connect": _FakeConn})())
+    monkeypatch.setattr(handlers.repo, "get_quotes", lambda conn, code: [{"date": "2025-01-01"}])
+    monkeypatch.setattr(
+        handlers,
+        "compute_indicators",
+        lambda df: {
+            "as_of": "2025-01-01",
+            "adj_close": 100.0,
+            "sma25": 1.0,
+            "sma75": 2.0,
+            "rsi14": 50.0,
+            "vol_ma20": 9.0,
+        },
+    )
+    out = _run(handlers.handle_get_indicators({"code": "7203"}))
+    assert out["code"] == "7203"
+    assert out["sma25"] == 1.0
+    assert out["is_delayed"] is True
+
+
+def test_handle_get_indicators_validation_error() -> None:
+    """引数欠落（code 無し）は {"error": ...} を返す（ループを落とさない）。"""
+    out = _run(handlers.handle_get_indicators({}))
+    assert "error" in out
+
+
+def test_handle_submit_journal_ok() -> None:
+    """submit_journal は検証 OK で {"ok": True}。"""
+    out = _run(handlers.handle_submit_journal({"observations": "所見", "proposal": "提案"}))
+    assert out == {"ok": True}
+
+
+def test_handle_submit_journal_validation_error() -> None:
+    """observations 欠落は {"error": ...}。"""
+    out = _run(handlers.handle_submit_journal({"proposal": "x"}))
+    assert "error" in out
+
+
+def test_handle_get_financials_bridges(monkeypatch: pytest.MonkeyPatch) -> None:
+    """handle_get_financials: repo.get_financials→{code, items}。"""
+
+    class _FakeConn:
+        def __enter__(self) -> _FakeConn:
+            return self
+
+        def __exit__(self, *_: Any) -> None:
+            return None
+
+    monkeypatch.setattr(handlers, "get_engine", lambda: type("E", (), {"connect": _FakeConn})())
+    monkeypatch.setattr(
+        handlers.repo,
+        "get_financials",
+        lambda conn, code: [{"disclosed_date": "2025-01-01", "eps": 12.3}],
+    )
+    out = _run(handlers.handle_get_financials({"code": "6758"}))
+    assert out["code"] == "6758"
+    assert out["items"][0]["eps"] == 12.3
+
+
+# ---------------------------------------------------------------------------
+# complete のコストガード（spec §7.1）
+# ---------------------------------------------------------------------------
+
+
+class _FakeUsage:
+    prompt_tokens = 10
+    completion_tokens = 20
+    cost = 0.5
+
+
+class _FakeMessage:
+    content = "最終応答"
+    tool_calls = None
+
+
+class _FakeChoice:
+    message = _FakeMessage()
+
+
+class _FakeResp:
+    choices = [_FakeChoice()]
+    usage = _FakeUsage()
+
+
+def _patch_fake_openai(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """llm._client.chat.completions.create を成功モックに差し替える。"""
+    from app.advisor import llm
+
+    calls: dict[str, Any] = {"created": 0}
+
+    async def _fake_create(**_: Any) -> _FakeResp:
+        calls["created"] += 1
+        return _FakeResp()
+
+    monkeypatch.setattr(llm._client.chat.completions, "create", _fake_create)
+    return calls
+
+
+def test_complete_cost_guard_block(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
+    """mode=block・当月累計が上限以上で CostGuardError（API を呼ばない）。"""
+    from app.advisor import llm
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "llm_cost_guard_mode", "block")
+    monkeypatch.setattr(settings, "llm_cost_limit_usd", 50.0)
+    monkeypatch.setattr(llm.repo, "sum_llm_cost_month", lambda conn, ym: 99.0)
+    calls = _patch_fake_openai(monkeypatch)
+
+    with pytest.raises(llm.CostGuardError):
+        _run(llm.complete([{"role": "user", "content": "x"}]))
+    assert calls["created"] == 0  # API は呼ばれない
+
+
+def test_complete_cost_guard_warn_proceeds(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
+    """mode=warn・超過でも呼び出しは進み usage が計上される。"""
+    from app.advisor import llm
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "llm_cost_guard_mode", "warn")
+    monkeypatch.setattr(settings, "llm_cost_limit_usd", 0.0)  # 必ず超過
+    monkeypatch.setattr(llm.repo, "sum_llm_cost_month", lambda conn, ym: 99.0)
+
+    recorded: dict[str, Any] = {}
+
+    def _fake_insert(conn: Any, **fields: Any) -> int:
+        recorded.update(fields)
+        return 1
+
+    monkeypatch.setattr(llm.repo, "insert_llm_usage", _fake_insert)
+    calls = _patch_fake_openai(monkeypatch)
+
+    resp = _run(llm.complete([{"role": "user", "content": "x"}], source="nightly"))
+    assert resp.content == "最終応答"
+    assert resp.tool_calls == []
+    assert calls["created"] == 1  # 続行して API を呼んだ
+    assert recorded["cost_usd"] == 0.5  # usage.cost が計上された
+    assert recorded["source"] == "nightly"
+    assert recorded["tokens_in"] == 10
+
+
+def test_complete_parses_tool_calls(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
+    """tool_calls あり応答を ToolCall 列にパース（arguments を json.loads）。"""
+    from app.advisor import llm
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "llm_cost_guard_mode", "off")
+
+    class _FakeFn:
+        name = "get_signals"
+        arguments = '{"type": "momentum"}'
+
+    class _FakeToolCall:
+        id = "call_1"
+        function = _FakeFn()
+
+    class _Msg:
+        content = None
+        tool_calls = [_FakeToolCall()]
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+        usage = None
+
+    async def _fake_create(**_: Any) -> _Resp:
+        return _Resp()
+
+    monkeypatch.setattr(llm._client.chat.completions, "create", _fake_create)
+
+    resp = _run(llm.complete([{"role": "user", "content": "x"}], tools=openai_tools(3)))
+    assert resp.content is None
+    assert len(resp.tool_calls) == 1
+    tc = resp.tool_calls[0]
+    assert tc.id == "call_1"
+    assert tc.name == "get_signals"
+    assert tc.arguments == {"type": "momentum"}

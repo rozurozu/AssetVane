@@ -198,3 +198,78 @@ financials = Table(
     PrimaryKeyConstraint("code", "disclosed_date", "fiscal_period", name="pk_financials"),
     Index("ix_financials_code", "code"),
 )
+
+# ===== Phase 3: AI Advisor（phase3-spec.md §2.1・ADR-011〜016/028/029） =====
+
+# 投資方針（ADR-013: 単一行を育てる。版管理機構なし）。id 固定の 1 行運用。
+# 比率系（target_cash_ratio / max_position_weight / sector_caps）はすべて 0..1（決定2）。
+# UI のみ ×100 して % 表示。最適化制約（optimize_portfolio）と同じ policy 行から作る。
+# sector_caps / exclusions は JSON 文字列（SQLite に JSON 型なし・既存方針）。
+policy = Table(
+    "policy",
+    metadata,
+    Column("id", Integer, primary_key=True),  # 1 行運用（id 固定・autoincrement しない）
+    Column("risk_tolerance", String),  # "低"/"中"/"高"
+    Column("time_horizon", String),  # "短"/"中"/"長"
+    Column("target_cash_ratio", Float),  # 0..1
+    Column("max_position_weight", Float),  # 0..1
+    Column("sector_caps", String),  # JSON {sector33_code: 0..1}
+    Column("target_return", Float),  # 0..1（任意）
+    Column("no_leverage", Integer),  # 0/1（bool）
+    Column("exclusions", String),  # JSON ["7203", ...]
+    Column("rationale", String),  # 自由文の理念（最適化に効かない・チャット即時更新可＝U-7）
+    Column("updated_at", String),  # ISO8601
+)
+
+# 投資日記（ADR-011/029: 夜=1件/日 自動・チャットの会話要約昇格も当日 journal に書く）。
+# source で 'nightly'（夜の分析AI）/ 'chat'（昼チャットの要約昇格）を区別（ADR-029）。
+# situation_briefing / proposed_policy_change / policy_snapshot は JSON 文字列。
+advisor_journal = Table(
+    "advisor_journal",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("date", String, nullable=False),  # 'YYYY-MM-DD'
+    Column("source", String, nullable=False, server_default="nightly"),  # 'nightly'/'chat'
+    Column("situation_briefing", String),  # JSON（その日の事実・監査用・chat 昇格では null 可）
+    Column("observations", String),  # AI 所見（自由文）
+    Column("proposal", String),  # 当日の提案（自由文 or 参照）
+    Column("proposed_policy_change", String),  # JSON {field, from, to, reason}（任意）
+    Column("policy_snapshot", String),  # JSON（その時点の policy まるごと・履歴）
+    Column("llm_model", String),  # 監査用（settings.llm_model）
+    Column("created_at", String),  # ISO8601
+    Index("ix_advisor_journal_date", "date"),
+)
+
+# 提案（ADR-001/019: 承認状態のみ。約定はしない）。
+# depends_on で承認順制御（policy_change → buy。決定4/B-8）。
+# journal_id は生成元 journal（夜）。チャット起票は null 可。
+proposals = Table(
+    "proposals",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("created_date", String, nullable=False),  # 'YYYY-MM-DD'
+    Column("kind", String, nullable=False),  # "policy_change"/"buy"/"sell"/"rebalance"
+    Column("body", String),  # JSON（kind 依存）
+    Column("rationale", String),  # 根拠（AI の説明）
+    Column("status", String, nullable=False, server_default="pending"),  # pending/approved/rejected
+    Column("outcome", String),
+    Column("resolved_at", String),
+    Column("journal_id", Integer, ForeignKey("advisor_journal.id")),  # nullable
+    Column("depends_on", Integer, ForeignKey("proposals.id")),  # nullable（承認順制御）
+    Index("ix_proposals_status", "status"),
+)
+
+# LLM コストガードレール台帳（ADR-028・spec §7.1）。OpenRouter 実コスト（usage.cost）を積む。
+# Ollama は cost 無し → $0 計上。単価表は自前で持たない。当月累計で warn/block を判定。
+llm_usage = Table(
+    "llm_usage",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("created_at", String, nullable=False),  # ISO8601（当月集計の起点）
+    Column("source", String, nullable=False),  # "nightly"/"chat"/"dossier" 等
+    Column("model", String),
+    Column("tokens_in", Integer),
+    Column("tokens_out", Integer),
+    Column("cost_usd", Float, nullable=False, server_default="0"),  # OpenRouter usage.cost
+    Index("ix_llm_usage_created_at", "created_at"),
+)

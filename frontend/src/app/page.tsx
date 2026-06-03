@@ -1,23 +1,54 @@
 "use client";
 
-// Dashboard（screens.md §3）。承認待ての提案を主役に、資産概要・配分・方針・signals・
+// Dashboard（screens.md §3）。承認待ちの提案を主役に、資産概要・配分・方針・signals・
 // watchlist・日記を密度優先で一望する。
 // KPI / allocation / 資産推移 は getAssetOverview() の実データに配線（Phase 2）。
-// proposals / policy / journal / watchlist / signals は Phase 3/4 领域なのでモックのまま。
+// policy / proposals / journal は getPolicy() / getProposals("pending") / getJournal() に配線（Phase 3）。
+// backend 未起動でも壊れないよう fetch 失敗は握って空表示＋注記にする（spec §9.6）。
+// watchlist / signals は Phase 1/4 で本配線するので当面モックのまま。
 
-import { type AssetOverview, type Deviation, getAssetOverview } from "@/lib/api";
-import { journal, policy, proposals, signals, watchlist } from "@/lib/mock-data";
+import {
+  type AssetOverview,
+  type Deviation,
+  type JournalEntry,
+  type Policy,
+  type Proposal,
+  getAssetOverview,
+  getJournal,
+  getPolicy,
+  getProposals,
+} from "@/lib/api";
+import { signals, watchlist } from "@/lib/mock-data";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+
+// 0..1 → "X%"（null は "—"）。
+function pctOrDash(v: number | null | undefined): string {
+  return typeof v === "number" ? `${(v * 100).toFixed(0)}%` : "—";
+}
 
 export default function Dashboard() {
   const [overview, setOverview] = useState<AssetOverview | null>(null);
   const [overviewErr, setOverviewErr] = useState<string | null>(null);
+  // Phase 3 実配線（fetch 失敗は握って空表示・spec §9.6）。
+  const [policy, setPolicy] = useState<Policy | null>(null);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [journalLatest, setJournalLatest] = useState<JournalEntry | null>(null);
 
   useEffect(() => {
     getAssetOverview()
       .then(setOverview)
       .catch((e) => setOverviewErr(e instanceof Error ? e.message : String(e)));
+    // policy / proposals / journal は失敗しても画面を壊さない（空表示）。
+    getPolicy()
+      .then(setPolicy)
+      .catch(() => {});
+    getProposals("pending")
+      .then((r) => setProposals(r.proposals))
+      .catch(() => {});
+    getJournal()
+      .then((r) => setJournalLatest(r.entries[0] ?? null))
+      .catch(() => {});
   }, []);
 
   // 遅延注記（is_delayed=true かつ as_of がある場合に表示）
@@ -135,7 +166,8 @@ export default function Dashboard() {
         <div>
           <div className="font-semibold text-[20px] tracking-[-0.4px]">Dashboard</div>
           <div className="mt-0.5 text-[12px] text-ink-muted">
-            夜の分析AI が 04:12 に更新 ・ 承認待ちの提案が 2 件
+            {journalLatest ? `夜の分析AI が ${journalLatest.date} に更新 ・ ` : "夜の分析AI ・ "}
+            承認待ちの提案が {proposals.length} 件
           </div>
         </div>
         <button type="button" className="text-[12px] text-accent">
@@ -294,88 +326,131 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* AI 提案 ＋ 現在の方針（Phase 3 までモック）*/}
+      {/* AI 提案 ＋ 現在の方針（Phase 3 実配線）*/}
       <div className="mb-3 grid grid-cols-[3fr_2fr] gap-3 max-[1100px]:grid-cols-1">
         <Card
           title={
             <>
               夜の分析AI からの提案{" "}
               <span className="ml-1 rounded-sm bg-surface-2 px-1.5 py-0.5 font-medium text-[12px] text-warning">
-                2 件 承認待ち
+                {proposals.length} 件 承認待ち
               </span>
             </>
           }
-          link="提案履歴"
+          link={
+            <Link href="/proposals" className="text-[12px] text-accent">
+              提案履歴
+            </Link>
+          }
         >
-          <div className="-mt-1 flex flex-col">
-            {proposals.map((p) => (
-              <div key={p.title} className="border-hairline-soft border-b py-2.5 last:border-b-0">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`rounded-sm px-1.5 py-0.5 font-medium text-[12px] ${
-                      p.kind === "POLICY" ? "bg-accent-weak text-accent" : "bg-up-weak text-up"
-                    }`}
-                  >
-                    {p.kind}
-                  </span>
-                  <span className="font-semibold text-[13px]">{p.title}</span>
+          {proposals.length === 0 ? (
+            <div className="py-4 text-center text-[13px] text-ink-subtle">
+              承認待ちの提案はないのだ。
+            </div>
+          ) : (
+            <div className="-mt-1 flex flex-col">
+              {proposals.map((p) => (
+                <div key={p.id} className="border-hairline-soft border-b py-2.5 last:border-b-0">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-sm px-1.5 py-0.5 font-medium text-[12px] ${
+                        p.kind === "policy_change"
+                          ? "bg-accent-weak text-accent"
+                          : p.kind === "sell"
+                            ? "bg-down-weak text-down"
+                            : "bg-up-weak text-up"
+                      }`}
+                    >
+                      {p.kind}
+                    </span>
+                    <span className="num text-[11px] text-ink-subtle">#{p.id}</span>
+                  </div>
+                  {p.rationale && (
+                    <div className="my-1.5 text-[13px] text-ink-muted leading-[1.45]">
+                      {p.rationale}
+                    </div>
+                  )}
+                  <Link href="/proposals" className="text-[12px] text-accent hover:underline">
+                    承認/却下するのだ →
+                  </Link>
                 </div>
-                <div className="my-1.5 text-[13px] text-ink-muted leading-[1.45]">
-                  {p.rationale}
-                </div>
-                <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    className="rounded-md border border-accent bg-accent px-3 py-1.5 font-medium text-[13px] text-white"
-                  >
-                    承認
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md border border-hairline bg-surface-2 px-3 py-1.5 font-medium text-[13px]"
-                  >
-                    却下
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md px-3 py-1.5 font-medium text-[13px] text-ink-muted hover:text-ink"
-                  >
-                    根拠を見る
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </Card>
 
-        <Card title="現在の投資方針" link="チャットで調整">
-          <div className="rounded-md border border-hairline border-l-2 border-l-accent bg-canvas px-3 py-2.5 text-[13px] text-ink leading-[1.5]">
-            {policy.rationale}
-          </div>
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {policy.core.map((c) => (
-              <div
-                key={c.label}
-                className="rounded-md border border-hairline bg-canvas px-2.5 py-2"
-              >
-                <span className="text-[11px] text-ink-muted">{c.label}</span>
-                <b
-                  className={`num mt-0.5 block font-semibold text-[15px] tracking-[-0.2px] ${c.warn ? "text-warning" : ""}`}
-                >
-                  {c.value}
-                </b>
+        <Card
+          title="現在の投資方針"
+          link={
+            <Link href="/policy" className="text-[12px] text-accent">
+              方針を編集
+            </Link>
+          }
+        >
+          {policy ? (
+            <>
+              {policy.rationale && (
+                <div className="rounded-md border border-hairline border-l-2 border-l-accent bg-canvas px-3 py-2.5 text-[13px] text-ink leading-[1.5]">
+                  {policy.rationale}
+                </div>
+              )}
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {(() => {
+                  const c = policy.core;
+                  const items: { label: string; value: string; warn?: boolean }[] = [
+                    { label: "リスク許容度", value: c.risk_tolerance ?? "—" },
+                    { label: "時間軸", value: c.time_horizon ?? "—" },
+                    { label: "現金目標", value: pctOrDash(c.target_cash_ratio) },
+                    { label: "1銘柄上限", value: pctOrDash(c.max_position_weight) },
+                    { label: "目標リターン", value: pctOrDash(c.target_return) },
+                    {
+                      label: "レバレッジ",
+                      value: c.no_leverage ? "不可" : "可",
+                      warn: c.no_leverage,
+                    },
+                  ];
+                  return items.map((it) => (
+                    <div
+                      key={it.label}
+                      className="rounded-md border border-hairline bg-canvas px-2.5 py-2"
+                    >
+                      <span className="text-[11px] text-ink-muted">{it.label}</span>
+                      <b
+                        className={`num mt-0.5 block font-semibold text-[15px] tracking-[-0.2px] ${it.warn ? "text-warning" : ""}`}
+                      >
+                        {it.value}
+                      </b>
+                    </div>
+                  ));
+                })()}
               </div>
-            ))}
-          </div>
-          <div className="mt-3 border-hairline-soft border-t pt-2 text-[11px] text-ink-subtle">
-            {policy.footer}
-          </div>
+              <div className="mt-3 border-hairline-soft border-t pt-2 text-[11px] text-ink-subtle">
+                除外:{" "}
+                {policy.core.exclusions.length > 0 ? policy.core.exclusions.join(", ") : "なし"}
+                {policy.updated_at && ` ・ 最終更新 ${policy.updated_at.slice(0, 10)}`}
+              </div>
+            </>
+          ) : (
+            <div className="py-4 text-center text-[13px] text-ink-subtle">
+              方針が未設定なのだ。
+              <Link href="/policy" className="ml-1 text-accent hover:underline">
+                方針を設定
+              </Link>
+            </div>
+          )}
         </Card>
       </div>
 
       {/* signals ＋ watchlist（Phase 3/4 までモック）*/}
       <div className="mb-3 grid grid-cols-[3fr_2fr] gap-3 max-[1100px]:grid-cols-1">
-        <Card title="今日のシグナル（Trend Vane）" link="すべて">
+        <Card
+          title="今日のシグナル（Trend Vane）"
+          link={
+            <Link href="/signals" className="text-[12px] text-accent">
+              すべて
+            </Link>
+          }
+        >
           <Table head={["コード / 銘柄", "スコア", "5日", "シグナル"]} rightCols={[1, 2]}>
             {signals.map((s) => (
               <tr key={s.code} className="hover:[&>td]:bg-surface-2">
@@ -407,7 +482,10 @@ export default function Dashboard() {
           </Table>
         </Card>
 
-        <Card title="Watchlist ・ 調査ステータス" link="すべて">
+        <Card
+          title="Watchlist ・ 調査ステータス"
+          link={<span className="text-[12px] text-ink-subtle">すべて</span>}
+        >
           <Table head={["コード / 銘柄", "最終調査", ""]} rightCols={[1, 2]}>
             {watchlist.map((w) => (
               <tr key={w.code} className="hover:[&>td]:bg-surface-2">
@@ -438,10 +516,31 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* 投資日記（Phase 3 までモック）*/}
-      <Card title="投資日記（最新）" meta="方針変更なし（前回 05-28）">
-        <div className="num mb-1.5 font-medium text-[11px] text-accent">{journal.meta}</div>
-        <p className="text-[13px] text-ink-muted leading-[1.55]">{journal.body}</p>
+      {/* 投資日記（Phase 3 実配線・最新 1 件）*/}
+      <Card
+        title="投資日記（最新）"
+        link={
+          <Link href="/journal" className="text-[12px] text-accent">
+            すべて
+          </Link>
+        }
+      >
+        {journalLatest ? (
+          <>
+            <div className="num mb-1.5 font-medium text-[11px] text-accent">
+              {journalLatest.date} ・{" "}
+              {journalLatest.source === "nightly" ? "夜の分析" : "チャット要約"}
+              {journalLatest.llm_model ? ` ・ ${journalLatest.llm_model}` : ""}
+            </div>
+            <p className="text-[13px] text-ink-muted leading-[1.55]">
+              {journalLatest.observations ?? journalLatest.proposal ?? "（本文なし）"}
+            </p>
+          </>
+        ) : (
+          <p className="text-[13px] text-ink-subtle">
+            まだ日記がないのだ。夜間バッチで生成されるのだ。
+          </p>
+        )}
       </Card>
     </>
   );
@@ -456,7 +555,7 @@ function Card({
 }: {
   title: React.ReactNode;
   meta?: string;
-  link?: string;
+  link?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -464,11 +563,7 @@ function Card({
       <div className="flex items-center justify-between border-hairline border-b px-3 py-2">
         <h2 className="font-semibold text-[14px] tracking-[-0.1px]">{title}</h2>
         {meta && <span className="text-[11px] text-ink-subtle">{meta}</span>}
-        {link && (
-          <button type="button" className="text-[12px] text-accent">
-            {link}
-          </button>
-        )}
+        {link}
       </div>
       <div className="p-3">{children}</div>
     </section>
