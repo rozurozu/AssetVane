@@ -1,4 +1,4 @@
-"""書き手相互排他のファイルロック（spec §3.5・裁定決定5・B-9）。
+"""夜間バッチ相互排他のファイルロック（spec §3.5・裁定決定5・B-9）。
 
 夜間バッチ（APScheduler 同居）と、別 OS プロセスで起動されうる手動バッチ
 （`python -m app.scripts.backfill --nightly`）の相互排他を `fcntl.flock` で取る。

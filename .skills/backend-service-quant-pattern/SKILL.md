@@ -56,7 +56,7 @@ def build_price_panel(conn: Connection, codes: list[str]) -> pd.DataFrame:
 
 ## 導出値は導出関数経由でのみ更新
 
-transactions → holdings のような**導出値**は、元データから再計算する関数（`recalc_*`）経由でのみ更新する。導出先テーブルを直接編集しない（ADR-019 系の規律）。再計算は元データを時系列順に畳んで状態を作り、結果を `replace_*` で入れ替える。
+transactions → holdings のような**導出値**は、元データから再計算する関数（`recalc_*`）経由でのみ更新する。導出先テーブルを直接編集しない（ADR-019 系の規律）。再計算は元データを時系列順に畳んで状態を作り、結果を `replace_*` で入れ替える。元データの書き込みと導出値更新は W2 として同じ `conn` / transaction に束ねる（[[backend-repo-pattern]]）。
 
 ## AI・router は計算しない（再掲・最重要）
 

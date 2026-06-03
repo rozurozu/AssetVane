@@ -7,6 +7,8 @@ quant は実際に呼ぶ（外部 API は叩かない）。
 
 from __future__ import annotations
 
+import pytest
+
 from app.db import repo
 
 # テスト用の銘柄データ
@@ -168,6 +170,36 @@ def test_post_transaction_with_market_value(client) -> None:
     # as_of は daily_quotes の最新日
     meta = resp.json()["holdings"]["valuation_meta"]
     assert meta["as_of"] is not None
+
+
+def test_post_transaction_rolls_back_when_recalc_fails(client, monkeypatch) -> None:
+    """holdings 再導出が失敗した場合、transactions だけを残さない（ADR-019・W2）。"""
+    repo.upsert_stocks([STOCK_A])
+    pid = _get_portfolio_id(client)
+
+    def fail_recalc(*_args: object) -> None:
+        raise RuntimeError("recalc failed")
+
+    monkeypatch.setattr("app.routers.portfolio.recalc_holdings", fail_recalc)
+
+    with pytest.raises(RuntimeError, match="recalc failed"):
+        client.post(
+            "/transactions",
+            json={
+                "portfolio_id": pid,
+                "code": "72030",
+                "side": "buy",
+                "shares": 100,
+                "price": 1500,
+                "traded_at": "2026-01-10",
+            },
+        )
+
+    from app.db.engine import get_engine
+
+    with get_engine().connect() as conn:
+        assert repo.list_transactions(conn, pid) == []
+        assert repo.list_holdings(conn, pid) == []
 
 
 # ---------------------------------------------------------------------------

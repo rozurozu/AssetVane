@@ -57,7 +57,7 @@ def test_sharpe_known_value() -> None:
     # 手計算（実装と同じ直近 252 行・pct_change().dropna()）
     ret_a = pd.Series(p1).pct_change().dropna()
     ret_b = pd.Series(p2).pct_change().dropna()
-    port_r = 0.5 * ret_a.values + 0.5 * ret_b.values
+    port_r = 0.5 * ret_a.to_numpy(dtype=float) + 0.5 * ret_b.to_numpy(dtype=float)
     expected_sharpe = (port_r.mean() * 252 - RISK_FREE_RATE) / (port_r.std(ddof=1) * math.sqrt(252))
 
     assert result["sharpe"] is not None

@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from pypfopt import EfficientFrontier, expected_returns, risk_models
@@ -32,6 +32,15 @@ _LOOKBACK = 252
 # デフォルトのウェイト境界（no_leverage/max_position_weight が無い場合）
 _DEFAULT_WEIGHT_LOWER = 0.0
 _DEFAULT_WEIGHT_UPPER = 1.0
+
+
+def _column_has_nulls(frame: pd.DataFrame, column: str) -> bool:
+    """Pandas の列取得が Series/DataFrame どちらでも null 有無を bool で返す。"""
+    values = frame[column]
+    if isinstance(values, pd.DataFrame):
+        return bool(values.isna().to_numpy().any())
+    series = cast(pd.Series, values)
+    return bool(series.isna().any())
 
 
 def optimize_portfolio(
@@ -118,7 +127,7 @@ def optimize_portfolio(
         panel = panel.iloc[-_LOOKBACK:]
 
     # --- null 銘柄を除外（裁定 L-26）---
-    valid_cols = [c for c in panel.columns if not panel[c].isna().any()]
+    valid_cols = [str(c) for c in panel.columns if not _column_has_nulls(panel, str(c))]
     if not valid_cols:
         return _infeasible_result(objective, cash_ratio, constraints_applied)
     panel = panel[valid_cols]
@@ -175,7 +184,7 @@ def optimize_portfolio(
             ef.max_sharpe(risk_free_rate=RISK_FREE_RATE)
 
         # 株式内ウェイト（sum=1 基準）
-        raw_weights: dict[str, float] = dict(ef.clean_weights())
+        raw_weights = {str(code): float(weight) for code, weight in ef.clean_weights().items()}
 
         # portfolio_performance は clean_weights 呼び出し後に取得する
         exp_ret, exp_vol, exp_sharpe = ef.portfolio_performance(risk_free_rate=RISK_FREE_RATE)
@@ -211,9 +220,9 @@ def optimize_portfolio(
         "objective": actual_objective,
         "cash_weight": float(cash_ratio),
         "weights": weights_list,
-        "expected_annual_return": float(exp_ret),
-        "expected_annual_volatility": float(exp_vol),
-        "expected_sharpe": float(exp_sharpe),
+        "expected_annual_return": float(cast(float, exp_ret)),
+        "expected_annual_volatility": float(cast(float, exp_vol)),
+        "expected_sharpe": float(cast(float, exp_sharpe)),
         "constraints_applied": constraints_applied,
         "infeasible": False,
     }

@@ -6,6 +6,7 @@ Stooq CSV 文字列を返すスタブ（httpx.Client モック）で `fetch_inde
 
 from __future__ import annotations
 
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import httpx
@@ -121,7 +122,7 @@ def test_fetch_index_quotes_passes_from_to_params() -> None:
 
     adapter.fetch_index_quotes("^SPX", from_="2026-05-01", to="2026-05-31")
 
-    call_kwargs = stub.get.call_args
+    call_kwargs = cast(Any, stub.get).call_args
     params = call_kwargs[1].get("params", call_kwargs[0][1] if len(call_kwargs[0]) > 1 else {})
     # from_ が YYYYMMDD 形式で渡されていることを確認
     assert params.get("d1") == "20260501"

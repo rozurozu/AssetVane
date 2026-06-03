@@ -293,15 +293,15 @@ def list_portfolios(conn: Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
-def insert_transaction(row: dict[str, Any]) -> int:
+def insert_transaction(conn: Connection, row: dict[str, Any]) -> int:
     """transactions に 1 行挿入し、発行された id を返す（spec P2-2・ADR-002）。
 
     row には portfolio_id/code/side/shares/price/fee/traded_at を含める。
-    書き込みは engine.begin() トランザクション内（ADR-002）。
+    commit はしない。取引記録と holdings 再導出を atomic にするため、呼び出し側が
+    `with get_engine().begin()` で境界を所有する（ADR-019）。
     """
     stmt = transactions.insert().values(**row)
-    with get_engine().begin() as conn:
-        result = conn.execute(stmt)
+    result = conn.execute(stmt)
     return int(result.lastrowid)
 
 
@@ -318,16 +318,15 @@ def list_transactions(conn: Connection, portfolio_id: int) -> list[dict[str, Any
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
-def replace_holdings(portfolio_id: int, rows: list[dict[str, Any]]) -> None:
+def replace_holdings(conn: Connection, portfolio_id: int, rows: list[dict[str, Any]]) -> None:
     """portfolio の holdings を入れ替える（削除 + 一括挿入・ADR-019）。
 
     rows には portfolio_id/code/shares/avg_cost を含める。shares > 0 の行のみ渡すこと。
-    DELETE + INSERT をトランザクションで包み、中間状態が見えないようにする（ADR-002）。
+    commit はしない。transactions と同じトランザクションで呼び、中間状態が見えないようにする。
     """
-    with get_engine().begin() as conn:
-        conn.execute(holdings.delete().where(holdings.c.portfolio_id == portfolio_id))
-        if rows:
-            conn.execute(holdings.insert(), rows)
+    conn.execute(holdings.delete().where(holdings.c.portfolio_id == portfolio_id))
+    if rows:
+        conn.execute(holdings.insert(), rows)
 
 
 def list_holdings(conn: Connection, portfolio_id: int) -> list[dict[str, Any]]:

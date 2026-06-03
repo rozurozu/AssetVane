@@ -1,6 +1,6 @@
 """DB エンジンと接続（SQLAlchemy Core・同期）。
 
-SQLite（WAL モード）。書き手は将来の夜間バッチ 1 つに限定する設計（ADR-002）。
+SQLite（WAL モード）。DB に触れる OS プロセスを FastAPI に限定する設計（ADR-002/005）。
 SQLite は同期 I/O なので同期 Engine を使い、FastAPI の同期ルートはスレッドプールで
 捌かれる（単一ユーザー規模では async + aiosqlite は過剰）。
 """
@@ -93,7 +93,7 @@ def create_schema() -> None:
 def get_conn() -> Iterator[Connection]:
     """FastAPI 依存性。読み取り用の接続を貸し出して確実に閉じる。
 
-    書き込み（UPSERT）は repo 側で `with engine.begin()` を使う。
+    書き込みは repo 規約に従い、W1 は repo 側、W2 は呼び出し側が `with engine.begin()` を使う。
     """
     with get_engine().connect() as conn:
         yield conn

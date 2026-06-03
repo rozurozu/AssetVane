@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from math import sqrt
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -22,6 +22,15 @@ from app.quant.portfolio import RISK_FREE_RATE
 
 # 年率換算の営業日数（spec §4.1）
 _TRADING_DAYS = 252
+
+
+def _column_has_nulls(frame: pd.DataFrame, column: str) -> bool:
+    """Pandas の列取得が Series/DataFrame どちらでも null 有無を bool で返す。"""
+    values = frame[column]
+    if isinstance(values, pd.DataFrame):
+        return bool(values.isna().to_numpy().any())
+    series = cast(pd.Series, values)
+    return bool(series.isna().any())
 
 
 def _compute_curve_stats(
@@ -135,7 +144,7 @@ def backtest_portfolio(
         return _empty_result()
 
     # --- null 銘柄を除外（裁定 L-26）---
-    valid_cols = [c for c in price_panel.columns if not price_panel[c].isna().any()]
+    valid_cols = [str(c) for c in price_panel.columns if not _column_has_nulls(price_panel, str(c))]
     if not valid_cols:
         return _empty_result()
     panel = price_panel[valid_cols].copy()
@@ -149,7 +158,8 @@ def backtest_portfolio(
         w_vec = pd.Series({c: v / w_sum for c, v in w_raw.items()})
 
     # --- ポートフォリオ日次リターン ---
-    port_ret: pd.Series = (panel.pct_change().dropna() * w_vec).sum(axis=1)
+    daily_returns = cast(pd.DataFrame, panel.pct_change().dropna())
+    port_ret = cast(pd.Series, (daily_returns * w_vec).sum(axis=1))
 
     # --- ベンチマーク日次リターン ---
     bench_ret: pd.Series = benchmark.pct_change().dropna()

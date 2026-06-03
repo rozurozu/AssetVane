@@ -12,20 +12,22 @@ avg_cost（移動平均取得単価）の計算方法:
 
 from __future__ import annotations
 
+from sqlalchemy import Connection
+
 from app.db import repo
-from app.db.engine import get_engine
 
 
-def recalc_holdings(portfolio_id: int) -> None:
+def recalc_holdings(conn: Connection, portfolio_id: int) -> None:
     """指定ポートフォリオの全 transactions から holdings を再導出して入れ替える。
 
     1. portfolio_id の全 transactions を traded_at 昇順で取得。
     2. 銘柄ごとに buy/sell を時系列順に適用し、shares と avg_cost を導出。
     3. shares > 0 の銘柄のみ repo.replace_holdings で保存（全売却行は除外）。
     （ADR-019 holdings は transactions から導出・phase2-spec.md §1）
+
+    commit はしない。transactions 更新と同じ `with get_engine().begin()` 内で呼ぶ。
     """
-    with get_engine().connect() as conn:
-        txns = repo.list_transactions(conn, portfolio_id)
+    txns = repo.list_transactions(conn, portfolio_id)
 
     # 銘柄ごとに buy/sell を時系列順で処理
     # state: code -> {"shares": float, "avg_cost": float}
@@ -65,4 +67,4 @@ def recalc_holdings(portfolio_id: int) -> None:
         if st["shares"] > 0
     ]
 
-    repo.replace_holdings(portfolio_id, rows)
+    repo.replace_holdings(conn, portfolio_id, rows)

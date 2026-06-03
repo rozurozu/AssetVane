@@ -198,7 +198,9 @@ def test_resolve_proposal_depends_on_guard(temp_db: None) -> None:
     with get_engine().begin() as conn:
         service.resolve_proposal(conn, child, decision="approved")
     with get_engine().connect() as conn:
-        assert repo.get_proposal(conn, child)["status"] == "approved"
+        child_prop = repo.get_proposal(conn, child)
+        assert child_prop is not None
+        assert child_prop["status"] == "approved"
 
 
 def test_resolve_proposal_buy_does_not_execute(temp_db: None) -> None:
@@ -209,6 +211,7 @@ def test_resolve_proposal_buy_does_not_execute(temp_db: None) -> None:
 
     with get_engine().connect() as conn:
         prop = repo.get_proposal(conn, pid)
+        assert prop is not None
         assert prop["status"] == "approved"
         # transactions / holdings は触られない（約定なし）。
         assert repo.list_transactions(conn, 1) == []

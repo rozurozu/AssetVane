@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import Connection
 
 from app.db import repo
-from app.db.engine import get_conn
+from app.db.engine import get_conn, get_engine
 from app.quant import compute_portfolio_metrics, optimize_portfolio
 from app.services.holdings import recalc_holdings
 from app.services.policy import get_policy
@@ -230,18 +230,14 @@ def get_holdings(
 @router.post("/transactions", response_model=TransactionResult, status_code=201)
 def post_transaction(
     body: TransactionIn,
-    conn: Connection = Depends(get_conn),
 ) -> TransactionResult:
     """取引を記録し holdings を再計算して返す（spec P2-2・ADR-019）。
 
     1. transactions に INSERT。
     2. recalc_holdings で holdings を入れ替え（ADR-019）。
     3. 更新後 holdings を評価額付きで返す。
+    1〜3 は同じトランザクション内で行い、中間状態を残さない。
     """
-    # portfolio 存在確認
-    _resolve_portfolio(conn, body.portfolio_id)
-
-    # transactions に挿入
     row: dict[str, Any] = {
         "portfolio_id": body.portfolio_id,
         "code": body.code,
@@ -253,13 +249,14 @@ def post_transaction(
     if body.fee is not None:
         row["fee"] = body.fee
 
-    txn_id = repo.insert_transaction(row)
+    with get_engine().begin() as conn:
+        # portfolio 存在確認
+        _resolve_portfolio(conn, body.portfolio_id)
 
-    # holdings 再計算（ADR-019）
-    recalc_holdings(body.portfolio_id)
-
-    # 更新後 holdings を取得して返す
-    holdings_resp = _build_holdings_response(conn, body.portfolio_id)
+        # transactions と holdings 再導出を atomic にする（ADR-019）。
+        txn_id = repo.insert_transaction(conn, row)
+        recalc_holdings(conn, body.portfolio_id)
+        holdings_resp = _build_holdings_response(conn, body.portfolio_id)
     return TransactionResult(transaction_id=txn_id, holdings=holdings_resp)
 
 

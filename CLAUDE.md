@@ -40,7 +40,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **投資方針 `policy` は単一を育てる**。複数ペルソナ切り替えや版管理機構は作らない。履歴は `advisor_journal` のスナップショットで残す（ADR-013）。
 - **J-Quants は V2（`x-api-key` ヘッダー）を使う**。V1 のトークン 2 段階方式（`/v1/...`）は 2026-06-01 に終了済み。ネット上の記事は大半が古い V1 なので流用しない（ADR-008）。J-Quants は**日本株専用**。
 - **通知は Discord Webhook**。LINE Notify は終了済みなので使わない（ADR-007）。
-- **SQLite（WAL）。書き手は夜間バッチ（Python）1 つに限定**してロック競合を避ける（ADR-002）。再取得で壊れないよう UPSERT で冪等にする。
+- **SQLite（WAL）。DB に触れる OS プロセスは FastAPI に限定**してロック競合を避ける（ADR-002/005）。書き込み系統は夜間バッチ・昼の手入力・チャット/承認の 3 系統だが、同一プロセス内で扱う。再取得で壊れないよう UPSERT で冪等にする。
 - **単一ユーザー・認証なし**（ADR-001）。`user_id` を足さない。家庭内 LAN 前提で外部公開しない。
 - **データソースはアダプタ越し**（`JQuantsAdapter` / `IndexAdapter` / `UsEquityAdapter` / `NewsAdapter` / `FxAdapter`）。直結ハードコードしない（ADR-010）。
 - **銘柄ドシエは DB に保存**（`stock_dossiers` の markdown 列）＋ソース台帳（`dossier_sources`、本文は持たず要約＋URL）。リポジトリ markdown には置かない（AI が頻繁に自動更新するため＝ADR-020）。逆に CORE プロンプト・手法カード（参照知識）は安定資産なのでリポジトリ markdown に置く。

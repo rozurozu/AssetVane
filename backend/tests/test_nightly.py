@@ -48,7 +48,9 @@ def test_collect_situation_briefing(monkeypatch: pytest.MonkeyPatch, temp_db: No
     with get_engine().connect() as conn:
         briefing = nightly.collect_situation_briefing(conn)
     assert set(briefing) == {"signals", "portfolio_metrics", "asset_overview"}
-    assert briefing["asset_overview"]["total_value"] == 1000.0
+    overview = briefing["asset_overview"]
+    assert isinstance(overview, dict)
+    assert overview["total_value"] == 1000.0
 
 
 def test_nightly_records_journal_and_proposal(
@@ -81,6 +83,7 @@ def test_nightly_records_journal_and_proposal(
         journals = repo.list_journal(conn)
         proposals = repo.list_proposals(conn)
         detail = repo.get_journal(conn, journals[0]["id"])
+    assert detail is not None
 
     assert len(journals) == 1
     j = journals[0]

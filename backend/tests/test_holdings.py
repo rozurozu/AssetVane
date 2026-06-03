@@ -211,7 +211,7 @@ def test_multiple_stocks(client) -> None:
 def test_recalc_holdings_directly(temp_db) -> None:
     """recalc_holdings を直接呼んで repo から確認する（API 経由でない経路のテスト）。
 
-    buy/sell を time_db に直接入れて recalc → list_holdings で確認。
+    buy/sell を temp_db に直接入れて recalc → list_holdings で確認。
     """
     from app.db.engine import get_engine
 
@@ -224,40 +224,43 @@ def test_recalc_holdings_directly(temp_db) -> None:
     with get_engine().begin() as conn:
         conn.execute(portfolios.insert().values(portfolio_id=1, name="Default"))
 
-    # buy 100株@500、続けて buy 100株@1000 → avg=(100*500+100*1000)/200=750
-    repo.insert_transaction(
-        {
-            "portfolio_id": 1,
-            "code": "72030",
-            "side": "buy",
-            "shares": 100,
-            "price": 500,
-            "traded_at": "2026-01-05",
-        }
-    )
-    repo.insert_transaction(
-        {
-            "portfolio_id": 1,
-            "code": "72030",
-            "side": "buy",
-            "shares": 100,
-            "price": 1000,
-            "traded_at": "2026-01-06",
-        }
-    )
-    # sell 50株（avg はそのまま）
-    repo.insert_transaction(
-        {
-            "portfolio_id": 1,
-            "code": "72030",
-            "side": "sell",
-            "shares": 50,
-            "price": 900,
-            "traded_at": "2026-01-07",
-        }
-    )
-
-    recalc_holdings(1)
+    with get_engine().begin() as conn:
+        # buy 100株@500、続けて buy 100株@1000 → avg=(100*500+100*1000)/200=750
+        repo.insert_transaction(
+            conn,
+            {
+                "portfolio_id": 1,
+                "code": "72030",
+                "side": "buy",
+                "shares": 100,
+                "price": 500,
+                "traded_at": "2026-01-05",
+            },
+        )
+        repo.insert_transaction(
+            conn,
+            {
+                "portfolio_id": 1,
+                "code": "72030",
+                "side": "buy",
+                "shares": 100,
+                "price": 1000,
+                "traded_at": "2026-01-06",
+            },
+        )
+        # sell 50株（avg はそのまま）
+        repo.insert_transaction(
+            conn,
+            {
+                "portfolio_id": 1,
+                "code": "72030",
+                "side": "sell",
+                "shares": 50,
+                "price": 900,
+                "traded_at": "2026-01-07",
+            },
+        )
+        recalc_holdings(conn, 1)
 
     with get_engine().connect() as conn:
         holdings = repo.list_holdings(conn, 1)
