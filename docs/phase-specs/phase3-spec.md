@@ -52,7 +52,7 @@
 
 ---
 
-## 2. スキーマ変更（`0006_advisor_state`: policy / advisor_journal / proposals(+depends_on)）
+## 2. スキーマ変更（`0006_advisor_state`: policy / advisor_journal(+source) / proposals(+depends_on) / llm_usage）
 
 **リビジョン**: `0006_advisor_state`（`down_revision=0005_financials`）。**DDL の正本は ai-advisor、移行ファイルの発行（作成）は data-arch が代行**（_arbitration 決定1 の通し番号表）。schema 一元管理のため**同じ `metadata` に追加**（`backend/app/db/schema.py`）。
 
@@ -76,11 +76,12 @@ CREATE TABLE policy (
   updated_at         TEXT                        -- ISO 文字列
 );
 
--- advisor_journal（夜=1件/日 自動・チャットの policy 変更時も当日 journal に snapshot）
+-- advisor_journal（夜=1件/日 自動・チャットの policy 変更/会話要約昇格でも当日 journal に書く＝ADR-029）
 CREATE TABLE advisor_journal (
   id                     INTEGER PRIMARY KEY AUTOINCREMENT,
   date                   TEXT NOT NULL,           -- YYYY-MM-DD
-  situation_briefing     TEXT,                    -- JSON（その日の事実：signals/portfolio/asset/index。監査用）
+  source                 TEXT NOT NULL DEFAULT 'nightly',  -- 'nightly'（夜の分析AI）/ 'chat'（昼チャットの要約昇格）＝ADR-029
+  situation_briefing     TEXT,                    -- JSON（その日の事実：signals/portfolio/asset/index。監査用。chat 昇格では null 可）
   observations           TEXT,                    -- AI 所見（自由文）
   proposal               TEXT,                    -- 当日の提案（自由文 or 参照）
   proposed_policy_change TEXT,                    -- JSON {field, from, to, reason}（任意）
@@ -105,6 +106,18 @@ CREATE TABLE proposals (
   FOREIGN KEY (depends_on) REFERENCES proposals(id)
 );
 CREATE INDEX ix_proposals_status ON proposals(status);
+
+-- llm_usage（LLM コストガードレール台帳＝ADR-028・§7.1）。OpenRouter の実コスト（usage.cost）を per-call で積む。
+CREATE TABLE llm_usage (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at   TEXT NOT NULL,                     -- ISO8601（当月集計の起点）
+  source       TEXT NOT NULL,                     -- "nightly"/"chat"/"dossier" 等の呼び出し文脈
+  model        TEXT,                              -- 使用モデル
+  tokens_in    INTEGER,
+  tokens_out   INTEGER,
+  cost_usd     REAL NOT NULL DEFAULT 0            -- OpenRouter usage.cost。Ollama は 0
+);
+CREATE INDEX ix_llm_usage_created_at ON llm_usage(created_at);
 ```
 
 - 比率系（`target_cash_ratio`/`max_position_weight`/`sector_caps`）は **すべて 0..1**（_arbitration 決定2 の横断ルール）。`optimize_portfolio` の制約にそのまま渡るため DB は 0..1・UI のみ ×100。
@@ -440,13 +453,14 @@ async def chat(req: ChatRequest) -> ChatResponse:
 ### 6.4 会話履歴の扱い（現状ステートレスの是正方針）
 
 - **方針**: Phase 3 は**ステートレス維持を既定**（frontend が会話を保持・毎ターン全 messages 送信）。サーバは会話を DB 保存しない。ADR-024 が会話保持を frontend に置く前提。会話の DB 永続は単一ユーザーに過剰で、`advisor_journal`（方針の履歴）とは別物。
-- **[U-6・ユーザー裁定]** 永続先: **既定 localStorage（リロードで消えてよい）**。`policy` の変更は journal に必ず snapshot されるので重要な決定は失われない（`_open-questions.md`）。
+- **[U-6・裁定確定＝ADR-029]** 永続先: **生の会話スクロールバックは `localStorage`**。※「揮発・リロードで消えてよい」は誤りで修正: localStorage は**同一ブラウザで永続**し、消えるのは「データ消去」「別デバイス/別ブラウザ」のときだけ（リロード・再起動では残る。揮発は `sessionStorage`）。個人・単一デバイスにはこの性質が好都合。
+- **[U-6・重要点の昇格＝ADR-029]** 残すべき重要点は**明示的に `advisor_journal` へ昇格**する。昼チャットに「この会話を要約して journal に残す」**トリガー（手動アクション＋AI の自発提案）**を置き、**書き込みはユーザー承認後のみ**（黙って自動保存しない＝ADR-014）。昇格エントリは `advisor_journal.source='chat'`（夜は `'nightly'`）で同一テーブル・同一 Journal 画面を再利用。**投資行動の数字は `transactions` が正**（holdings 導出元＝ADR-019）で、要約は物語として参照するだけ。`policy` 変更も従来どおり journal に snapshot されるので重要な決定は失われない。
 - **トークン肥大対策**: Phase 3 は素朴に全送信、肥大が問題化したら server 側で古い turn を要約（後付け可）。
 
 ### 6.5 チャットでの policy 更新 → journal snapshot
 
 - 方針が変わる場合、AI は `policy` を直接 Tool で書き換えない（チャットが方針を勝手に書き換えない規律）。代わりに**提案として `proposals`（kind=`policy_change`）を起票**し、ユーザー承認後に `policy` 更新＋journal snapshot（§5/service）。
-- **[U-7・ユーザー裁定]** 既定: **構造化コア（上限・除外・no_leverage）の変更は proposals 承認制**、**軽微な `rationale` 追記はチャット即時更新を許す**（ADR-013「気軽に育てる」と ADR-018 承認制の折衷・`_open-questions.md`）。
+- **[U-7・裁定確定]** **構造化コア（上限・除外・no_leverage 等＝optimize_portfolio に効く定量レバー）の変更は proposals 承認制**、**`rationale`（計算に効かない理念テキスト）追記はチャット即時更新**（ADR-013「気軽に育てる」と ADR-018 承認制の折衷）。境界線は「**最適化に効くものは承認・効かないものは即時**」。**グローバルトグル（全即時/全承認）は作らない**（両極端ともハイブリッドより悪い）。`exclusions` は銘柄ユニバースを制約するので**承認側のまま**。
 
 ---
 
@@ -456,6 +470,15 @@ async def chat(req: ChatRequest) -> ChatResponse:
 - **リトライ**: LLM 呼び出しは指数バックオフ・上限あり（`AsyncOpenAI` の `max_retries`/`timeout`）。
 - **失敗時（ADR-018）**: ダメなら**その日の journal をスキップ**して「失敗を記録」し、`DISCORD_WEBHOOK_URL` へエラー通知。signals は前日分が残る（夜の分析失敗が data 取得を壊さない）。
 - **[確定]** Discord 通知ユーティリティ（DiscordAdapter / `backend/app/batch/notify.py`・data-arch §1.12/§6.1 管轄）を使い、**夜の分析失敗のエラー通知だけ Phase 3 で最小実装**（本格通知は Phase 6）。`DISCORD_WEBHOOK_URL` 未設定なら no-op（ログのみ）。
+
+### 7.1 LLM コストガードレール（U-5・ADR-028）
+
+クラウド LLM 期間限定の月額ガードレール。**ローカル LLM（Ollama）移行後はトグル OFF で自然に無効化**するので作り込みすぎない。
+
+- **支出の計上**: LLM アダプタの呼び出しラッパで、OpenRouter がレスポンスに返す**実コスト（`usage.cost`）を読んで** `llm_usage`（per-call: `created_at`/`model`/`tokens_in`/`tokens_out`/`cost_usd`／or 月次カウンタ）に積む。**単価表は自前で持たない**。Ollama は `cost` 無し → $0 計上。
+- **しきい値と挙動（3 値トグル）**: 月額既定 **$50**。`off`（監視しない）/ `warn`（**既定**・呼び出しは止めず超過時に Discord 通知＋画面バナー）/ `block`（超過で LLM 呼び出しを止める）。**既定 `warn`**（無人の夜間バッチが黙ってスキップして journal を欠くのを避ける）。
+- **設定の層**: Phase 3 は **env を起動既定**（例 `LLM_COST_LIMIT_USD=50`/`LLM_COST_GUARD_MODE=warn`）＋ `llm_usage` 台帳＋判定までを実装。**UI 編集は Settings 画面（Phase 6）に乗る**（DB 上書き値が env を上書き）。同じ設定 UI に夜間ドシエの `N`（Phase 4・U-8）等の運用ツマミも同居させる。
+- **判定タイミング**: 当月累計 `cost_usd` を呼び出し前に参照。`block` で超過していれば呼び出しを起こさず、夜間なら journal にスキップ理由を記録・通知。
 
 ---
 
@@ -480,7 +503,7 @@ def resolve_proposal(conn, proposal_id: int, *, decision: Literal["approved","re
 
 - **`GET /policy`** → `Policy {core: PolicyCore, rationale, updated_at}`（**core と rationale を分けて返す**・screens.md §3）。`PolicyCore = {risk_tolerance, time_horizon, target_cash_ratio(0..1), max_position_weight(0..1), sector_caps(0..1), target_return, no_leverage(bool), exclusions[]}`。`no_leverage` の int↔bool・`sector_caps`/`exclusions` の JSON↔型変換はルータ層。
 - **`PUT /policy`** body `PolicyUpdate {core?: Partial<PolicyCore>, rationale?}` → `upsert_policy`＋journal snapshot。チャット経由更新（§6.5）と Policy 画面直接編集の**両方の入口**が同じ `PUT /policy` を叩く。
-- **`GET /journal?from=&to=`** → `JournalResponse {entries: JournalEntry[]}`（date 降順）。`JournalEntry = {id, date, observations, proposal, proposed_policy_change, policy_snapshot, llm_model, created_at}`。`situation_briefing`（重い JSON）は**一覧では返さず、必要なら別途 `GET /journal/{id}`**。
+- **`GET /journal?from=&to=`** → `JournalResponse {entries: JournalEntry[]}`（date 降順）。`JournalEntry = {id, date, source, observations, proposal, proposed_policy_change, policy_snapshot, llm_model, created_at}`（`source` は `'nightly'`/`'chat'`＝ADR-029）。`situation_briefing`（重い JSON）は**一覧では返さず、必要なら別途 `GET /journal/{id}`**。
 - **`GET /proposals?status=`** → `ProposalsResponse {proposals: Proposal[]}`。`Proposal = {id, created_date, kind, body, rationale, status, outcome, resolved_at, journal_id, depends_on}`。`depends_on`(FK→proposals.id・決定4)。`body` の kind 別中身（policy_change/buy/sell/rebalance）は ai-advisor 確定（app は入れ物 `ProposalBody` を規定）。
 - **`POST /proposals/{id}/approve`** body `{outcome?}` → `ResolveResult {proposal}`（status=approved・`resolve_proposal`）。
 - **`POST /proposals/{id}/reject`** body `{outcome?}` → `ResolveResult {proposal}`（status=rejected）。
@@ -510,7 +533,7 @@ update_proposal_status(conn, id, status, outcome=None, resolved_at=…) -> None
 - **root layout 配置のまま**（ADR-024・ページ遷移で会話保持）。既存はドラッグ・最小化あり。
 - **画面コンテキスト送信**（ADR-025）: 現状ハードコードの「見ているページ: Dashboard」を `usePathname()` ＋ route→page マップ（app 付録 B）で実値化し、`ChatRequest.context` に載せる。`/stocks/[code]` → `{type:"stock", code}` 等。**数値は載せない**。
 - **tool_runs 可視化**（screens.md §4）: `ChatResponse.tool_runs` を assistant バブル上部にチップ表示（「⚙ get_signals 実行」）。結果値は出さない。
-- **会話の永続**: `localStorage`（U-6・サーバはステートレス維持）。DB 永続は持たない。
+- **会話の永続**: `localStorage`（U-6/ADR-029・同一ブラウザで永続・サーバはステートレス維持）。DB 永続は持たない。**チャットに「この会話を要約して journal に残す」アクション**を置き、AI が重要決定を検知したら自発提案もする（承認後に `advisor_journal`（`source='chat'`）へ・ADR-029）。
 - **ドラッグ/リサイズ/最小化**: リサイズ未実装 → **自前 pointer ハンドル**（依存を増やさない・OPEN-H 確定）。
 - nav「Advisor」は専用ページを作らず**チャット起動トリガ**（onClick で open・OPEN-I 確定）。
 
@@ -567,9 +590,9 @@ DB は既存方針どおり**一時 SQLite**（conftest）。LLM/外部は必ず
 
 | # | 論点 | 既定（実装する値） | 差し替え手段 |
 |---|---|---|---|
-| **U-5** | LLM のコスト許容上限（夜間毎晩＋チャット往復のトークン量） | **Phase 3 着手時に概算してユーザー確認**。既定モデルは `anthropic/claude-sonnet-4-6` 維持 | `.env` でモデル差替（ADR-012・易） |
-| **U-6** | 会話履歴の永続先 | **localStorage（揮発・リロードで消えてよい）**。policy 変更は journal に snapshot されるので重要な決定は失われない | DB 保存層追加（中） |
-| **U-7** | チャットでの policy 更新 | **構造化コア（上限・除外・no_leverage）の変更は proposals 承認制**／`rationale` 追記はチャット即時反映 | 設定で全即時/全承認制に切替（易） |
+| **U-5** ✅裁定済み（ADR-028） | LLM のコスト許容上限 | **$50/月・3 値トグル（off/warn/block）既定 warn**・OpenRouter 実コストを `llm_usage` に計上・env 既定＋設定 UI 上書き（§7.1）。既定モデルは `anthropic/claude-sonnet-4-6` 維持 | `.env`/UI でしきい値・モデル差替（易） |
+| **U-6** ✅裁定済み（ADR-029） | 会話履歴の永続先 | **localStorage（生ログ・同一ブラウザで永続）＋重要点は承認付きで journal 昇格**（§6.4・`advisor_journal.source`） | DB 保存層追加（中） |
+| **U-7** ✅裁定済み | チャットでの policy 更新 | **構造化コア＝承認制／`rationale`＝即時**（§6.5・最適化に効く=承認/効かない=即時）。グローバルトグル無し・exclusions も承認制 | — |
 
 - 上記は投資の好み・コスト・運用に関わるため `_open-questions.md` でユーザー確認に回す。**値は env/policy/設定で後から差し替え可能な形**で実装する前提。
 - 確定済み（参考）: SSE=Phase 3 非ストリーミング＋`tool_runs` 同梱（L-16）／journal 構造化=`submit_journal` Tool（L-17）／focus 型=`{type, code?, id?}`（決定3）／Discord エラー通知のみ P3 最小（ADR-018）。

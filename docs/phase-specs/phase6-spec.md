@@ -232,7 +232,7 @@ data-arch:687 の順序を踏襲し、依存（Phase 1 の `signals`/`run_nightl
 3. [ ] `adapters/discord.py`（`DiscordAdapter`）を新規 → `batch/notify.py` の送信実体を移設・`error()` をアダプタ経由に統一 ＋ `test_discord_adapter.py`。
 4. [ ] `batch/notify.py` に冪等 `send_once`（§3）＋ `test_notifications_idempotent.py`（**冪等の中核テスト**）。
 5. [ ] `batch/jobs/notify_digest.py`（⑦⑧＋当日提案・env パラメータ）＋ `test_notify_digest.py` → `NIGHTLY_JOBS` 末尾に append。
-6. [ ] cron 確認: TZ=Asia/Tokyo を compose に追記・`CronTrigger(timezone=...)` 確認（時刻 U-9 はユーザー確認後に env 既定値を確定）。
+6. [ ] cron 確認: TZ=Asia/Tokyo を compose に追記・`CronTrigger(timezone=...)` 確認（時刻 U-9 裁定済み＝**02:00 JST** を env 既定値に）。
 7. [ ] frontend: `app/settings/page.tsx`（health 詳細＋ `runBatch`）・Sidebar の Settings href 化・`lib/api.ts` の `runBatch`／health 型・`app/page.tsx` のバッチ起動接続。
 8. [ ] env パラメータ（`ALERT_SCORE_MIN`/`REBALANCE_ALERT_DAYS`/`ALWAYS_DAILY_DIGEST`）を `config.py`・`.env.example` に追記（`discord_webhook_url` は既設・config.py:39）。
 9. [ ] 実機で `run_nightly`（または `POST /batch/run`）を 1 回流し、digest が Discord に届くこと・**2 回目で二重送信されないこと**を確認。

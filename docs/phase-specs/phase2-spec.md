@@ -224,7 +224,7 @@ def compute_portfolio_metrics(
 | ポート日次リターン | `port_ret = (ret * w).sum(axis=1)` | w=weights |
 | 年率リターン | `port_ret.mean() * 252` | — |
 | 年率ボラ | `port_ret.std(ddof=1) * sqrt(252)` | — |
-| シャープ | `(年率リターン − rf) / 年率ボラ` | **rf=0.0**（[OPEN] U-3・既定 0.0 固定） |
+| シャープ | `(年率リターン − rf) / 年率ボラ` | **rf=0.0**（U-3 裁定済み・`RISK_FREE_RATE=0.0` 名前付き定数／ADR-027 レーン） |
 | 最大DD | `cum=(1+port_ret).cumprod(); dd=cum/cum.cummax()-1; mdd=dd.min()` | 負値 |
 
 - **lookback**: 直近 **252 営業日**。不足なら取得できた日数で計算し `lookback_days` に実数。
@@ -560,7 +560,7 @@ PyPortfolioOpt>=1.5   # 平均分散最適化（内部で cvxpy を使う）
 ## 10. このPhaseの [OPEN]（`_open-questions.md` 参照）
 
 **ユーザー裁定（推奨値を既定に採用済み・env/設定/policy で差替可）**:
-- **U-3 rf（無リスク金利・シャープ計算）**: **既定 0.0 固定**。代替＝policy/設定で可変化（日本国債利回り等）。（`_open-questions.md` U-3）
+- **U-3 rf（無リスク金利・シャープ計算）** ✅裁定済み: **`RISK_FREE_RATE=0.0` 固定**（名前付き定数で外出し・magic number 禁止）。扱いは **ADR-027 レーン**（名前付き定数 → 将来 `method_settings`）で、**policy にも env にも入れない**。日本の無リスク金利はゼロ近傍でシャープの順位がほぼ不変・外部依存とテスト非決定性を避けるため。（`_open-questions.md` U-3）
 
 **技術リスク（実機確認・ユーザー判断不要）**:
 - PyPortfolioOpt/cvxpy が aarch64 で通るか（cvxpy 1.9.1 に wheel あり）。詰めば自前 SLSQP（§7）。
