@@ -11,6 +11,7 @@ from datetime import date
 
 import pytest
 
+from app.adapters.jquants import JQuantsCoverageError
 from app.batch.jobs import fetch_quotes
 from app.db import repo
 from app.db.engine import get_engine
@@ -100,6 +101,42 @@ def test_failure_returns_not_ok(temp_db, _patch, monkeypatch) -> None:
     result = fetch_quotes.run(full_backfill=False)
     assert result.ok is False
     assert "boom" in result.detail
+
+
+def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
+    """契約範囲外の日付（400=JQuantsCoverageError）に達したら ok=True で打ち切る（前線到達）。
+
+    本番投入の実走（2026-06-04）で、Free の提供範囲外日が空レスでなく 400 を返し、毎晩の差分が
+    失敗扱いになった回帰防止。前線の日は fetch_meta に進めない（翌晩 d から再試行できるように）。
+    """
+    repo.upsert_fetch_meta("daily_quotes", "2026-06-01")  # start=2026-06-02(火)
+
+    cov_msg = "Your subscription covers the following dates: 2024-03-12 ~ 2026-06-03 ..."
+
+    class _CoverageAdapter:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def fetch_daily_quotes_by_date(self, d: str) -> list[dict]:
+            self.calls.append(d)
+            # 06-02・06-03 は取得でき、06-04 以降は範囲外（400）。
+            if d >= "2026-06-04":
+                raise JQuantsCoverageError(f"GET /v2/equities/bars/daily 契約範囲外: {cov_msg}")
+            return [_quote("72030", d)]
+
+    fake = _CoverageAdapter()
+    monkeypatch.setattr(fetch_quotes, "JQuantsAdapter", lambda: fake)
+
+    result = fetch_quotes.run(full_backfill=False)
+
+    assert result.ok is True  # 前線到達は失敗ではない
+    assert fake.calls == ["2026-06-02", "2026-06-03", "2026-06-04"]  # 04 で 400 → break
+    assert result.rows == 2  # 06-02・06-03 の 2 行のみ
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, "daily_quotes")
+        assert meta is not None
+        # 前線の 06-04 には進めず、取得できた最終日 06-03 のまま（翌晩 06-04 から再試行）。
+        assert meta["last_fetched_date"] == "2026-06-03"
 
 
 def test_full_backfill_start_uses_backfill_years(temp_db, _patch, monkeypatch) -> None:

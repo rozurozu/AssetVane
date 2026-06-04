@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
-from app.adapters.jquants import JQuantsAdapter
+from app.adapters.jquants import JQuantsAdapter, JQuantsCoverageError
 from app.batch import calendar
 from app.batch.runner import JobResult
 from app.config import settings
@@ -61,15 +61,24 @@ def run(*, full_backfill: bool = False) -> JobResult:
 
     total_rows = 0
     days = 0
+    frontier: str | None = None  # 契約範囲の前線に達して打ち切った日付（あれば）
     try:
         adapter = JQuantsAdapter()
         for d in calendar.candidate_days(start, today):
-            rows = adapter.fetch_daily_quotes_by_date(d)
+            try:
+                rows = adapter.fetch_daily_quotes_by_date(d)
+            except JQuantsCoverageError:
+                # 範囲外日付（Free の12週遅延・格納期間外）は 400 で返る＝前線到達。ここで正常終了。
+                # fetch_meta は d に進めない（直前の取得済み日のまま）。遅延窓は日々前進するので、
+                # 翌晩の差分は d から再試行し、提供開始されていれば取れる（2026-06-04 本番投入）。
+                frontier = d
+                logger.info("fetch_quotes: 契約範囲の前線に到達（%s）。取得を打ち切る。", d)
+                break
             # code/date が欠けた行は弾く（PK が NULL だと UPSERT が壊れる）。
             rows = [r for r in rows if r.get("code") and r.get("date")]
             if rows:
                 total_rows += repo.upsert_daily_quotes(rows)
-            # 空配列（非営業日）でも fetch_meta を前進させ再開境界を進める。
+            # 空配列（祝日・臨時休場）でも fetch_meta を前進させ再開境界を進める。
             repo.upsert_fetch_meta(_SOURCE, d)
             days += 1
     except Exception as exc:  # noqa: BLE001 — ジョブ境界（JQuantsError 含む）で握り runner に返す
@@ -81,9 +90,10 @@ def run(*, full_backfill: bool = False) -> JobResult:
             detail=f"start={start} で {days} 日処理後に失敗: {exc}",
         )
 
+    tail = f"・前線 {frontier} で打ち切り" if frontier else f"〜{today}"
     return JobResult(
         name="fetch_quotes",
         ok=True,
         rows=total_rows,
-        detail=f"start={start}〜{today}・営業日 {days} 日・{total_rows} 行 UPSERT",
+        detail=f"start={start}{tail}・営業日 {days} 日・{total_rows} 行 UPSERT",
     )

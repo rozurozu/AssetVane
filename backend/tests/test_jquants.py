@@ -6,12 +6,46 @@
 
 from __future__ import annotations
 
+import httpx
+import pytest
+
+from app.adapters import jquants as jq
 from app.adapters.jquants import (
     JQuantsAdapter,
+    JQuantsCoverageError,
+    JQuantsError,
     _extract_rows,
     _norm_date,
     _to_jq_code,
 )
+
+
+class _FakeResp:
+    """httpx.Response の最小スタブ（status_code / text / json のみ）。"""
+
+    def __init__(
+        self, status_code: int, payload: dict[str, object] | None = None, text: str = ""
+    ) -> None:
+        self.status_code = status_code
+        self.text = text
+        self._payload = payload or {"data": []}
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+class _FakeClient:
+    """渡した列を順に返すフェイク httpx.Client。要素が Exception なら get がそれを raise する。"""
+
+    def __init__(self, responses: list[_FakeResp | Exception]) -> None:
+        self._responses = list(responses)
+
+    def get(self, path: str, params: dict[str, object]) -> _FakeResp:
+        item = self._responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
 
 # 実 API 確認した V2 /v2/equities/bars/daily の 1 行（略記キー）。
 BARS_ROW = {
@@ -151,3 +185,98 @@ def test_normalize_financial_short_keys() -> None:
     assert row["net_sales"] == 22000000000.0
     assert row["eps"] == 420.0
     assert row["bps"] == 6800.0
+
+
+def test_get_with_retry_survives_429_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    """429 が連続しても上限まで待ってリトライし、回復したら成功する（5分ブロック耐性）。
+
+    本番投入の実走（2026-06-04）で 429×4 が fetch_quotes を殺した回帰防止。_throttle は
+    no-op 化し、429 バックオフの待機列だけを観測する（base × 2^attempt の指数）。
+    """
+    adapter = JQuantsAdapter(api_key="dummy")
+    monkeypatch.setattr(adapter, "_throttle", lambda: None)
+    sleeps: list[float] = []
+    monkeypatch.setattr(jq.time, "sleep", lambda s: sleeps.append(s))
+
+    client = _FakeClient([_FakeResp(429), _FakeResp(429), _FakeResp(200, {"data": [{"ok": 1}]})])
+    payload = adapter._get_with_retry(client, "/v2/equities/bars/daily", {})  # type: ignore[arg-type]
+
+    assert payload == {"data": [{"ok": 1}]}
+    assert sleeps == [2.0, 4.0]  # 429 が 2 回 → 指数バックオフ 2,4 秒
+
+
+def test_get_with_retry_exhausts_and_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """429 が上限回数続いたら待機列が上限 120 秒で頭打ちし、最終的に JQuantsError を投げる。"""
+    adapter = JQuantsAdapter(api_key="dummy")
+    monkeypatch.setattr(adapter, "_throttle", lambda: None)
+    sleeps: list[float] = []
+    monkeypatch.setattr(jq.time, "sleep", lambda s: sleeps.append(s))
+
+    client = _FakeClient([_FakeResp(429) for _ in range(jq._MAX_RETRIES)])
+    with pytest.raises(JQuantsError, match="429"):
+        adapter._get_with_retry(client, "/v2/equities/bars/daily", {})  # type: ignore[arg-type]
+
+    # 合計待機が約6分（2+4+8+16+32+64+120+120）になるまで耐えてから諦める。
+    assert sleeps == [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 120.0, 120.0]
+
+
+def test_get_with_retry_survives_transient_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """一時的な通信失敗（ReadTimeout/ConnectError）も握って再試行し、回復したら成功する。
+
+    本番投入の実走（2026-06-04）で 429 を耐えた後に単発 ReadTimeout が fetch_quotes を殺した
+    回帰防止。429 と同じ指数バックオフで再試行する。
+    """
+    adapter = JQuantsAdapter(api_key="dummy")
+    monkeypatch.setattr(adapter, "_throttle", lambda: None)
+    sleeps: list[float] = []
+    monkeypatch.setattr(jq.time, "sleep", lambda s: sleeps.append(s))
+
+    client = _FakeClient(
+        [
+            httpx.ReadTimeout("read timed out"),
+            httpx.ConnectError("connection failed"),
+            _FakeResp(200, {"data": [{"ok": 1}]}),
+        ]
+    )
+    payload = adapter._get_with_retry(client, "/v2/equities/bars/daily", {})  # type: ignore[arg-type]
+
+    assert payload == {"data": [{"ok": 1}]}
+    assert sleeps == [2.0, 4.0]  # ReadTimeout・ConnectError の 2 回ぶん再試行
+
+
+def test_get_with_retry_raises_after_persistent_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """通信失敗が上限回数続いたら、最後の例外名を添えて JQuantsError を投げる。"""
+    adapter = JQuantsAdapter(api_key="dummy")
+    monkeypatch.setattr(adapter, "_throttle", lambda: None)
+    monkeypatch.setattr(jq.time, "sleep", lambda s: None)
+
+    client = _FakeClient([httpx.ReadTimeout("read timed out") for _ in range(jq._MAX_RETRIES)])
+    with pytest.raises(JQuantsError, match="ReadTimeout"):
+        adapter._get_with_retry(client, "/v2/equities/bars/daily", {})  # type: ignore[arg-type]
+
+
+def test_get_with_retry_coverage_400_raises_coverage_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """範囲外日付の 400（'covers the following dates'）は JQuantsCoverageError で送出する。
+
+    本番投入の実走（2026-06-04）で判明。前線到達＝正常終了の合図なので、ふつうの 400 と区別する。
+    """
+    adapter = JQuantsAdapter(api_key="dummy")
+    monkeypatch.setattr(adapter, "_throttle", lambda: None)
+
+    msg = '{"message": "Your subscription covers the following dates: 2024-03-12 ~ 2026-03-12"}'
+    client = _FakeClient([_FakeResp(400, text=msg)])
+    with pytest.raises(JQuantsCoverageError, match="契約範囲外"):
+        adapter._get_with_retry(client, "/v2/equities/bars/daily", {})  # type: ignore[arg-type]
+
+
+def test_get_with_retry_other_400_raises_plain_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """範囲外メッセージを含まない 400 は通常の JQuantsError（CoverageError ではない）。"""
+    adapter = JQuantsAdapter(api_key="dummy")
+    monkeypatch.setattr(adapter, "_throttle", lambda: None)
+
+    client = _FakeClient([_FakeResp(400, text='{"message": "bad request"}')])
+    with pytest.raises(JQuantsError) as exc_info:
+        adapter._get_with_retry(client, "/v2/equities/bars/daily", {})  # type: ignore[arg-type]
+    assert not isinstance(exc_info.value, JQuantsCoverageError)
