@@ -1,18 +1,10 @@
-// Dashboard 表示用のダミーデータ（Phase 3/4 まで配線なし）。
-// kpis / allocation / trendPath は Phase 2 で /asset-overview に配線済み（app/page.tsx）。
-// proposals / policy / journal / watchlist / signals は Phase 3/4 で本配線予定。
+// Dashboard 表示用のダミーデータ（残るは watchlist のみ・Phase 4 で本配線）。
+// kpis / allocation / trendPath は /asset-overview（Phase 2）、signals は /signals（Phase 1）、
+// proposals / policy / journal は各 API（Phase 3）に配線済み（app/page.tsx）。
 // 設計: docs/api.md / docs/screens.md §3。
 
-// proposals / policy / journal の mock は削除（Dashboard が GET /proposals・/policy・/journal に実配線・spec §9.6）。
-// signals / watchlist は Dashboard でまだモック表示なので残す（Phase 1/4 で本配線）。
-
-export const signals = [
-  { code: "6920", name: "レーザーテック", score: 0.88, d5: "+7.4%", up: true, sig: "25MA上抜け" },
-  { code: "8035", name: "東京エレクトロン", score: 0.81, d5: "+5.1%", up: true, sig: "RSI反転" },
-  { code: "6098", name: "リクルートHD", score: 0.74, d5: "+3.8%", up: true, sig: "25MA上抜け" },
-  { code: "7203", name: "トヨタ自動車", score: 0.62, d5: "+1.9%", up: true, sig: "GC" },
-  { code: "9984", name: "ソフトバンクG", score: 0.55, d5: "−2.3%", up: false, sig: "押し目" },
-];
+// proposals / policy / journal / signals の mock は削除（Dashboard が GET /proposals・/policy・
+// /journal・/signals に実配線・spec §9.6）。watchlist のみ Phase 4（ドシエ）まで残す。
 
 export const watchlist = [
   { code: "6857", name: "アドバンテスト", last: "2日前", stale: false },

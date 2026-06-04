@@ -4,8 +4,9 @@
 // watchlist・日記を密度優先で一望する。
 // KPI / allocation / 資産推移 は getAssetOverview() の実データに配線（Phase 2）。
 // policy / proposals / journal は getPolicy() / getProposals("pending") / getJournal() に配線（Phase 3）。
+// signals は getSignals(limit:5) の実データに配線（Phase 1・screens.md §3「今日の signals は /signals」）。
 // backend 未起動でも壊れないよう fetch 失敗は握って空表示＋注記にする（spec §9.6）。
-// watchlist / signals は Phase 1/4 で本配線するので当面モックのまま。
+// watchlist は Phase 4（ドシエ）で本配線するので当面モックのまま。
 
 import { Card } from "@/components/ui/Card";
 import { DataTable, Td } from "@/components/ui/DataTable";
@@ -15,13 +16,16 @@ import {
   type JournalEntry,
   type Policy,
   type Proposal,
+  type Signal,
   getAssetOverview,
   getJournal,
   getPolicy,
   getProposals,
+  getSignals,
+  runBatch,
 } from "@/lib/api";
 import { fmtJpy, pct } from "@/lib/format";
-import { signals, watchlist } from "@/lib/mock-data";
+import { watchlist } from "@/lib/mock-data";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -32,12 +36,18 @@ export default function Dashboard() {
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [journalLatest, setJournalLatest] = useState<JournalEntry | null>(null);
+  // Phase 1 signals（上位 5 件・score 降順は backend 既定）。
+  const [signals, setSignals] = useState<Signal[]>([]);
+  const [signalsDelayed, setSignalsDelayed] = useState(false);
+  // 「バッチを今すぐ実行」ボタンの状態（202 受付・進捗は Discord/fetch_meta で追う）。
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchNote, setBatchNote] = useState<string | null>(null);
 
   useEffect(() => {
     getAssetOverview()
       .then(setOverview)
       .catch((e) => setOverviewErr(e instanceof Error ? e.message : String(e)));
-    // policy / proposals / journal は失敗しても画面を壊さない（空表示）。
+    // policy / proposals / journal / signals は失敗しても画面を壊さない（空表示）。
     getPolicy()
       .then(setPolicy)
       .catch(() => {});
@@ -47,7 +57,27 @@ export default function Dashboard() {
     getJournal()
       .then((r) => setJournalLatest(r.entries[0] ?? null))
       .catch(() => {});
+    getSignals({ limit: 5 })
+      .then((r) => {
+        setSignals(r.signals);
+        setSignalsDelayed(r.is_delayed);
+      })
+      .catch(() => {});
   }, []);
+
+  // バッチを手動起動（POST /batch/run）。202 受付なので「起動した」までを伝え、進捗は追わない。
+  async function onRunBatch() {
+    setBatchBusy(true);
+    setBatchNote(null);
+    try {
+      await runBatch();
+      setBatchNote("バッチを起動したのだ。進捗は signals/資産が更新されるまで待つのだ。");
+    } catch (e) {
+      setBatchNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBatchBusy(false);
+    }
+  }
 
   // 遅延注記（is_delayed=true かつ as_of がある場合に表示）
   const delayNote =
@@ -166,10 +196,21 @@ export default function Dashboard() {
             承認待ちの提案が {proposals.length} 件
           </div>
         </div>
-        <button type="button" className="text-[12px] text-accent">
-          バッチを今すぐ実行
+        <button
+          type="button"
+          onClick={onRunBatch}
+          disabled={batchBusy}
+          className="text-[12px] text-accent disabled:text-ink-subtle"
+        >
+          {batchBusy ? "起動中…" : "バッチを今すぐ実行"}
         </button>
       </div>
+
+      {batchNote && (
+        <div className="mb-3 rounded-lg border border-hairline bg-surface-1 p-3 text-[13px] text-ink-muted">
+          {batchNote}
+        </div>
+      )}
 
       {/* データ未投入（total_value=0 または取得エラー）*/}
       {overviewErr && (
@@ -436,52 +477,71 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* signals ＋ watchlist（Phase 3/4 までモック）*/}
+      {/* signals（Phase 1 実配線）＋ watchlist（Phase 4 までモック）*/}
       <div className="mb-3 grid grid-cols-[3fr_2fr] gap-3 max-[1100px]:grid-cols-1">
         <Card
           title="今日のシグナル（Trend Vane）"
+          meta={signalsDelayed ? "12週遅延" : undefined}
           link={
             <Link href="/signals" className="text-[12px] text-accent">
               すべて
             </Link>
           }
         >
-          <DataTable
-            columns={[
-              { label: "コード / 銘柄" },
-              { label: "スコア", right: true },
-              { label: "5日", right: true },
-              { label: "シグナル" },
-            ]}
-          >
-            {signals.map((s) => (
-              <tr key={s.code} className="hover:[&>td]:bg-surface-2">
-                <Td>
-                  <span className="num font-semibold">{s.code}</span>{" "}
-                  <span className="text-[12px] text-ink-muted">{s.name}</span>
-                </Td>
-                <Td right>
-                  <span className="inline-flex items-center justify-end gap-2">
-                    <span className="h-1 w-12 overflow-hidden rounded-full bg-hairline">
-                      <i
-                        className="block h-full bg-accent"
-                        style={{ width: `${s.score * 100}%` }}
-                      />
-                    </span>
-                    <span className="num">{s.score.toFixed(2)}</span>
-                  </span>
-                </Td>
-                <Td right>
-                  <span className={`num ${s.up ? "text-up" : "text-down"}`}>{s.d5}</span>
-                </Td>
-                <Td>
-                  <span className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-[12px] text-ink-muted">
-                    {s.sig}
-                  </span>
-                </Td>
-              </tr>
-            ))}
-          </DataTable>
+          {signals.length === 0 ? (
+            <div className="py-4 text-center text-[13px] text-ink-subtle">
+              まだシグナルがないのだ。夜間バッチ（上の「バッチを今すぐ実行」）で算出されるのだ。
+            </div>
+          ) : (
+            <DataTable
+              columns={[
+                { label: "コード / 銘柄" },
+                { label: "スコア", right: true },
+                { label: "5日", right: true },
+                { label: "シグナル" },
+              ]}
+            >
+              {signals.map((s) => {
+                const d5 = s.payload.change_5d;
+                return (
+                  <tr key={`${s.code}-${s.signal_type}`} className="hover:[&>td]:bg-surface-2">
+                    <Td>
+                      <Link href={`/stocks/${s.code}`} className="hover:text-accent">
+                        <span className="num font-semibold text-accent">{s.code}</span>{" "}
+                        <span className="text-[12px] text-ink-muted">{s.company_name ?? "—"}</span>
+                      </Link>
+                    </Td>
+                    <Td right>
+                      <span className="inline-flex items-center justify-end gap-2">
+                        <span className="h-1 w-12 overflow-hidden rounded-full bg-hairline">
+                          <i
+                            className="block h-full bg-accent"
+                            style={{ width: `${s.score * 100}%` }}
+                          />
+                        </span>
+                        <span className="num">{s.score.toFixed(2)}</span>
+                      </span>
+                    </Td>
+                    <Td right>
+                      {d5 != null ? (
+                        <span className={`num ${d5 >= 0 ? "text-up" : "text-down"}`}>
+                          {d5 >= 0 ? "+" : ""}
+                          {(d5 * 100).toFixed(1)}%
+                        </span>
+                      ) : (
+                        <span className="text-ink-subtle">—</span>
+                      )}
+                    </Td>
+                    <Td>
+                      <span className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-[12px] text-ink-muted">
+                        {s.payload.label ?? "—"}
+                      </span>
+                    </Td>
+                  </tr>
+                );
+              })}
+            </DataTable>
+          )}
         </Card>
 
         <Card

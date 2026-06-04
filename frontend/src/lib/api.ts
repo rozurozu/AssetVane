@@ -441,6 +441,19 @@ export function getSignals(
   return getJSON<SignalsResponse>(`/signals${qs ? `?${qs}` : ""}`, signal);
 }
 
+/** 手動バッチ起動レスポンス（POST /batch/run・batch.py）。非同期受付で 202（裁定 L-2）。 */
+export interface BatchRunResponse {
+  started: boolean;
+  job_id: string | null;
+}
+
+/** 夜間バッチを手動起動（Phase 1・POST /batch/run・ADR-011「2つの起動口」）。
+ * 既に実行中なら backend が 409 を返し ApiError（detail）が throw される。
+ * full_backfill=true で BACKFILL_YEARS 分を頭から取り直す（初回/復旧）。 */
+export function runBatch(fullBackfill = false): Promise<BatchRunResponse> {
+  return postJSON<BatchRunResponse>("/batch/run", { full_backfill: fullBackfill });
+}
+
 // --- Phase 2 API 関数（phase2-spec.md §5）---
 // すべて `lib/api.ts` に集約（ADR-005）。DB に触れない。
 
