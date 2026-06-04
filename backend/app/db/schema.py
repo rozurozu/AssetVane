@@ -190,11 +190,18 @@ financials = Table(
     Column("code", String, ForeignKey("stocks.code"), nullable=False),
     Column("disclosed_date", String, nullable=False),  # 開示日 'YYYY-MM-DD'
     Column("fiscal_period", String, nullable=False),  # 会計期間（例 '2025Q1' / 'FY2024'）
-    Column("net_sales", Float),  # 売上高
-    Column("operating_profit", Float),  # 営業利益
-    Column("profit", Float),  # 純利益
-    Column("eps", Float),  # EPS
-    Column("bps", Float),  # BPS
+    Column("net_sales", Float),  # 売上高（J-Quants summary: Sales）
+    Column("operating_profit", Float),  # 営業利益（OP）
+    Column("profit", Float),  # 純利益（NP）
+    Column("eps", Float),  # EPS（PER = close / eps の素）
+    Column("bps", Float),  # BPS（PBR = close / bps の素）
+    # スクリーニング（バリュエーション導出）用に 0007_screening で追加。実機確認済みフィールド:
+    #   dividend_per_share = 年間配当（予想 FDivAnn 優先・実績 DivAnn 代替）。利回り = dps / close
+    #   shares_outstanding = 期末発行済株式数 ShOutFY、treasury_shares = 自己株式 TrShFY
+    #   → 時価総額 = close * (shares_outstanding - treasury_shares)
+    Column("dividend_per_share", Float),  # 年間配当（予想優先）
+    Column("shares_outstanding", Float),  # 期末発行済株式数（ShOutFY）
+    Column("treasury_shares", Float),  # 期末自己株式数（TrShFY）
     PrimaryKeyConstraint("code", "disclosed_date", "fiscal_period", name="pk_financials"),
     Index("ix_financials_code", "code"),
 )
@@ -272,4 +279,45 @@ llm_usage = Table(
     Column("tokens_out", Integer),
     Column("cost_usd", Float, nullable=False, server_default="0"),  # OpenRouter usage.cost
     Index("ix_llm_usage_created_at", "created_at"),
+)
+
+# ===== スクリーニング（/stocks スクリーナー・ADR-031・0007_screening） =====
+# 設計: 重い結合（daily_quotes × financials）を夜間ジョブ calc_valuation が
+# 「1 銘柄 1 行」に畳んで valuation_snapshots に焼く。/stocks/screen は読み取り時に
+# これを絞り込み、業種内/全体ランクは ~4000 行への window 関数で都度算出する（ADR-026）。
+# AI には数値を計算させず Python が事実を計算する（ADR-014/016）。
+# 値の鮮度は夜間バッチ更新と同じ（daily_quotes も夜間更新のため）。
+
+# バリュエーション・スナップショット（1 銘柄最新 1 行・code を PK にして最新のみ保持）。
+# 派生比率（per/pbr/market_cap/dividend_yield）＋根拠の素（close/eps/bps/配当/株数）を持つ。
+# 業種/市場/名称は焼かず、読み取り時に stocks へ JOIN して補う（repo 規約）。
+valuation_snapshots = Table(
+    "valuation_snapshots",
+    metadata,
+    Column("code", String, ForeignKey("stocks.code"), primary_key=True),
+    Column("as_of_date", String, nullable=False),  # 採用した株価の営業日 'YYYY-MM-DD'
+    Column("close", Float),  # 採用終値（adj 前の素の終値）
+    Column("eps", Float),  # 採用財務の EPS
+    Column("bps", Float),  # 採用財務の BPS
+    Column("dividend_per_share", Float),  # 採用財務の年間配当（予想優先）
+    Column("shares_net", Float),  # 発行済 - 自己株（時価総額の素）
+    Column("per", Float),  # close / eps
+    Column("pbr", Float),  # close / bps
+    Column("market_cap", Float),  # close * shares_net
+    Column("dividend_yield", Float),  # dividend_per_share / close（0..1）
+    Column("fin_disclosed_date", String),  # 採用した財務の開示日（監査・どの決算を使ったか）
+    Column("updated_at", String),  # ISO8601（この行を焼いた時刻）
+)
+
+# 保存スクリーニング条件（ADR-001: 単一ユーザーなので user_id を持たない・複数行は可）。
+# criteria_json は UI のフィルタ条件まるごと（範囲・ランク・業種・市場・sort）。
+# policy/watchlist と同じく JSON(TEXT) 可変構造。パースは router の責務。
+screening_filters = Table(
+    "screening_filters",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False),
+    Column("criteria_json", String, nullable=False),  # JSON 文字列
+    Column("created_at", String),  # ISO8601
+    Column("updated_at", String),  # ISO8601
 )

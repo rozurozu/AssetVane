@@ -32,3 +32,25 @@ export function fromPctStr(s: string): number | null {
   if (Number.isNaN(n)) return null;
   return n / 100;
 }
+
+/** PER/PBR 等の倍率。null は "—"。例: 12.345 → "12.3"（digits 既定 1・スクリーナー）。 */
+export function fmtRatio(v: number | null | undefined, digits = 1): string {
+  if (v == null) return "—";
+  return v.toFixed(digits);
+}
+
+/** 時価総額（円）を兆/億で簡潔表示。null は "—"。例: 2.5e12 → "2.5兆円"・5e10 → "500億円"。 */
+export function fmtMarketCap(v: number | null | undefined): string {
+  if (v == null) return "—";
+  const oku = v / 1e8; // 億円単位
+  if (oku >= 10000) return `${(oku / 10000).toFixed(1)}兆円`;
+  return `${Math.round(oku).toLocaleString("ja-JP")}億円`;
+}
+
+/** 編集入力の文字列 → number | undefined（空・非数は undefined・スクリーナーのレンジ入力）。 */
+export function toNum(s: string): number | undefined {
+  const t = s.trim();
+  if (t === "") return undefined;
+  const n = Number(t);
+  return Number.isNaN(n) ? undefined : n;
+}

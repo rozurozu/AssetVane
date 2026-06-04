@@ -74,6 +74,20 @@ def _norm_date(value: Any) -> str:
     return s
 
 
+def _to_float(value: Any) -> float | None:
+    """数値文字列を float にする。空文字 '' / None / 変換不能は None（/v2/fins/summary 対策）。
+
+    財務サマリ（/v2/fins/summary）は値を文字列（'232.55'）で返し、N/A は空文字 '' になる。
+    Float 列に '' を入れないよう、ここで None 化する（実機確認 2026-06）。
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _extract_rows(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
     """エンベロープから行リストと pagination_key を取り出す。
 
@@ -273,38 +287,47 @@ class JQuantsAdapter:
         code: str | None = None,
         date: str | None = None,
     ) -> list[dict[str, Any]]:
-        """財務・決算データを取得し、内部列名に正規化して返す（phase2-spec.md §3.2）。
+        """財務・決算データを取得し、内部列名に正規化して返す（phase2-spec.md §3.2・ADR-031）。
 
-        V2 財務エンドポイント（/v2/fins/statements）を使用する想定だが、
-        パス名・実フィールド名は未確定（jquants.md §6 要再確認）。
-        `code` 指定で 1 銘柄、`date` 指定でその日開示の全銘柄を取得する
-        （日付一括が有効かも実 API 確認待ち）。
-
-        フィールド名は `_first` の候補キーフォールバックで略記・フルネーム両対応にする。
+        エンドポイントは **/v2/fins/summary**（実機確認 2026-06。/v2/fins/statements は 403）。
+        `code` 指定で 1 銘柄（過去複数期の開示行）、`date` 指定でその日開示の全銘柄を取得する。
+        フィールドは短縮名（EPS/BPS/Sales/OP/NP/DivAnn/FDivAnn/ShOutFY/TrShFY/DiscDate/...）で、
+        値は文字列・N/A は空文字。`_first` で候補キー対応、`_to_float` で数値化する。
         """
         params: dict[str, Any] = {}
         if code:
             params["code"] = _to_jq_code(code)
         if date:
             params["date"] = date
-        raw = self._get_paginated("/v2/fins/statements", params)
+        raw = self._get_paginated("/v2/fins/summary", params)
         return [self._normalize_financial(r) for r in raw]
 
     @staticmethod
     def _normalize_financial(r: dict[str, Any]) -> dict[str, Any]:
-        """財務行を内部列名に正規化する（phase2-spec.md §3.2・外部キー名→内部列名）。
+        """財務行を内部列名に正規化する（phase2-spec.md §3.2・ADR-031・外部キー名→内部列名）。
 
-        V2 の実フィールド名は未確定のため、`_first` で略記・フルネーム両対応にする
-        （jquants.md §6 要再確認）。候補キーの順序は「短縮形 → フルネーム → 内部名」。
+        /v2/fins/summary の実フィールド名（実機確認 2026-06。候補順は「実名 → 旧フルネーム」）:
+          EPS/BPS/Sales/OP/NP・DiscDate（開示日）・CurPerType（会計期間種別 'FY'/'1Q'…）。
+          配当は FDivAnn（予想年間）優先・DivAnn（実績年間）フォールバック＝予想配当利回りを既定。
+          発行済株式数 ShOutFY・自己株式 TrShFY → 時価総額 = close * (ShOutFY - TrShFY)。
+        値は文字列・N/A は空文字のため数値は `_to_float` で None 化する。
         """
         return {
             "code": _first(r, ["Code", "code"]),
-            "disclosed_date": _norm_date(_first(r, ["DisclosedDate", "disclosed_date", "Date"])),
-            # TypeOfCurrentPeriod: 'FY', '1Q', '2Q', '3Q' 等（実 API 確認待ち）
-            "fiscal_period": _first(r, ["TypeOfCurrentPeriod", "FiscalPeriod", "fiscal_period"]),
-            "net_sales": _first(r, ["NetSales", "Sales", "net_sales"]),
-            "operating_profit": _first(r, ["OperatingProfit", "operating_profit"]),
-            "profit": _first(r, ["Profit", "NetIncome", "profit"]),
-            "eps": _first(r, ["EarningsPerShare", "EPS", "eps"]),
-            "bps": _first(r, ["BookValuePerShare", "BPS", "bps"]),
+            "disclosed_date": _norm_date(_first(r, ["DiscDate", "DisclosedDate", "Date"])),
+            # CurPerType: 'FY', '1Q', '2Q', '3Q' 等（実機確認 2026-06）
+            "fiscal_period": _first(r, ["CurPerType", "TypeOfCurrentPeriod", "fiscal_period"]),
+            "net_sales": _to_float(_first(r, ["Sales", "NetSales", "net_sales"])),
+            "operating_profit": _to_float(_first(r, ["OP", "OperatingProfit", "operating_profit"])),
+            "profit": _to_float(_first(r, ["NP", "Profit", "NetIncome", "profit"])),
+            "eps": _to_float(_first(r, ["EPS", "EarningsPerShare", "eps"])),
+            "bps": _to_float(_first(r, ["BPS", "BookValuePerShare", "bps"])),
+            # 配当は予想（FDivAnn）優先・実績（DivAnn）フォールバック＝予想配当利回りを既定に
+            "dividend_per_share": _to_float(
+                _first(r, ["FDivAnn", "DivAnn", "DividendPerShareAnnual"])
+            ),
+            "shares_outstanding": _to_float(
+                _first(r, ["ShOutFY", "NumberOfIssuedAndOutstandingShares"])
+            ),
+            "treasury_shares": _to_float(_first(r, ["TrShFY", "NumberOfTreasuryStock"])),
         }

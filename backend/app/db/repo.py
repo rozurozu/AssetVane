@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, Table, func, select
+from sqlalchemy import Connection, Table, and_, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.engine import get_engine
@@ -27,9 +27,11 @@ from app.db.schema import (
     policy,
     portfolios,
     proposals,
+    screening_filters,
     signals,
     stocks,
     transactions,
+    valuation_snapshots,
 )
 
 
@@ -122,6 +124,11 @@ def list_stock_codes(conn: Connection) -> list[str]:
     """stocks の全 code（calc_signals / 進捗ログ用・spec §3.2）。"""
     rows = conn.execute(select(stocks.c.code).order_by(stocks.c.code)).scalars().all()
     return list(rows)
+
+
+def get_max_financial_disclosed_date(conn: Connection) -> str | None:
+    """SELECT MAX(disclosed_date) FROM financials（fetch_financials の自己修復用・ADR-031）。"""
+    return conn.execute(select(func.max(financials.c.disclosed_date))).scalar()
 
 
 # --- signals（シグナル事前計算・Phase 1・spec §3.2・ADR-002・ADR-026） ---
@@ -226,6 +233,208 @@ def get_financials(conn: Connection, code: str, limit: int = 8) -> list[dict[str
         .limit(limit)
     )
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+# --- バリュエーション・スクリーニング（ADR-031・0007_screening） ---
+
+
+def _latest_financials_subquery(only_with_bps: bool):
+    """銘柄ごと disclosed_date 降順で 1 番目の行を取る window サブクエリを組む（ADR-031）。
+
+    only_with_bps=True は BPS が入る通期(FY)行のみを対象にし、PER/PBR 用の実績 EPS/BPS を拾う
+    （四半期は EPS が累計・BPS が空のため＝実機確認 2026-06）。
+    """
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=financials.c.code,
+            order_by=financials.c.disclosed_date.desc(),
+        )
+        .label("rn")
+    )
+    base = select(
+        financials.c.code,
+        financials.c.disclosed_date,
+        financials.c.eps,
+        financials.c.bps,
+        financials.c.dividend_per_share,
+        financials.c.shares_outstanding,
+        financials.c.treasury_shares,
+        rn,
+    )
+    if only_with_bps:
+        base = base.where(financials.c.bps.isnot(None))
+    return base.subquery()
+
+
+def get_latest_financials_by_code(conn: Connection) -> dict[str, dict[str, Any]]:
+    """銘柄ごと最新開示行（配当・株数用）を {code: {...}} で返す（ADR-031）。"""
+    sub = _latest_financials_subquery(only_with_bps=False)
+    rows = conn.execute(select(sub).where(sub.c.rn == 1)).mappings().all()
+    return {r["code"]: dict(r) for r in rows}
+
+
+def get_latest_annual_financials_by_code(conn: Connection) -> dict[str, dict[str, Any]]:
+    """銘柄ごと最新の通期(FY)行（実績 EPS/BPS 用）を {code: {...}} で返す（ADR-031）。"""
+    sub = _latest_financials_subquery(only_with_bps=True)
+    rows = conn.execute(select(sub).where(sub.c.rn == 1)).mappings().all()
+    return {r["code"]: dict(r) for r in rows}
+
+
+def upsert_valuation_snapshots(rows: list[dict[str, Any]]) -> int:
+    """valuation_snapshots を冪等 UPSERT（code 1 行・最新のみ保持・ADR-002/031）。"""
+    return _upsert(valuation_snapshots, rows, index_elements=["code"])
+
+
+# screen_stocks が受け付ける数値レンジのキー → (列, 比較演算子) の対応
+_SCREEN_RANGE_FIELDS = ("per", "pbr", "market_cap", "dividend_yield")
+# sort_by に許す列名（外側サブクエリの列）。安全な allowlist。
+_SCREEN_SORT_COLS = {
+    "per",
+    "pbr",
+    "market_cap",
+    "dividend_yield",
+    "per_sector_pctile",
+    "market_cap_rank",
+    "code",
+}
+
+
+def screen_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[str, Any]]:
+    """valuation_snapshots × stocks を絞り込み・整列して返す（読み取り時計算・ADR-026/031）。
+
+    業種内パーセンタイル（per_sector_pctile）と時価総額順位（market_cap_rank）は ~4000 行への
+    window 関数で都度算出する。criteria は薄い辞書（router が Pydantic から作る）:
+      per_min/per_max・pbr_min/pbr_max・market_cap_min/max・dividend_yield_min/max（絶対レンジ）、
+      sector33_code・market_code（完全一致）、exclude_etf(bool)、
+      per_sector_pctile_max（業種内で安い割合・0..1）、market_cap_rank_max（時価総額 上位 N）、
+      sort_by・sort_dir('asc'|'desc')・limit・offset。
+    戻り値は素 dict（company_name/sector33_code/market_code/is_etf を stocks から JOIN 補完）。
+    """
+    v = valuation_snapshots
+    s = stocks
+    # 内側: スナップショット × 銘柄属性 ＋ window ランク列
+    per_sector_pctile = (
+        func.percent_rank()
+        .over(partition_by=s.c.sector33_code, order_by=v.c.per)
+        .label("per_sector_pctile")
+    )
+    market_cap_rank = (
+        func.row_number().over(order_by=v.c.market_cap.desc()).label("market_cap_rank")
+    )
+    inner = (
+        select(
+            v.c.code,
+            s.c.company_name,
+            s.c.sector33_code,
+            s.c.market_code,
+            s.c.is_etf,
+            v.c.as_of_date,
+            v.c.close,
+            v.c.eps,
+            v.c.bps,
+            v.c.dividend_per_share,
+            v.c.per,
+            v.c.pbr,
+            v.c.market_cap,
+            v.c.dividend_yield,
+            per_sector_pctile,
+            market_cap_rank,
+        )
+        .select_from(v.join(s, v.c.code == s.c.code))
+        .subquery()
+    )
+
+    conds = []
+    # 絶対レンジ（min/max）
+    for field in _SCREEN_RANGE_FIELDS:
+        col = inner.c[field]
+        lo = criteria.get(f"{field}_min")
+        hi = criteria.get(f"{field}_max")
+        if lo is not None:
+            conds.append(col >= lo)
+        if hi is not None:
+            conds.append(col <= hi)
+    # 完全一致・ETF 除外
+    if criteria.get("sector33_code"):
+        conds.append(inner.c.sector33_code == criteria["sector33_code"])
+    if criteria.get("market_code"):
+        conds.append(inner.c.market_code == criteria["market_code"])
+    if criteria.get("exclude_etf"):
+        conds.append(inner.c.is_etf == 0)
+    # ランク系（業種内で安い割合・時価総額 上位 N）
+    if criteria.get("per_sector_pctile_max") is not None:
+        conds.append(inner.c.per_sector_pctile <= criteria["per_sector_pctile_max"])
+    if criteria.get("market_cap_rank_max") is not None:
+        conds.append(inner.c.market_cap_rank <= criteria["market_cap_rank_max"])
+
+    stmt = select(inner)
+    if conds:
+        stmt = stmt.where(and_(*conds))
+
+    # 整列（allowlist・既定は時価総額降順）
+    sort_by = criteria.get("sort_by") or "market_cap"
+    if sort_by not in _SCREEN_SORT_COLS:
+        sort_by = "market_cap"
+    sort_col = inner.c[sort_by]
+    stmt = stmt.order_by(sort_col.asc() if criteria.get("sort_dir") == "asc" else sort_col.desc())
+
+    limit = int(criteria.get("limit") or 200)
+    limit = max(1, min(limit, 1000))  # 暴走防止の上限
+    stmt = stmt.limit(limit)
+    if criteria.get("offset"):
+        stmt = stmt.offset(int(criteria["offset"]))
+
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+# --- 保存スクリーニング条件（screening_filters・CRUD・ADR-001/031） ---
+
+
+def list_screening_filters(conn: Connection) -> list[dict[str, Any]]:
+    """保存フィルタを更新日時降順で返す（criteria_json は生の文字列・パースは router）。"""
+    stmt = select(screening_filters).order_by(screening_filters.c.updated_at.desc())
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def get_screening_filter(conn: Connection, filter_id: int) -> dict[str, Any] | None:
+    row = (
+        conn.execute(select(screening_filters).where(screening_filters.c.id == filter_id))
+        .mappings()
+        .first()
+    )
+    return dict(row) if row else None
+
+
+def insert_screening_filter(name: str, criteria_json: str) -> int:
+    """保存フィルタを 1 件作成し id を返す（W1・単発・自前 begin）。"""
+    now = datetime.now(UTC).isoformat()
+    with get_engine().begin() as conn:
+        result = conn.execute(
+            screening_filters.insert().values(
+                name=name, criteria_json=criteria_json, created_at=now, updated_at=now
+            )
+        )
+    return int(result.inserted_primary_key[0])
+
+
+def update_screening_filter(filter_id: int, name: str, criteria_json: str) -> int:
+    """保存フィルタを更新（W1）。更新行数を返す（0 なら未存在）。"""
+    now = datetime.now(UTC).isoformat()
+    with get_engine().begin() as conn:
+        result = conn.execute(
+            screening_filters.update()
+            .where(screening_filters.c.id == filter_id)
+            .values(name=name, criteria_json=criteria_json, updated_at=now)
+        )
+    return int(result.rowcount)
+
+
+def delete_screening_filter(filter_id: int) -> int:
+    """保存フィルタを削除（W1）。削除行数を返す。"""
+    with get_engine().begin() as conn:
+        result = conn.execute(screening_filters.delete().where(screening_filters.c.id == filter_id))
+    return int(result.rowcount)
 
 
 def upsert_asset_snapshots(rows: list[dict[str, Any]]) -> int:

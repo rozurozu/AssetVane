@@ -86,11 +86,11 @@ curl -G https://api.jquants.com/v2/equities/bars/daily \
    - ✅ **日付一括取得の可否（最重要）は確認済み（2026-06）**: `bars/daily` は `code` 無し・`date` のみで全銘柄が返る（§4 参照）。Phase 1 のレート制限対策が成立する。
 4. **各エンドポイントの実レスポンスのフィールド名**: `data-model.md` の列名は設計案。実際の JSON キー名は実機で確認して合わせる。
    - ✅ **確認済み（2026-06）**: `master` と `bars/daily`。**V2 は略記キー**（`O/H/L/C/Vo/Va/AdjC/AdjFactor`、`CoName/S33/S17/Mkt` 等）でエンベロープは `{"data":[...]}`（`pagination_key` 付き）。対応表は [data-model.md](data-model.md) の各テーブル節。**ネットの V1 記事はフルネーム（`Open/CompanyName`…）なので流用不可**。
-   - ⬜ 未確認: `fins/summary`（財務）。Phase 2 で確認する。
+   - ✅ **確認済み（2026-06・ADR-031）**: `fins/summary`（財務）。短縮キー `EPS/BPS/Sales/OP/NP/DiscDate/CurPerType`、配当 `FDivAnn`(予想年間)/`DivAnn`(実績)、株数 `ShOutFY`(発行済)/`TrShFY`(自己株)。値は**文字列**・N/A は**空文字**（`_to_float` で None 化）。**BPS は通期(FY)行のみ・四半期 EPS は累計**。
 5. **`/v2/equities/master` の `code` 無し全件取得可否**: 銘柄マスタを `code` を渡さず叩いて全上場銘柄を一括で取れるか（`bars/daily` の日付一括と同様に成立するか）を実機確認する。不可なら `bars/daily` で得た `code` 集合から不足分を補完する（Phase 1・`_arbitration.md` L-5）。
 6. **V2 の取引日カレンダー API の有無**: 営業日（取引日）の一覧を返す V2 エンドポイントがあるか。無ければ営業日判定は「曜日で土日除外＋祝日は空レスポンスで吸収」で代替する（Phase 1・`_arbitration.md` L-3）。
 7. **V2 の主要指数 API（TOPIX / 日経平均）の有無**: TOPIX・日経平均等の指数水準を返す V2 エンドポイントがあるか。無ければ `IndexAdapter`（Stooq 既定）で取得する（Phase 2・`index_quotes`・`_arbitration.md` L-10）。
-8. **V2 財務（statements）エンドポイント**: `/v2/fins/summary` 以外に決算明細を返すエンドポイントが V2 に残るか、`financials`（[data-model.md §2](data-model.md)）の取得に必要なフィールド（売上/営業利益/純利益/EPS/BPS・開示日・会計期間）が summary で揃うかを実機確認する（Phase 2・`fetch_financials` ジョブの前提）。
+8. ~~**V2 財務（statements）エンドポイント**~~ ✅ **解消（2026-06・ADR-031）**: 財務は **`/v2/fins/summary`**（`/v2/fins/statements` は **403**）。売上/営業利益/純利益/EPS/BPS・開示日・会計期間に加え、**年間配当（FDivAnn/DivAnn）・発行済株式数（ShOutFY）・自己株式（TrShFY）も summary で揃う**ことを実機確認（→ 時価総額・配当利回りも J-Quants 単独で導出可能）。`fetch_financials` は **by-date 一括**（その日開示の全銘柄）も成立。フィールド対応は `adapters/jquants.py` の `_normalize_financial`。
 
 ---
 

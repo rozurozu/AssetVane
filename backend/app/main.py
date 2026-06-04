@@ -22,6 +22,7 @@ from app.routers.advisor_state import router as advisor_state_router
 from app.routers.assets import router as assets_router
 from app.routers.batch import router as batch_router
 from app.routers.portfolio import router as portfolio_router
+from app.routers.screening_filters import router as screening_filters_router
 from app.routers.signals import router as signals_router
 from app.routers.stocks import router as stocks_router
 
@@ -98,6 +99,8 @@ app.include_router(advisor_state_router)
 app.include_router(portfolio_router)
 # 資産概要・現金・外部資産（Phase 2）。GET /cash・/external-assets・/asset-overview。
 app.include_router(assets_router)
+# スクリーニング保存フィルタ（ADR-031）。CRUD /screening-filters（routers/screening_filters.py）。
+app.include_router(screening_filters_router)
 
 
 @app.get("/health")

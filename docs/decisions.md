@@ -308,3 +308,19 @@
 - **理由**: 真因は「出してほしい形を出力契約に表明していない」ことで、散文プロンプトより**構造制約（schema の enum＋required）**が桁違いに強い。schema = 発生率を下げる予防、`coerce_policy_change` = 破られた時の graceful degradation の**二層**で、弱モデルでも適用不能 proposal が生じない。enum を `DEFAULT_POLICY` に一致させることで LLM 出力側と適用側の両方が安全になる。
 - **代替案**: (B) 多フィールド patch を正式対応（`apply_policy_change`・`proposals.body` を複数列 patch に拡張）→ [ADR-013](decisions.md)「1 変更ずつ育てる」に反し契約拡張になるため不採用（多項目を直したい晩は提案を複数起票させる）。散文プロンプトだけで形を指示 → 構造制約より弱く弱モデルで破られるため不採用（補強としては registry の description に 1 文だけ添える）。
 - **詳細**: Phase 3 spec §4.4（`submit_journal` 引数）、[_open-questions.md](phase-specs/_open-questions.md) U-10、`backend/app/advisor/tools/schemas.py`（`ProposedPolicyChange`・`coerce_policy_change`）。
+
+## ADR-031: 株式スクリーナー（夜間 valuation_snapshots ＋読み取り時ランク・市場ごとに分離）
+
+- **状況**: `/stocks` を「PER/PBR/時価総額/配当利回りで全銘柄を絞り込み、条件を保存できるスクリーナー」にしたい要望。これらバリュエーション指標は当時どこにも持たず、`financials`（eps/bps）は [ADR-008](#adr-008-j-quants-は-v2x-api-key-を使うv1-は使わない) の Phase 2 で土台だけ組まれたが**未検証・保有銘柄のみ取得**だった。時価総額・配当の取得可否、計算の置き場所、米株の扱いが未定だった。
+- **決定**:
+  - **データ源は J-Quants 単独**（別ソース不要）。実機検証（2026-06）で **`/v2/fins/summary`**（`/v2/fins/statements` は 403）が `EPS`/`BPS`/`FDivAnn`(予想年間配当)/`DivAnn`(実績)/`ShOutFY`(発行済株式数)/`TrShFY`(自己株式) を返すことを確認。→ **PER=close/EPS・PBR=close/BPS・時価総額=close×(ShOutFY−TrShFY)・配当利回り=FDivAnn/close**。`jquants.md §6`「実フィールド未確定」はこれで解消。
+  - **採用行の規律**: BPS は通期(FY)行にのみ入り四半期は空・四半期 EPS は累計のため、**PER/PBR は最新 FY 行の実績 EPS/BPS**、**配当/株数は最新開示行**を採用する（`services/valuation.py`）。配当は予想（`FDivAnn`）優先＝予想配当利回りを既定。
+  - **計算・保管は夜間スナップショット**。夜間ジョブ `calc_valuation` が重い結合（daily_quotes × financials）を**1 銘柄 1 行**の `valuation_snapshots` に畳む。`/stocks/screen` は読み取り時にこれを絞り込み、**業種内パーセンタイル・時価総額順位は ~4000 行への window 関数で都度算出**する（[ADR-026](#adr-026-シグナルは高フロア保存読み取り時カット) の「読み取り時に絞る・near-miss を捨てない」と整合。事前フィルタはしない）。値の鮮度は daily_quotes も夜間更新のため「前夜終値ベース」で読み取り時計算と同じ。
+  - **数値は Python が計算**（[ADR-014](#adr-014-ai-に数値を計算させない)/[ADR-016](#adr-016-手法はテスト済みコードで実装する)）。`quant/valuation.py` の純関数（赤字 eps<=0・欠損は None で捏造しない）→ `services` が採用行を整えて呼ぶ → `calc_valuation` が焼く。
+  - **全銘柄化**: `fetch_financials` を保有銘柄限定から**営業日ループの by-date 一括取得**（fetch_quotes と同型・初回は `full_backfill`）へ拡張。未マスタ銘柄の行は既知 stock コードに絞って FK 違反を防ぐ。
+  - **保存フィルタ**は `screening_filters`（`criteria_json` の緩い JSON・単一ユーザーなので `user_id` 無し＝[ADR-001](#adr-001-単一ユーザー認証なし)）。CRUD は `/screening-filters`。
+  - **市場ごとに分離**（記録対象）: スクリーナーは通貨・業種分類・財務ソースが市場で異なるため跨がない。**v1 は日本株専用**（J-Quants）。**米株は Phase 7 で `/us-stocks` 別ルート・別スナップショット**（通貨列・FX・GICS が入るタイミング＝[roadmap.md Phase 7](roadmap.md)・[data-model.md](data-model.md) の通貨 YAGNI 節）。`/stocks` のリネームは Phase 7 まで先送り。
+- **理由**: バリュエーションは全部「株価」を含み毎日動くが、財務は四半期更新。生データを貯め比率は使う時に掛けるのが素直。ただし**横断ランク（業種内・上位N）**は分布計算が要り、夜間に 4000 行へ畳む土台があると window 関数で一瞬になる（[signals](#adr-026-シグナルは高フロア保存読み取り時カット) と同じ「夜間に焼いて読み取り時に絞る」パターン）。市場分離は「¥と$混在の時価総額」「33業種と GICS 跨ぎの相対ランク」が無意味になるのを避けるため。
+- **代替案**: (A) 取得時に PER を焼く → 株価が動くと古くなり毎晩全銘柄再計算が要る（スナップショットと同等の手間で柔軟性が低い）ため不採用。(B) 読み取り時にフル結合で都度計算 → 絶対しきい値だけなら可だが横断ランクのサブクエリが重く書きにくいため、スナップショットに畳む方を採用。(C) 時価総額・配当を外部ソース（EDINET 等）→ J-Quants summary に揃っており不要。(D) 日米一体スクリーナー → 通貨・分類・財務ソースの境界で破綻するため不採用（Phase 7 で別ルート）。
+- **TODO（落とさない）**: **テクニカル/シグナル複合フィルタ**（momentum スコア・volume_spike・5日騰落率を screen に追加＝必須機能）、条件結合の **AND/OR・グループ化**（v1 は AND のみ）、**米株スクリーナー `/us-stocks`**（Phase 7）。
+- **詳細**: `backend/app/quant/valuation.py`・`services/valuation.py`・`batch/jobs/calc_valuation.py`・`db/schema.py`（`valuation_snapshots`/`screening_filters`）・`routers/stocks.py`（`/stocks/screen`）・`routers/screening_filters.py`・`alembic/versions/0007_screening.py`、[jquants.md](jquants.md) §6（実フィールド確定）。

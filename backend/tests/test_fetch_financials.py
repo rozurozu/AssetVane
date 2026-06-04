@@ -1,169 +1,158 @@
-"""fetch_financials ジョブの単体テスト（phase2-spec.md §8・ネット非依存）。
+"""fetch_financials ジョブのスタブテスト（ADR-031・全銘柄 by-date 方式・ネット非依存）。
 
-JQuantsAdapter.fetch_financials をスタブ化し、holdings に銘柄が入った状態で
-fetch_financials.run が financials を UPSERT することを検証する。
-実 API は叩かない。`temp_db` フィクスチャを使い本物 DB に触れない。
+実 API は叩かない。adapter.fetch_financials(date=...) をスタブ化し、営業日ループで
+全銘柄の財務を UPSERT・fetch_meta 前進・coverage 打ち切りを検証する（fetch_quotes と同型）。
+date.today() はフェイクで固定して営業日ループ範囲を決定的にする。
 """
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from datetime import date
 
+import pytest
 from sqlalchemy import func, select
 
+from app.adapters.jquants import JQuantsCoverageError, JQuantsError
 from app.batch.jobs import fetch_financials
 from app.db import repo
 from app.db.engine import get_engine
 from app.db.schema import financials as financials_table
 
-# テスト用マスタデータ
-_STOCK_A = {
-    "code": "72030",
-    "company_name": "トヨタ自動車",
-    "sector33_code": "3700",
-    "sector17_code": "6",
-    "market_code": "0111",
-    "is_etf": 0,
-    "updated_at": "2026-06-02T00:00:00+00:00",
-}
 
-# テスト用財務データ（JQuantsAdapter.fetch_financials の戻り値形式）
-_SAMPLE_FINANCIALS = [
-    {
-        "code": "72030",
-        "disclosed_date": "2026-05-10",
-        "fiscal_period": "FY2025",
-        "net_sales": 45000000000.0,
-        "operating_profit": 3500000000.0,
-        "profit": 2800000000.0,
-        "eps": 850.5,
-        "bps": 7200.0,
-    },
-    {
-        "code": "72030",
-        "disclosed_date": "2025-11-15",
-        "fiscal_period": "2Q2025",
-        "net_sales": 22000000000.0,
-        "operating_profit": 1800000000.0,
-        "profit": 1400000000.0,
-        "eps": 420.0,
-        "bps": 6800.0,
-    },
-]
+class _FakeAdapter:
+    """fetch_financials(date=...) だけを持つスタブ。未登録日は空配列（開示なし）。"""
+
+    def __init__(self, by_date: dict[str, list[dict]]) -> None:
+        self._by_date = by_date
+        self.calls: list[str] = []
+
+    def fetch_financials(self, code=None, date=None) -> list[dict]:  # noqa: A002
+        self.calls.append(date)
+        return self._by_date.get(date, [])
 
 
-def _insert_holding(portfolio_id: int = 1, code: str = "72030") -> None:
-    """holdings テーブルに保有行を直接挿入する（テスト用ヘルパ）。"""
-    from app.db.schema import holdings, portfolios
-
-    # portfolios seed が必要（schema.py の create_schema ではシードを入れないため手動挿入）
-    with get_engine().begin() as conn:
-        # portfolio が存在しなければ挿入
-        from sqlalchemy import insert
-
-        conn.execute(
-            insert(portfolios).prefix_with("OR IGNORE"),
-            [
-                {
-                    "portfolio_id": portfolio_id,
-                    "name": "Default",
-                    "created_at": "2026-06-03T00:00:00+00:00",
-                }
-            ],
-        )
-        conn.execute(
-            insert(holdings).prefix_with("OR IGNORE"),
-            [{"portfolio_id": portfolio_id, "code": code, "shares": 100.0, "avg_cost": 3000.0}],
-        )
+class _FakeDate(date):
+    @classmethod
+    def today(cls) -> date:  # type: ignore[override]
+        return date(2026, 6, 5)  # 金曜
 
 
-def test_fetch_financials_run_upserts_rows(temp_db) -> None:
-    """fetch_financials.run が financials を UPSERT する。"""
-    repo.upsert_stocks([_STOCK_A])
-    _insert_holding()
+def _stock(code: str) -> dict:
+    return {
+        "code": code,
+        "company_name": f"会社{code}",
+        "sector33_code": "3700",
+        "sector17_code": "6",
+        "market_code": "0111",
+        "is_etf": 0,
+        "updated_at": "2026-06-04T00:00:00+00:00",
+    }
 
-    with patch("app.batch.jobs.fetch_financials.JQuantsAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.fetch_financials.return_value = _SAMPLE_FINANCIALS
 
-        result = fetch_financials.run()
+def _fin(code: str, d: str, period: str = "FY") -> dict:
+    return {
+        "code": code,
+        "disclosed_date": d,
+        "fiscal_period": period,
+        "net_sales": 1.0,
+        "operating_profit": 1.0,
+        "profit": 1.0,
+        "eps": 100.0,
+        "bps": 1000.0,
+        "dividend_per_share": 30.0,
+        "shares_outstanding": 1_000_000.0,
+        "treasury_shares": 0.0,
+    }
 
+
+@pytest.fixture
+def _patch(monkeypatch):
+    monkeypatch.setattr(fetch_financials, "date", _FakeDate)
+
+
+def test_universe_by_date_upserts_and_advances_meta(temp_db, _patch, monkeypatch) -> None:
+    repo.upsert_stocks([_stock("72030"), _stock("67580"), _stock("99840")])
+    repo.upsert_fetch_meta("financials", "2026-06-01")  # start=2026-06-02(火)
+    by_date = {
+        "2026-06-02": [_fin("72030", "2026-06-02"), _fin("67580", "2026-06-02")],
+        "2026-06-04": [_fin("99840", "2026-06-04")],
+        # 06-03・06-05 は開示なし（空）
+    }
+    fake = _FakeAdapter(by_date)
+    monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda: fake)
+
+    result = fetch_financials.run(full_backfill=False)
+
+    assert fake.calls == ["2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05"]
     assert result.ok is True
+    assert result.rows == 3  # 2 + 0 + 1 + 0
+    with get_engine().connect() as conn:
+        count = conn.execute(select(func.count()).select_from(financials_table)).scalar()
+        meta = repo.get_fetch_meta(conn, "financials")
+    assert count == 3
+    assert meta["last_fetched_date"] == "2026-06-05"  # 空日も含め前進
+
+
+def test_idempotent(temp_db, _patch, monkeypatch) -> None:
+    repo.upsert_stocks([_stock("72030")])
+    by_date = {"2026-06-04": [_fin("72030", "2026-06-04")]}
+    for _ in range(2):
+        repo.upsert_fetch_meta("financials", "2026-06-03")  # 毎回 start=06-04 に戻す
+        fake = _FakeAdapter(by_date)
+        monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda fake=fake: fake)
+        fetch_financials.run(full_backfill=False)
+    with get_engine().connect() as conn:
+        count = conn.execute(select(func.count()).select_from(financials_table)).scalar()
+    assert count == 1  # 重複しない
+
+
+def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
+    repo.upsert_stocks([_stock("72030")])
+    repo.upsert_fetch_meta("financials", "2026-06-01")  # start=06-02
+
+    class _CoverageAdapter:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def fetch_financials(self, code=None, date=None) -> list[dict]:  # noqa: A002
+            self.calls.append(date)
+            if date >= "2026-06-04":
+                raise JQuantsCoverageError("契約範囲外")
+            return [_fin("72030", date)]
+
+    fake = _CoverageAdapter()
+    monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda: fake)
+
+    result = fetch_financials.run(full_backfill=False)
+    assert result.ok is True
+    assert fake.calls == ["2026-06-02", "2026-06-03", "2026-06-04"]
     assert result.rows == 2
-
-    # financials に 2 行入っている
-    with get_engine().connect() as conn:
-        count = conn.execute(select(func.count()).select_from(financials_table)).scalar()
-    assert count == 2
-
-
-def test_fetch_financials_run_idempotent(temp_db) -> None:
-    """fetch_financials.run を 2 回実行しても行数が増えない（UPSERT 冪等）。"""
-    repo.upsert_stocks([_STOCK_A])
-    _insert_holding()
-
-    with patch("app.batch.jobs.fetch_financials.JQuantsAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.fetch_financials.return_value = _SAMPLE_FINANCIALS
-        fetch_financials.run()
-
-    with patch("app.batch.jobs.fetch_financials.JQuantsAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.fetch_financials.return_value = _SAMPLE_FINANCIALS
-        result = fetch_financials.run()
-
-    assert result.ok is True
-
-    with get_engine().connect() as conn:
-        count = conn.execute(select(func.count()).select_from(financials_table)).scalar()
-    assert count == 2  # 重複しない
-
-
-def test_fetch_financials_run_no_holdings(temp_db) -> None:
-    """保有が 0 件の場合、0 行で ok を返す。"""
-    # holdings に何も挿入しない
-
-    with patch("app.batch.jobs.fetch_financials.JQuantsAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        result = fetch_financials.run()
-
-    assert result.ok is True
-    assert result.rows == 0
-    # fetch_financials は呼ばれない
-    instance.fetch_financials.assert_not_called()
-
-
-def test_fetch_financials_run_advances_fetch_meta(temp_db) -> None:
-    """fetch_financials.run 後に fetch_meta が today まで前進している。"""
-    repo.upsert_stocks([_STOCK_A])
-    _insert_holding()
-
-    with patch("app.batch.jobs.fetch_financials.JQuantsAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.fetch_financials.return_value = _SAMPLE_FINANCIALS
-        fetch_financials.run()
-
-    from datetime import date
-
-    today = date.today().isoformat()
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "financials")
-    assert meta is not None
-    assert meta["last_fetched_date"] == today
+    assert meta["last_fetched_date"] == "2026-06-03"  # 前線には進めない
 
 
-def test_fetch_financials_run_adapter_error_returns_failure(temp_db) -> None:
-    """JQuantsAdapter がエラーを投げた場合、ok=False の JobResult を返す。"""
-    repo.upsert_stocks([_STOCK_A])
-    _insert_holding()
+def test_failure_returns_not_ok(temp_db, _patch, monkeypatch) -> None:
+    repo.upsert_fetch_meta("financials", "2026-06-03")
 
-    from app.adapters.jquants import JQuantsError
+    class _Boom:
+        def fetch_financials(self, code=None, date=None) -> list[dict]:  # noqa: A002
+            raise JQuantsError("API 失敗")
 
-    with patch("app.batch.jobs.fetch_financials.JQuantsAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.fetch_financials.side_effect = JQuantsError("API 失敗")
-
-        result = fetch_financials.run()
-
+    monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda: _Boom())
+    result = fetch_financials.run(full_backfill=False)
     assert result.ok is False
-    assert "72030" in result.detail
+    assert "API 失敗" in result.detail
+
+
+def test_full_backfill_start_uses_backfill_years(temp_db, _patch, monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "backfill_years", 2)
+    repo.upsert_fetch_meta("financials", "2026-06-04")  # full では無視される
+    fake = _FakeAdapter({})
+    monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda: fake)
+
+    result = fetch_financials.run(full_backfill=True)
+    assert fake.calls[0] == "2024-06-05"  # today - 2 年
+    assert result.ok is True
