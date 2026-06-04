@@ -233,7 +233,7 @@ advisor_journal = Table(
     Column("situation_briefing", String),  # JSON（その日の事実・監査用・chat 昇格では null 可）
     Column("observations", String),  # AI 所見（自由文）
     Column("proposal", String),  # 当日の提案（自由文 or 参照）
-    Column("proposed_policy_change", String),  # JSON {field, from, to, reason}（任意）
+    Column("proposed_policy_change", String),  # JSON 単一 {field,to}（任意 from/reason・ADR-030）
     Column("policy_snapshot", String),  # JSON（その時点の policy まるごと・履歴）
     Column("llm_model", String),  # 監査用（settings.llm_model）
     Column("created_at", String),  # ISO8601

@@ -84,7 +84,7 @@ CREATE TABLE advisor_journal (
   situation_briefing     TEXT,                    -- JSON（その日の事実：signals/portfolio/asset/index。監査用。chat 昇格では null 可）
   observations           TEXT,                    -- AI 所見（自由文）
   proposal               TEXT,                    -- 当日の提案（自由文 or 参照）
-  proposed_policy_change TEXT,                    -- JSON {field, from, to, reason}（任意）
+  proposed_policy_change TEXT,                    -- JSON 単一 {field, to}（任意 from/reason・ADR-013/030）
   policy_snapshot        TEXT,                    -- JSON（その時点の policy まるごと・履歴）
   llm_model              TEXT,                    -- 監査用（settings.llm_model）
   created_at             TEXT
@@ -309,7 +309,8 @@ get_asset_overview() ->
   // deviations は get_portfolio_metrics と同じ Python 関数(quant)から供給（出力先2・計算1）。
 
 submit_journal(observations, proposal?, proposed_policy_change?) ->
-  {ok: true}   // 軸1 夜の出力受け（§5）。proposed_policy_change は {field, from, to, reason}。min_phase=3。
+  {ok: true}   // 軸1 夜の出力受け（§5）。proposed_policy_change は単一 {field, to}（任意 from/reason）。
+               // field は policy 列の enum・required:[field,to]（ADR-013/030）。多列 patch は受理側で破棄。min_phase=3。
 
 // --- Phase 4（min_phase=4・本 Phase では非露出）---
 get_dossier(code) -> {code, summary_md, key_facts, last_investigated_at, sources:[{url,title,summary,published_at,source_type}]}
@@ -366,7 +367,7 @@ async def run_nightly_advisor(conn: Connection) -> None:
 ```
 
 - **collect_situation_briefing**: Tool と同じ事実取得関数を呼んで dict に集約（quant/data 供給）。`advisor_journal.situation_briefing` に JSON 保存（監査・「何を見て判断したか」を後から辿る）。
-- **[確定・L-17/決定7]** 夜の出力は**専用 Tool `submit_journal(observations, proposal, proposed_policy_change?)` で受ける**（JSON 文字列パースより堅い・ADR-014 整合）。`proposed_policy_change` の形は `{field, from, to, reason}`。registry に `min_phase=3` 登録。
+- **[確定・L-17/決定7]** 夜の出力は**専用 Tool `submit_journal(observations, proposal, proposed_policy_change?)` で受ける**（JSON 文字列パースより堅い・ADR-014 整合）。`proposed_policy_change` の形は**単一 `{field, to}`**（任意 `from`/`reason`）。`field` は policy 列の enum で `required:[field,to]`（多列 patch は受理側 `coerce_policy_change` で破棄＝ADR-013/030）。registry に `min_phase=3` 登録。
 - **データ取得が部分失敗のとき（data-arch §3.4・推奨）**: 当日の `fetch_quotes` が ok なら回す、失敗なら回さず通知のみ（古い材料で提案させない）。
 
 ---

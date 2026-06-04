@@ -296,3 +296,15 @@
 - **理由**: 単一ユーザーに DB 会話永続は過剰だが、重要な決定の取りこぼしは避けたい。明示昇格で両立する。承認制は [ADR-013](decisions.md)/[ADR-027](decisions.md) の規律と揃う。数字を `transactions` に集約するのは [ADR-019](decisions.md) を壊さないため。
 - **代替案**: 全会話 DB 永続（検索可）→ 過剰・書き手増で不採用。`sessionStorage`（リロードで消える）→ リロード耐性が無く不便で不採用。AI 自動 journal 書き込み → 規律破りで不採用（承認制）。
 - **詳細**: Phase 3 spec §6.4/§6.5/§9.1、[data-model.md](data-model.md) `advisor_journal.source`、[_open-questions.md](phase-specs/_open-questions.md) U-6/U-7。
+
+## ADR-030: `proposed_policy_change` は単一 `{field, to}` に構造強制する（field は policy 列の enum）
+
+- **状況**: Phase 3 実機検証（[_open-questions.md](phase-specs/_open-questions.md) U-10）で、弱い LLM（ローカル 9B）が方針変更案 `proposed_policy_change` に**多フィールド patch**（`{max_position_weight, sector_diversification_limit, target_cash_ratio}` のような複数列同時変更）を渡した。当時の `submit_journal` の JSON Schema は `proposed_policy_change` を**構造ゼロの自由 object**（`additionalProperties: true`）として LLM に見せており、`{field, to}` 形を出力契約のどこでも表明していなかった。一方で適用側 `apply_policy_change`（[ADR-013](decisions.md)）は単一 `{field, to}` しか食えないため、**承認時に `ValueError` で落ちる「適用不能 proposal」が queue に入る**経路があった。さらに `upsert_policy` は列ホワイトリストを持たず、未知 `field` 文字列は適用時に SQL レベルで不可解に落ちる潜在バグもあった。
+- **決定**:
+  - **契約は [ADR-013](decisions.md) の単一 `{field, to}` を維持**し、出力契約（Function Calling の JSON Schema）を**構造で締めて**多フィールド patch を LLM に出させない。`proposed_policy_change` を `ProposedPolicyChange`（`field`/`to`/任意 `from`/`reason`）のネスト型にし、`required: [field, to]` を立てる。
+  - **`field` は policy の構造化コア列の enum**（`risk_tolerance`/`time_horizon`/`target_cash_ratio`/`max_position_weight`/`sector_caps`/`target_return`/`no_leverage`/`exclusions`）に締める。enum の正本は `services/policy.py` の `DEFAULT_POLICY` のキーで、**一致はドリフトガードテストで CI 担保**（新規ハードコード一覧を増やさない）。`rationale` は即時更新（[U-7](phase-specs/_open-questions.md)）で提案対象外なので enum に含めない。
+  - **schema を締めても [ADR-018](decisions.md) の防御層は外さない**。弱モデルは schema を破りうる（Function Calling 遵守は非保証）ため、受理側に共有の正規化 `coerce_policy_change` を置き、**単一形に適合しない変更案（多列 patch・非 dict・`to` 欠落・enum 外 field）は None に倒す**。`submit_journal`（受理ゲート）と nightly（proposal 起票判定）の両方が同関数で正規化し、**適用不能 proposal を queue に入れない**。無人 nightly は観測（observations）を巻き添えにせず journal を残す。
+  - **`apply_policy_change` に未知 field の防御**（`DEFAULT_POLICY` に無ければ `ValueError`）を足し、承認適用側も SQL 前に弾く（defense-in-depth）。
+- **理由**: 真因は「出してほしい形を出力契約に表明していない」ことで、散文プロンプトより**構造制約（schema の enum＋required）**が桁違いに強い。schema = 発生率を下げる予防、`coerce_policy_change` = 破られた時の graceful degradation の**二層**で、弱モデルでも適用不能 proposal が生じない。enum を `DEFAULT_POLICY` に一致させることで LLM 出力側と適用側の両方が安全になる。
+- **代替案**: (B) 多フィールド patch を正式対応（`apply_policy_change`・`proposals.body` を複数列 patch に拡張）→ [ADR-013](decisions.md)「1 変更ずつ育てる」に反し契約拡張になるため不採用（多項目を直したい晩は提案を複数起票させる）。散文プロンプトだけで形を指示 → 構造制約より弱く弱モデルで破られるため不採用（補強としては registry の description に 1 文だけ添える）。
+- **詳細**: Phase 3 spec §4.4（`submit_journal` 引数）、[_open-questions.md](phase-specs/_open-questions.md) U-10、`backend/app/advisor/tools/schemas.py`（`ProposedPolicyChange`・`coerce_policy_change`）。

@@ -23,6 +23,7 @@ from app.advisor.llm import complete
 from app.advisor.tools.registry import CURRENT_PHASE, REGISTRY, openai_tools
 from app.config import settings
 from app.db import repo
+from app.services.policy import DEFAULT_POLICY
 
 # ---------------------------------------------------------------------------
 # (a) Tool dispatch ループ（spec §4.2）
@@ -138,6 +139,9 @@ def apply_policy_change(
     field = change.get("field")
     if not isinstance(field, str) or not field:
         raise ValueError("policy 変更には field が必要です。")
+    # 未知 field は upsert_policy が SQL レベルで不可解に落ちるため境界で弾く（防御・ADR-013）。
+    if field not in DEFAULT_POLICY:
+        raise ValueError(f"未知の policy フィールド: {field}")
     if "to" not in change:
         raise ValueError("policy 変更には to（変更後の値）が必要です。")
 

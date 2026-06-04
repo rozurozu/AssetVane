@@ -30,6 +30,7 @@ from app.advisor.tools.schemas import (
     OptimizePortfolioArgs,
     ScreenStocksArgs,
     SubmitJournalArgs,
+    coerce_policy_change,
 )
 from app.db import repo
 from app.db.engine import get_engine
@@ -381,20 +382,21 @@ async def handle_submit_journal(args: dict[str, object]) -> dict[str, Any]:
     実際の advisor_journal / proposals 書き込みは nightly が tool_runs から引数を読んで行う。
     ここは検証して {"ok": True} を返すだけ（橋渡しの責務に閉じる）。
 
-    頑健性（ADR-018）: 非力なモデルは任意項目 proposed_policy_change を dict ではなく
-    文字列（markdown）で渡すことがある。その 1 項目のために submission 全体を弾くと、
-    観測（observations）まで巻き添えで失い再試行でラウンドを浪費する。そこで「壊れた変更案
-    だけ落として受理」する（nightly 側も非 dict は起票しないので整合）。必須の observations
-    が欠けるときだけ error を返す（ループは落とさない）。
+    頑健性（ADR-013/018）: 非力なモデルは任意項目 proposed_policy_change を単一 {field,to} で
+    なく、非 dict（markdown 文字列）や多フィールド patch で渡すことがある。その 1 項目のために
+    submission 全体を弾くと観測（observations）まで巻き添えで失い再試行でラウンドを浪費する。
+    そこで coerce_policy_change で単一形に正規化し、適合しない変更案だけ落として受理する（nightly
+    も同関数で正規化）。必須の observations が欠けるときだけ error を返す（ループは落とさない）。
     """
-    # proposed_policy_change が dict でなければ落として受理する（変更案は任意項目）。
+    # 変更案を単一 {field,to} に正規化。非 dict・多フィールド patch 等は None に倒して受理する。
     change = args.get("proposed_policy_change")
-    if change is not None and not isinstance(change, dict):
+    coerced = coerce_policy_change(change)
+    if change is not None and coerced is None:
         logger.warning(
-            "submit_journal: proposed_policy_change が dict でない（%s）。変更案を破棄。",
+            "submit_journal: proposed_policy_change が単一 {field,to} 形でない（%s）。変更案を破棄",
             type(change).__name__,
         )
-        args = {**args, "proposed_policy_change": None}
+    args = {**args, "proposed_policy_change": coerced}
     try:
         SubmitJournalArgs.model_validate(args)
         return {"ok": True}

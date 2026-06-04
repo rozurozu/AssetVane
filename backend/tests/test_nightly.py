@@ -157,6 +157,44 @@ def test_nightly_non_dict_policy_change_keeps_journal_no_proposal(
         assert repo.list_proposals(conn) == []
 
 
+def test_nightly_multi_field_patch_keeps_journal_no_proposal(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """多フィールド patch でも journal は残り、適用不能 proposal は起票しない（U-10 裁定①）。
+
+    弱モデルが複数列同時変更（{field,to} 単一形でない）を渡しても、coerce_policy_change が
+    None に倒すため proposal queue に適用不能な提案が入らないことを担保する（ADR-013/018）。
+    """
+    _stub_briefing(monkeypatch)
+
+    async def _fake_loop(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
+        return "応答", [
+            {
+                "name": "submit_journal",
+                "args": {
+                    "observations": "所見",
+                    "proposal": "提案",
+                    "proposed_policy_change": {
+                        "max_position_weight": 0.2,
+                        "target_cash_ratio": 0.4,
+                    },
+                },
+            }
+        ]
+
+    monkeypatch.setattr(nightly, "run_tool_loop", _fake_loop)
+
+    with get_engine().begin() as conn:
+        _run(nightly.run_nightly_advisor(conn))
+
+    with get_engine().connect() as conn:
+        journals = repo.list_journal(conn)
+        assert len(journals) == 1
+        assert journals[0]["observations"] == "所見"
+        assert journals[0]["proposed_policy_change"] is None
+        assert repo.list_proposals(conn) == []
+
+
 def test_nightly_llm_failure_skips_journal_and_notifies(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:

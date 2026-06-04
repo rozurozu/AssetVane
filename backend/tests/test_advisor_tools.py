@@ -201,6 +201,74 @@ def test_tool_args_coerce_nullish_strings() -> None:
     assert GetPortfolioMetricsArgs.model_validate({"portfolio_id": 3}).portfolio_id == 3
 
 
+def test_coerce_policy_change_single_form_passes() -> None:
+    """単一 {field, to} はそのまま正規化される（任意 from/reason も保持・ADR-013）。"""
+    from app.advisor.tools.schemas import coerce_policy_change
+
+    out = coerce_policy_change(
+        {"field": "target_cash_ratio", "from": 0.25, "to": 0.4, "reason": "下落に備える"}
+    )
+    assert out == {"field": "target_cash_ratio", "to": 0.4, "from": 0.25, "reason": "下落に備える"}
+    # to=0.0 は有効な目標値なので落とさない（is None 判定）。
+    assert coerce_policy_change({"field": "target_cash_ratio", "to": 0.0}) == {
+        "field": "target_cash_ratio",
+        "to": 0.0,
+    }
+
+
+def test_coerce_policy_change_rejects_invalid_to_none_or_unknown() -> None:
+    """多フィールド patch・非 dict・to 欠落・未知 field は None に倒す（U-10 裁定①・ADR-018）。"""
+    from app.advisor.tools.schemas import coerce_policy_change
+
+    # 多フィールド patch（field/to を欠く）→ required 検証で弾かれ None。
+    assert coerce_policy_change({"max_position_weight": 0.2, "target_cash_ratio": 0.4}) is None
+    assert coerce_policy_change("- markdown 文字列") is None  # 非 dict
+    assert coerce_policy_change({"field": "target_cash_ratio", "to": None}) is None  # to=None
+    assert coerce_policy_change({"field": "unknown_col", "to": 1}) is None  # enum 外 field
+    assert coerce_policy_change(None) is None
+
+
+def test_policy_field_enum_matches_default_policy() -> None:
+    """PolicyField の enum は DEFAULT_POLICY のキーと一致する（ドリフトガード）。
+
+    policy 列を増やして enum 更新を忘れたら CI で落とす（rationale は U-7 で提案外＝不一致でない）。
+    """
+    from typing import get_args
+
+    from app.advisor.tools.schemas import PolicyField
+    from app.services.policy import DEFAULT_POLICY
+
+    assert set(get_args(PolicyField)) == set(DEFAULT_POLICY)
+
+
+def test_submit_journal_schema_enforces_single_form() -> None:
+    """submit_journal の JSON Schema が field enum ＋ required:[field,to] を持つ（LLM 契約）。"""
+    from app.advisor.tools.schemas import SubmitJournalArgs
+
+    defs = SubmitJournalArgs.model_json_schema()["$defs"]["ProposedPolicyChange"]
+    assert defs["required"] == ["field", "to"]
+    assert "enum" in defs["properties"]["field"]
+
+
+def test_handle_submit_journal_drops_multi_field_change() -> None:
+    """多フィールド patch の変更案は破棄して observations を受理する（U-10 裁定①・ADR-018）。
+
+    弱モデルが複数列同時変更を渡しても submission 全体を弾かず {"ok": True}（変更案だけ落とす）。
+    """
+    out = _run(
+        handlers.handle_submit_journal(
+            {
+                "observations": "所見",
+                "proposed_policy_change": {
+                    "max_position_weight": 0.2,
+                    "target_cash_ratio": 0.4,
+                },
+            }
+        )
+    )
+    assert out == {"ok": True}
+
+
 def test_handle_get_financials_bridges(monkeypatch: pytest.MonkeyPatch) -> None:
     """handle_get_financials: repo.get_financials→{code, items}。"""
 

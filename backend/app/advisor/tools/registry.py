@@ -132,6 +132,8 @@ REGISTRY: dict[str, ToolDef] = {
         description=(
             "夜の分析の結論（所見・提案・方針変更案）を投資日記として記録する。"
             "軸1（夜の分析AI）が分析の最終ターンで 1 度だけ呼ぶ。"
+            "方針変更案（proposed_policy_change）は 1 提案 = 1 列の単一 {field, to} 形で渡す"
+            "（ADR-013。複数列を直したいときは最も効く 1 つに絞る）。"
         ),
         parameters=_schema(SubmitJournalArgs),
         handler=handlers.handle_submit_journal,

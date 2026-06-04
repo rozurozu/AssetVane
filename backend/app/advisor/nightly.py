@@ -24,6 +24,7 @@ from app.advisor.router import _CORE
 from app.advisor.service import run_tool_loop
 from app.advisor.tools import handlers
 from app.advisor.tools.registry import CURRENT_PHASE
+from app.advisor.tools.schemas import coerce_policy_change
 from app.batch import notify
 from app.config import settings
 from app.db import repo
@@ -100,17 +101,24 @@ async def run_nightly_advisor(conn: Connection) -> None:
     if submitted is not None:
         observations = str(submitted.get("observations") or reply or "")
         proposal = submitted.get("proposal")
-        proposed_change = submitted.get("proposed_policy_change")
+        raw_change = submitted.get("proposed_policy_change")
     else:
         # submit_journal 不呼び出し時は最終テキストを所見として残す（journal は欠かさない）。
         observations = reply or ""
         proposal = None
-        proposed_change = None
+        raw_change = None
+
+    # 変更案を単一 {field,to} に正規化（多列 patch 等は None＝適用不能な提案を起票しない）。
+    # 正規化済み dict は apply_policy_change がそのまま食える形（ADR-013/018・U-10 裁定①）。
+    proposed_change = coerce_policy_change(raw_change)
+    if raw_change is not None and proposed_change is None:
+        logger.warning(
+            "夜の分析AI: proposed_policy_change が単一 {field,to} 形でない。"
+            "提案は起票せず journal のみ記録する（ADR-013/018）。"
+        )
 
     proposed_change_json = (
-        json.dumps(proposed_change, ensure_ascii=False)
-        if isinstance(proposed_change, dict)
-        else None
+        json.dumps(proposed_change, ensure_ascii=False) if proposed_change else None
     )
 
     journal_id = repo.insert_journal(
@@ -126,7 +134,8 @@ async def run_nightly_advisor(conn: Connection) -> None:
     )
 
     # 方針変更案があれば承認制の提案として起票する（kind=policy_change・pending・§6.5）。
-    if isinstance(proposed_change, dict) and proposed_change:
+    # proposed_change は正規化済み（None なら起票せず＝適用不能な提案を回避）。
+    if proposed_change:
         reason = proposed_change.get("reason")
         repo.insert_proposal(
             conn,
