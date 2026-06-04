@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     # [OPEN] TOPIX/日経の J-Quants 指数 API 有無は実機確認待ち（spec §3.1）。
     index_source: str = "stooq"
     index_symbols: str = "^SPX,^NKX,^TPX"
+    # IndexAdapter（Stooq）取得のスロットル間隔（秒）。Stooq は 1.0 で十分（ADR-010）。
+    index_min_interval_seconds: float = 1.0
 
     @property
     def cors_origins(self) -> list[str]:

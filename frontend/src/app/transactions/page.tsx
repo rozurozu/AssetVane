@@ -6,7 +6,10 @@
 // DB には触れない。データ取得はすべて lib/api.ts 経由（ADR-005）。
 
 import { TransactionForm } from "@/components/portfolio/TransactionForm";
+import { Card } from "@/components/ui/Card";
+import { inputCls as fieldInputCls, labelCls } from "@/components/ui/Field";
 import {
+  ApiError,
   type Cash,
   type ExternalAsset,
   type ExternalAssetInput,
@@ -22,24 +25,6 @@ import {
   updateExternalAsset,
 } from "@/lib/api";
 import { useEffect, useState } from "react";
-
-// --- 汎用 UI ---
-function Card({
-  title,
-  children,
-}: {
-  title: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-lg border border-hairline bg-surface-1">
-      <div className="border-hairline border-b px-3 py-2">
-        <h2 className="font-semibold text-[14px] tracking-[-0.1px]">{title}</h2>
-      </div>
-      <div className="p-3">{children}</div>
-    </section>
-  );
-}
 
 // --- 外部資産フォーム（新規・編集共用）---
 function ExternalAssetForm({
@@ -62,9 +47,7 @@ function ExternalAssetForm({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const inputCls =
-    "w-full rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-accent";
-  const labelCls = "block text-[11px] text-ink-muted mb-0.5";
+  const inputCls = fieldInputCls;
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -237,7 +220,7 @@ export default function TransactionsPage() {
       })
       .catch((e) => {
         // 404（未設定）は正常。それ以外はエラー表示。
-        if (e instanceof Error && e.message.includes("404")) {
+        if (e instanceof ApiError && e.status === 404) {
           setCashNone(true);
         } else {
           setCashErr(e instanceof Error ? e.message : String(e));

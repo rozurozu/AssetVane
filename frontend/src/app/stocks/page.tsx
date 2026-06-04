@@ -1,20 +1,15 @@
 "use client";
 
-import { type Stock, getStocks } from "@/lib/api";
+import { DataTable, Td } from "@/components/ui/DataTable";
+import { StatusBlock } from "@/components/ui/StatusBlock";
+import { getStocks } from "@/lib/api";
+import { useApi } from "@/lib/use-api";
 import Link from "next/link";
-import { useEffect, useState } from "react";
 
 // 銘柄一覧（screens.md #2・Phase 0）。FastAPI /stocks を叩いて表示し、各行から銘柄詳細へ。
 // データ取得はブラウザ fetch（AdvisorChat と同じ流儀）。
 export default function StocksPage() {
-  const [stocks, setStocks] = useState<Stock[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getStocks()
-      .then(setStocks)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
+  const { data: stocks, error, loading } = useApi((signal) => getStocks(undefined, signal), []);
 
   return (
     <>
@@ -26,61 +21,47 @@ export default function StocksPage() {
       </div>
 
       <section className="rounded-lg border border-hairline bg-surface-1">
-        {error && (
-          <div className="p-4 text-[13px] text-down">
-            ⚠ 取得に失敗: {error}
-            <div className="mt-1 text-[12px] text-ink-subtle">
+        <StatusBlock
+          loading={loading}
+          error={error}
+          empty={stocks?.length === 0}
+          className="p-4"
+          errorHint={
+            <>
               backend 起動と、バックフィル（uv run python -m
               app.scripts.backfill）の実行を確認するのだ。
-            </div>
-          </div>
-        )}
-        {!error && stocks === null && (
-          <div className="p-4 text-[13px] text-ink-subtle">読み込み中…</div>
-        )}
-        {!error && stocks?.length === 0 && (
-          <div className="p-4 text-[13px] text-ink-subtle">
-            まだ銘柄がないのだ。`uv run python -m app.scripts.backfill` でデータを入れるのだ。
-          </div>
-        )}
-        {!error && stocks && stocks.length > 0 && (
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                {["コード", "銘柄名", "33業種", "市場"].map((h) => (
-                  <th
-                    key={h}
-                    className="h-8 border-hairline border-b px-2.5 text-left font-medium text-[11px] text-ink-muted uppercase tracking-[0.3px]"
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
+            </>
+          }
+          emptyText="まだ銘柄がないのだ。`uv run python -m app.scripts.backfill` でデータを入れるのだ。"
+        >
+          {stocks && stocks.length > 0 && (
+            <DataTable
+              columns={[
+                { label: "コード" },
+                { label: "銘柄名" },
+                { label: "33業種" },
+                { label: "市場" },
+              ]}
+            >
               {stocks.map((s) => (
                 <tr key={s.code} className="hover:[&>td]:bg-surface-2">
-                  <td className="h-[34px] border-hairline-soft border-b px-2.5 text-[13px]">
+                  <Td>
                     <Link href={`/stocks/${s.code}`} className="num font-semibold text-accent">
                       {s.code}
                     </Link>
-                  </td>
-                  <td className="h-[34px] border-hairline-soft border-b px-2.5 text-[13px]">
+                  </Td>
+                  <Td>
                     <Link href={`/stocks/${s.code}`} className="hover:text-accent">
                       {s.company_name ?? "—"}
                     </Link>
-                  </td>
-                  <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-[13px] text-ink-muted">
-                    {s.sector33_code ?? "—"}
-                  </td>
-                  <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-[13px] text-ink-muted">
-                    {s.market_code ?? "—"}
-                  </td>
+                  </Td>
+                  <Td className="num text-ink-muted">{s.sector33_code ?? "—"}</Td>
+                  <Td className="num text-ink-muted">{s.market_code ?? "—"}</Td>
                 </tr>
               ))}
-            </tbody>
-          </table>
-        )}
+            </DataTable>
+          )}
+        </StatusBlock>
       </section>
     </>
   );

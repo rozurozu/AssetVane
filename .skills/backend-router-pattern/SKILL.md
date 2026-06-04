@@ -1,6 +1,6 @@
 ---
 name: backend-router-pattern
-description: backend の REST ルータ（app/routers/ 配下・advisor 等のサブパッケージ router 含む）を新規作成・修正するときに必ず使う。HTTP 入出力のみを持つ薄い層として、APIRouter・Pydantic の入出力モデル(spec と 1:1)・Depends(get_conn) での接続注入・response_model・独自例外の HTTPException 翻訳・JSON パース等の境界処理を規定する。ロジック・数値計算・DB クエリ詳細は持たせない。
+description: backend の REST ルータ（app/routers/ 配下・advisor 等のサブパッケージ router 含む）を新規作成・修正するときに必ず使う。HTTP 入出力のみを持つ薄い層として、APIRouter・Pydantic 入出力モデル・接続注入・response_model・例外の HTTPException 翻訳・境界処理を規定する。ロジック・数値計算・DB クエリ詳細は持たせない。
 ---
 
 # REST ルータ規約
@@ -37,7 +37,7 @@ def list_stocks(
 
 - `router = APIRouter(tags=[...])`。`app.main` で `include_router` する。
 - **同期 `def`**（[[backend-foundations]]）。`await` I/O を内部に持つ口（LLM 呼び出し等）だけ `async def`。
-- docstring 冒頭に `docs/api.md` の該当節・ADR を引く。
+- docstring 冒頭に `docs/api.md` の該当節・ADR を引く。**Phase 2/3 など先行 Phase のルータは `docs/api.md` がまだ未更新のことがある。その場合は `docs/phase-specs/*` の該当節を docstring 参照源にしてよい**（`docs/api.md` と等価に扱う。後で `docs/api.md` に反映する前提）。
 
 ## 接続の注入（読み取り）
 

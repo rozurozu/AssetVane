@@ -3,21 +3,13 @@
 // infeasible=true のときは「制約が厳しく解なし」と constraints_applied を提示。
 // 比率は 0..1 で来るので UI でのみ ×100 して %（ADR-008 / phase2-spec.md §0）。
 
+import { DataTable, Td } from "@/components/ui/DataTable";
 import type { OptimizeResult } from "@/lib/api";
+import { deltaPct, pct } from "@/lib/format";
 
 type Props = {
   result: OptimizeResult;
 };
-
-function pct(v: number | null, digits = 1): string {
-  if (v == null) return "—";
-  return `${(v * 100).toFixed(digits)}%`;
-}
-
-function deltaPct(v: number): string {
-  const s = (v * 100).toFixed(1);
-  return v >= 0 ? `+${s}%` : `${s}%`;
-}
 
 export function OptimizeTable({ result }: Props) {
   // 解なし（infeasible）のときは制約内容を表示して緩め方を案内するのだ。
@@ -84,66 +76,53 @@ export function OptimizeTable({ result }: Props) {
       )}
 
       {/* 最適化テーブル（現状 → 目標・差分）*/}
-      <table className="w-full border-collapse">
-        <thead>
-          <tr>
-            {[
-              { h: "コード / 銘柄", right: false },
-              { h: "現状", right: true },
-              { h: "目標", right: true },
-              { h: "差分", right: true },
-            ].map((c) => (
-              <th
-                key={c.h}
-                className={`h-8 border-hairline border-b px-2.5 font-medium text-[11px] text-ink-muted uppercase tracking-[0.3px] ${
-                  c.right ? "text-right" : "text-left"
-                }`}
-              >
-                {c.h}
-              </th>
-            ))}
+      <DataTable
+        columns={[
+          { label: "コード / 銘柄" },
+          { label: "現状", right: true },
+          { label: "目標", right: true },
+          { label: "差分", right: true },
+        ]}
+      >
+        {/* 銘柄行 */}
+        {result.weights.map((w) => (
+          <tr key={w.code} className="hover:[&>td]:bg-surface-2">
+            <Td>
+              <span className="num font-semibold text-accent">{w.code}</span>{" "}
+              <span className="text-[12px] text-ink-muted">{w.company_name ?? "—"}</span>
+            </Td>
+            <Td right className="num text-ink-muted">
+              {pct(w.current_weight)}
+            </Td>
+            <Td right className="num font-semibold">
+              {pct(w.target_weight)}
+            </Td>
+            <Td
+              right
+              className={`num font-semibold ${
+                w.delta > 0 ? "text-up" : w.delta < 0 ? "text-down" : "text-ink-subtle"
+              }`}
+            >
+              {deltaPct(w.delta)}
+            </Td>
           </tr>
-        </thead>
-        <tbody>
-          {/* 銘柄行 */}
-          {result.weights.map((w) => (
-            <tr key={w.code} className="hover:[&>td]:bg-surface-2">
-              <td className="h-[34px] border-hairline-soft border-b px-2.5 text-[13px]">
-                <span className="num font-semibold text-accent">{w.code}</span>{" "}
-                <span className="text-[12px] text-ink-muted">{w.company_name ?? "—"}</span>
-              </td>
-              <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-right text-[13px] text-ink-muted">
-                {pct(w.current_weight)}
-              </td>
-              <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-right font-semibold text-[13px]">
-                {pct(w.target_weight)}
-              </td>
-              <td
-                className={`num h-[34px] border-hairline-soft border-b px-2.5 text-right font-semibold text-[13px] ${
-                  w.delta > 0 ? "text-up" : w.delta < 0 ? "text-down" : "text-ink-subtle"
-                }`}
-              >
-                {deltaPct(w.delta)}
-              </td>
-            </tr>
-          ))}
-          {/* 現金行 */}
-          <tr className="hover:[&>td]:bg-surface-2">
-            <td className="h-[34px] border-hairline-soft border-b px-2.5 text-[13px]">
-              <span className="text-ink-muted">現金</span>
-            </td>
-            <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-right text-[13px] text-ink-muted">
-              —
-            </td>
-            <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-right font-semibold text-[13px]">
-              {pct(result.cash_weight)}
-            </td>
-            <td className="h-[34px] border-hairline-soft border-b px-2.5 text-right text-[13px] text-ink-subtle">
-              —
-            </td>
-          </tr>
-        </tbody>
-      </table>
+        ))}
+        {/* 現金行 */}
+        <tr className="hover:[&>td]:bg-surface-2">
+          <Td>
+            <span className="text-ink-muted">現金</span>
+          </Td>
+          <Td right className="num text-ink-muted">
+            —
+          </Td>
+          <Td right className="num font-semibold">
+            {pct(result.cash_weight)}
+          </Td>
+          <Td right className="text-ink-subtle">
+            —
+          </Td>
+        </tr>
+      </DataTable>
 
       <div className="text-[11px] text-ink-subtle">
         目標: {result.objective} ／ 現金目標:{" "}

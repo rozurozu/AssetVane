@@ -364,8 +364,6 @@ def upsert_cash(balance: float) -> dict[str, Any]:
 
     1 行のみ運用。id=1 への INSERT OR REPLACE で冪等にする。
     """
-    from datetime import UTC, datetime
-
     updated_at = datetime.now(UTC).isoformat()
     # SQLite の INSERT OR REPLACE で id=1 行を upsert する（単一行運用）
     stmt = sqlite_insert(cash).values(id=1, balance=balance, updated_at=updated_at)

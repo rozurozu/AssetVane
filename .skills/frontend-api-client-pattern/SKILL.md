@@ -1,6 +1,6 @@
 ---
 name: frontend-api-client-pattern
-description: frontend から backend(FastAPI) を呼ぶ処理を追加・変更するときに必ず使う。データ取得・送信は lib/api.ts 経由のブラウザ fetch のみ（ADR-005・Next は DB に触らない）。fetch ラッパ・ApiError・NEXT_PUBLIC_API_BASE_URL・型を Pydantic と 1:1 で api.ts に集約する規約を規定する。Server Component 取得・Server Actions・Route Handler でのデータ取得を禁ずる。
+description: frontend から backend を呼ぶ処理（lib/api.ts）を追加・変更するとき必ず読む（ブラウザ fetch 一本化・型を Pydantic と 1:1）。
 ---
 
 # frontend API クライアント規約

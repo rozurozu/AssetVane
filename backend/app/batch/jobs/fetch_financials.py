@@ -13,8 +13,9 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
-from app.adapters.jquants import JQuantsAdapter, JQuantsError
+from app.adapters.jquants import JQuantsAdapter
 from app.batch.runner import JobResult
 from app.db import repo
 from app.db.engine import get_engine
@@ -64,13 +65,11 @@ def run() -> JobResult:
                 if rows:
                     total_rows += repo.upsert_financials(rows)
                 logger.info("fetch_financials: %s・%d 行 UPSERT", code, len(rows))
-            except (JQuantsError, Exception) as exc:  # noqa: BLE001 — 銘柄単位で握り後続を継続
+            except Exception as exc:  # noqa: BLE001 — 銘柄単位で握り後続を継続
                 logger.exception("fetch_financials: %s が失敗", code)
                 failed_codes.append(f"{code}: {exc}")
 
         # fetch_meta を前進させる（開示日ベース・今日の日付で記録）
-        from datetime import date
-
         today = date.today().isoformat()
         repo.upsert_fetch_meta(_SOURCE, today)
 

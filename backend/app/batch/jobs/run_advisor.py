@@ -31,6 +31,6 @@ def run() -> JobResult:
         with get_engine().begin() as conn:
             asyncio.run(run_nightly_advisor(conn))
         return JobResult(name="run_advisor", ok=True, rows=1, detail="夜の分析を実行")
-    except Exception as exc:
-        logger.error("run_advisor: 失敗 %s", exc, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — ジョブ境界で握り runner に返す
+        logger.exception("run_advisor: 失敗")
         return JobResult(name="run_advisor", ok=False, rows=0, detail=str(exc))

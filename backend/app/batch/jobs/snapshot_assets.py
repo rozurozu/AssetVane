@@ -88,6 +88,6 @@ def run() -> JobResult:
             detail=f"total={total_value:.0f}",
         )
 
-    except Exception as exc:
-        logger.error("snapshot_assets: 失敗 %s", exc, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — ジョブ境界で握り runner に返す
+        logger.exception("snapshot_assets: 失敗")
         return JobResult(name="snapshot_assets", ok=False, rows=0, detail=str(exc))

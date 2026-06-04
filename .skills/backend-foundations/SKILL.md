@@ -1,6 +1,6 @@
 ---
 name: backend-foundations
-description: backend(FastAPI/Python 3.12) のあらゆるモジュールを新規作成・修正するときに必ず使う横断作法。from __future__ import annotations・型注釈必須(pyright standard)・docstring 冒頭の ADR/docs 参照・用途別の独自例外と境界での HTTPException 翻訳・ruff/pyright・ログ方針・レイヤ分離の全体像を規定する。レイヤ個別の規約は backend-router/repo/service-quant/adapter の各スキルへ。
+description: backend(FastAPI/Python 3.12) のあらゆるモジュールを新規作成・修正するときに必ず使う横断作法。型注釈・docstring の ADR/docs 参照・例外と境界での HTTPException 翻訳・同期/async の使い分け・ruff/pyright・ログ・レイヤ分離の全体像を規定する。レイヤ個別の規約は backend-router/repo/service-quant/adapter の各スキルへ。
 ---
 
 # backend 共通作法（foundations）
@@ -47,6 +47,8 @@ from __future__ import annotations
 このプロジェクトは**同期ドライバ（sqlite3）＋ SQLAlchemy Core**。FastAPI のルート・依存（dep）は **同期 `def`** で書く。FastAPI が blocking I/O を別スレッドプールで捌くため、イベントループを止めない。`async def` 内で同期 DB を呼ぶのはイベントループをブロックする誤り。
 
 例外: 外部 LLM 呼び出しのように `await` する I/O を内部に持つ口（相談チャット等）は `async def` でよい。その場合 DB 読み取りは dep に頼らず `with get_engine().connect() as conn:` を関数内で短く開閉する。
+
+逆向きの口として、**同期バッチ層から `asyncio.run(async_fn())` で async を駆動するパターンも許容する**（例: 夜間バッチが内部で LLM を await する nightly 系）。FastAPI のルート層（イベントループ上で同期 `def` を保つ）とバッチ層（自前でループを起こして async を駆動する）は役割が違うので、層ごとにこの使い分けを守る。
 
 ## 例外と境界での翻訳
 

@@ -14,6 +14,7 @@ HTTP 入出力のみを担う（ロジックは service.py / repo.py）。読み
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -259,8 +260,6 @@ def put_policy(req: PolicyUpdate) -> Policy:
         if has_core_change:
             updated = repo.get_policy(conn)
             snapshot = json.dumps(updated, ensure_ascii=False) if updated is not None else None
-            from datetime import UTC, datetime
-
             repo.insert_journal(
                 conn,
                 date=datetime.now(UTC).strftime("%Y-%m-%d"),

@@ -5,6 +5,7 @@
 
 "use client";
 
+import { inputCls, labelCls } from "@/components/ui/Field";
 import {
   type HoldingsResponse,
   type Stock,
@@ -84,10 +85,6 @@ export function TransactionForm({ portfolioId, stocks, onDone }: Props) {
       setSubmitting(false);
     }
   }
-
-  const inputCls =
-    "w-full rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-accent";
-  const labelCls = "block text-[11px] text-ink-muted mb-0.5";
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">

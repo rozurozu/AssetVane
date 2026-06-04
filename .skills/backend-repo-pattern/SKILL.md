@@ -1,6 +1,6 @@
 ---
 name: backend-repo-pattern
-description: db/repo.py のクエリ関数や db/schema.py の Table 定義を新規作成・修正するときに必ず使う。SQLAlchemy Core・戻り値は素の dict・名前は JOIN で補完・UPSERT で冪等(ADR-002)。読み取りは注入 conn(no-commit)、書き込みは「W1=バルク/冪等UPSERTは自前 engine.begin・W2=1リクエストで複数表を atomic に書く系は呼び出し側が begin 所有」の二階規約を規定する。
+description: db/repo.py のクエリ関数や db/schema.py の Table 定義を新規作成・修正するとき必ず読む（SQLAlchemy Core・UPSERT 冪等・読み書きの接続規律）。
 ---
 
 # repo / schema 規約

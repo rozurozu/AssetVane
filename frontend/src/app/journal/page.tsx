@@ -5,8 +5,9 @@
 // policy_snapshot の差分チップ＋source（nightly/chat）バッジ（ADR-029）。
 // DB には触れない。データ取得はすべて lib/api.ts 経由（ADR-005）。
 
-import { type JournalEntry, type JournalResponse, getJournal } from "@/lib/api";
-import { useEffect, useState } from "react";
+import { StatusBlock } from "@/components/ui/StatusBlock";
+import { type JournalEntry, getJournal } from "@/lib/api";
+import { useApi } from "@/lib/use-api";
 
 // policy_snapshot（その時点の policy）から差分チップ用の主要値を抜く。
 // 数値の整形のみ（計算はしない）。snapshot の形は backend の policy core に準ずる。
@@ -98,14 +99,7 @@ function Entry({ entry }: { entry: JournalEntry }) {
 }
 
 export default function JournalPage() {
-  const [data, setData] = useState<JournalResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getJournal()
-      .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
+  const { data, error, loading } = useApi((signal) => getJournal(undefined, undefined, signal), []);
 
   return (
     <>
@@ -116,31 +110,20 @@ export default function JournalPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-hairline bg-surface-1 p-3 text-[13px] text-down">
-          ⚠ 取得に失敗: {error}
-          <div className="mt-1 text-[12px] text-ink-subtle">
-            backend が起動しているか確認するのだ。
-          </div>
+      <StatusBlock
+        loading={loading}
+        error={error}
+        empty={data?.entries.length === 0}
+        className="rounded-lg border border-hairline bg-surface-1 p-3"
+        errorHint="backend が起動しているか確認するのだ。"
+        emptyText="まだ日記がないのだ。夜間バッチ（POST /batch/run）か、チャットの「journal に残す」で増えるのだ。"
+      >
+        <div className="flex flex-col gap-2">
+          {data?.entries.map((e) => (
+            <Entry key={e.id} entry={e} />
+          ))}
         </div>
-      )}
-      {!error && data === null && (
-        <div className="rounded-lg border border-hairline bg-surface-1 p-3 text-[13px] text-ink-subtle">
-          読み込み中…
-        </div>
-      )}
-      {!error && data && data.entries.length === 0 && (
-        <div className="rounded-lg border border-hairline bg-surface-1 p-3 text-[13px] text-ink-subtle">
-          まだ日記がないのだ。夜間バッチ（POST /batch/run）か、チャットの「journal
-          に残す」で増えるのだ。
-        </div>
-      )}
-
-      <div className="flex flex-col gap-2">
-        {data?.entries.map((e) => (
-          <Entry key={e.id} entry={e} />
-        ))}
-      </div>
+      </StatusBlock>
     </>
   );
 }

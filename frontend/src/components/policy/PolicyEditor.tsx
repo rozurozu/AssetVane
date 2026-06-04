@@ -6,32 +6,16 @@
 // 保存時 ÷100（ADR-008）。保存は putPolicy（core=承認制 lever / rationale=即時・ADR-013）。
 // DB には触れない。データは lib/api.ts 経由のみ（ADR-005）。
 
+import { inputCls, labelCls } from "@/components/ui/Field";
 import { openAdvisorChat } from "@/lib/advisor-bus";
 import { type Policy, type PolicyCore, type PolicyUpdate, putPolicy } from "@/lib/api";
+import { fromPctStr, toPctStr } from "@/lib/format";
 import { useState } from "react";
 
 type Props = {
   policy: Policy;
   onSaved: (p: Policy) => void;
 };
-
-// 0..1 → "%"（表示用）。null は空文字。
-function toPctStr(v: number | null): string {
-  return v == null ? "" : String(Math.round(v * 1000) / 10);
-}
-
-// "%"（入力）→ 0..1。空は null。
-function fromPctStr(s: string): number | null {
-  const t = s.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  if (Number.isNaN(n)) return null;
-  return n / 100;
-}
-
-const inputCls =
-  "w-full rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-accent";
-const labelCls = "block text-[11px] text-ink-muted mb-0.5";
 
 export function PolicyEditor({ policy, onSaved }: Props) {
   const c = policy.core;

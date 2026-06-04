@@ -7,6 +7,8 @@
 // backend 未起動でも壊れないよう fetch 失敗は握って空表示＋注記にする（spec §9.6）。
 // watchlist / signals は Phase 1/4 で本配線するので当面モックのまま。
 
+import { Card } from "@/components/ui/Card";
+import { DataTable, Td } from "@/components/ui/DataTable";
 import {
   type AssetOverview,
   type Deviation,
@@ -18,14 +20,10 @@ import {
   getPolicy,
   getProposals,
 } from "@/lib/api";
+import { fmtJpy, pct } from "@/lib/format";
 import { signals, watchlist } from "@/lib/mock-data";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-
-// 0..1 → "X%"（null は "—"）。
-function pctOrDash(v: number | null | undefined): string {
-  return typeof v === "number" ? `${(v * 100).toFixed(0)}%` : "—";
-}
 
 export default function Dashboard() {
   const [overview, setOverview] = useState<AssetOverview | null>(null);
@@ -63,8 +61,6 @@ export default function Dashboard() {
   type KpiItem = { label: string; value: string; sub: string; tone?: "up" | "down"; dot?: string };
   const kpis: KpiItem[] = overview
     ? (() => {
-        const fmtJpy = (v: number) => `¥${v.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}`;
-        const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
         const stock = overview.allocation.find((a) => a.name === "株式");
         const cash = overview.allocation.find((a) => a.name === "現金");
         const ext = overview.allocation.find((a) => a.name === "投信");
@@ -122,14 +118,14 @@ export default function Dashboard() {
         };
         let cumPct = 0;
         return overview.allocation.map((a) => {
-          const pct = a.weight * 100;
+          const pctNum = a.weight * 100;
           const offset = -(cumPct - 25); // strokeDashoffset の起点は 12 時方向（-25）
-          cumPct += pct;
+          cumPct += pctNum;
           return {
             name: a.name,
-            pct,
+            pct: pctNum,
             color: colors[a.name] ?? "var(--color-chart-5)",
-            dash: `${pct} ${100 - pct}`,
+            dash: `${pctNum} ${100 - pctNum}`,
             offset,
           };
         });
@@ -226,7 +222,7 @@ export default function Dashboard() {
             >
               <span className="text-[12px] text-warning font-semibold">{d.label}</span>
               <span className="num text-[12px] text-warning">
-                {(d.current * 100).toFixed(1)}% / 上限 {(d.limit * 100).toFixed(1)}%
+                {pct(d.current)} / 上限 {pct(d.limit)}
               </span>
             </div>
           ))}
@@ -311,8 +307,7 @@ export default function Dashboard() {
                   <div className="mt-1 flex items-center justify-between border-hairline-soft border-t pt-2 text-warning">
                     <span className="text-[12px]">{breachedDeviations[0].label}</span>
                     <span className="num text-[12px] font-semibold">
-                      {(breachedDeviations[0].current * 100).toFixed(1)}% / 上限{" "}
-                      {(breachedDeviations[0].limit * 100).toFixed(1)}%
+                      {pct(breachedDeviations[0].current)} / 上限 {pct(breachedDeviations[0].limit)}
                     </span>
                   </div>
                 )}
@@ -400,9 +395,9 @@ export default function Dashboard() {
                   const items: { label: string; value: string; warn?: boolean }[] = [
                     { label: "リスク許容度", value: c.risk_tolerance ?? "—" },
                     { label: "時間軸", value: c.time_horizon ?? "—" },
-                    { label: "現金目標", value: pctOrDash(c.target_cash_ratio) },
-                    { label: "1銘柄上限", value: pctOrDash(c.max_position_weight) },
-                    { label: "目標リターン", value: pctOrDash(c.target_return) },
+                    { label: "現金目標", value: pct(c.target_cash_ratio, 0) },
+                    { label: "1銘柄上限", value: pct(c.max_position_weight, 0) },
+                    { label: "目標リターン", value: pct(c.target_return, 0) },
                     {
                       label: "レバレッジ",
                       value: c.no_leverage ? "不可" : "可",
@@ -451,7 +446,14 @@ export default function Dashboard() {
             </Link>
           }
         >
-          <Table head={["コード / 銘柄", "スコア", "5日", "シグナル"]} rightCols={[1, 2]}>
+          <DataTable
+            columns={[
+              { label: "コード / 銘柄" },
+              { label: "スコア", right: true },
+              { label: "5日", right: true },
+              { label: "シグナル" },
+            ]}
+          >
             {signals.map((s) => (
               <tr key={s.code} className="hover:[&>td]:bg-surface-2">
                 <Td>
@@ -479,14 +481,20 @@ export default function Dashboard() {
                 </Td>
               </tr>
             ))}
-          </Table>
+          </DataTable>
         </Card>
 
         <Card
           title="Watchlist ・ 調査ステータス"
           link={<span className="text-[12px] text-ink-subtle">すべて</span>}
         >
-          <Table head={["コード / 銘柄", "最終調査", ""]} rightCols={[1, 2]}>
+          <DataTable
+            columns={[
+              { label: "コード / 銘柄" },
+              { label: "最終調査", right: true },
+              { label: "", right: true },
+            ]}
+          >
             {watchlist.map((w) => (
               <tr key={w.code} className="hover:[&>td]:bg-surface-2">
                 <Td>
@@ -512,7 +520,7 @@ export default function Dashboard() {
                 </Td>
               </tr>
             ))}
-          </Table>
+          </DataTable>
         </Card>
       </div>
 
@@ -543,70 +551,5 @@ export default function Dashboard() {
         )}
       </Card>
     </>
-  );
-}
-
-// --- 汎用 UI（card / table）。density-first：罫線で区切り、余白は 12px に絞る ---
-function Card({
-  title,
-  meta,
-  link,
-  children,
-}: {
-  title: React.ReactNode;
-  meta?: string;
-  link?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-lg border border-hairline bg-surface-1">
-      <div className="flex items-center justify-between border-hairline border-b px-3 py-2">
-        <h2 className="font-semibold text-[14px] tracking-[-0.1px]">{title}</h2>
-        {meta && <span className="text-[11px] text-ink-subtle">{meta}</span>}
-        {link}
-      </div>
-      <div className="p-3">{children}</div>
-    </section>
-  );
-}
-
-function Table({
-  head,
-  rightCols = [],
-  children,
-}: {
-  head: string[];
-  rightCols?: number[];
-  children: React.ReactNode;
-}) {
-  return (
-    <table className="w-full border-collapse">
-      <thead>
-        <tr>
-          {head.map((h, i) => (
-            <th
-              // biome-ignore lint/suspicious/noArrayIndexKey: 固定ヘッダ
-              key={i}
-              className={`h-8 border-hairline border-b px-2.5 font-medium text-[11px] text-ink-muted uppercase tracking-[0.3px] ${
-                rightCols.includes(i) ? "text-right" : "text-left"
-              }`}
-            >
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>{children}</tbody>
-    </table>
-  );
-}
-
-function Td({ children, right }: { children: React.ReactNode; right?: boolean }) {
-  return (
-    <td
-      className={`h-[34px] border-hairline-soft border-b px-2.5 text-[13px] ${right ? "text-right" : ""}`}
-    >
-      {children}
-    </td>
   );
 }

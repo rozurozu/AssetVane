@@ -3,6 +3,27 @@
 // NEXT_PUBLIC_* はブラウザに焼き込まれるため、ブラウザから到達できる名前を使う（architecture.md §7.1）。
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+/** API エラー。status 付きで throw する（呼び出し側で `e instanceof ApiError` で分岐できる）。
+ * メッセージは FastAPI の `{"detail": "..."}` から拾う（router 境界で HTTPException 翻訳）。 */
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** レスポンスから detail を取り出して ApiError を作る（4 ヘルパ共通）。 */
+async function toApiError(r: Response): Promise<ApiError> {
+  const detail = await r
+    .json()
+    .then((j) => (j as { detail?: string }).detail ?? `HTTP ${r.status}`)
+    .catch(() => `HTTP ${r.status}`);
+  return new ApiError(r.status, detail);
+}
+
 // --- Phase 2 型定義（phase2-spec.md §5・TS 型は Pydantic と 1:1） ---
 // 比率・weight・current/limit はすべて 0..1（UI でのみ ×100 して %・ADR-008）。
 
@@ -314,15 +335,15 @@ export type Quote = {
   adj_close: number | null;
 };
 
-async function getJSON<T>(path: string): Promise<T> {
-  const r = await fetch(`${API_BASE}${path}`, { headers: { Accept: "application/json" } });
-  if (!r.ok) {
-    const detail = await r
-      .json()
-      .then((j) => (j as { detail?: string }).detail ?? `HTTP ${r.status}`)
-      .catch(() => `HTTP ${r.status}`);
-    throw new Error(detail);
-  }
+// 生 fetch をコンポーネントに散らさず、この 4 ヘルパに集約する（ADR-005）。
+// 失敗は detail を載せた ApiError を throw（呼び出し側で status 分岐可能）。
+// GET は signal を受けて fetch に渡す（AbortController でキャンセル＝useApi 連携）。
+async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const r = await fetch(`${API_BASE}${path}`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!r.ok) throw await toApiError(r);
   return r.json() as Promise<T>;
 }
 
@@ -334,13 +355,7 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) {
-    const detail = await r
-      .json()
-      .then((j) => (j as { detail?: string }).detail ?? `HTTP ${r.status}`)
-      .catch(() => `HTTP ${r.status}`);
-    throw new Error(detail);
-  }
+  if (!r.ok) throw await toApiError(r);
   return r.json() as Promise<T>;
 }
 
@@ -350,13 +365,7 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) {
-    const detail = await r
-      .json()
-      .then((j) => (j as { detail?: string }).detail ?? `HTTP ${r.status}`)
-      .catch(() => `HTTP ${r.status}`);
-    throw new Error(detail);
-  }
+  if (!r.ok) throw await toApiError(r);
   return r.json() as Promise<T>;
 }
 
@@ -365,31 +374,30 @@ async function del<T>(path: string): Promise<T> {
     method: "DELETE",
     headers: { Accept: "application/json" },
   });
-  if (!r.ok) {
-    const detail = await r
-      .json()
-      .then((j) => (j as { detail?: string }).detail ?? `HTTP ${r.status}`)
-      .catch(() => `HTTP ${r.status}`);
-    throw new Error(detail);
-  }
+  if (!r.ok) throw await toApiError(r);
   return r.json() as Promise<T>;
 }
 
-export function getStocks(q?: string): Promise<Stock[]> {
+export function getStocks(q?: string, signal?: AbortSignal): Promise<Stock[]> {
   const qs = q ? `?q=${encodeURIComponent(q)}` : "";
-  return getJSON<Stock[]>(`/stocks${qs}`);
+  return getJSON<Stock[]>(`/stocks${qs}`, signal);
 }
 
-export function getStock(code: string): Promise<Stock> {
-  return getJSON<Stock>(`/stocks/${encodeURIComponent(code)}`);
+export function getStock(code: string, signal?: AbortSignal): Promise<Stock> {
+  return getJSON<Stock>(`/stocks/${encodeURIComponent(code)}`, signal);
 }
 
-export function getQuotes(code: string, from?: string, to?: string): Promise<Quote[]> {
+export function getQuotes(
+  code: string,
+  from?: string,
+  to?: string,
+  signal?: AbortSignal,
+): Promise<Quote[]> {
   const params = new URLSearchParams();
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   const qs = params.toString();
-  return getJSON<Quote[]>(`/quotes/${encodeURIComponent(code)}${qs ? `?${qs}` : ""}`);
+  return getJSON<Quote[]>(`/quotes/${encodeURIComponent(code)}${qs ? `?${qs}` : ""}`, signal);
 }
 
 // シグナル（Trend Vane・Phase 1・docs/api.md §5.1・docs/phase-specs/phase1-spec.md §5.1）。
@@ -417,30 +425,33 @@ export interface SignalsResponse {
   signals: Signal[]; // score 降順
 }
 
-export function getSignals(opts?: {
-  date?: string;
-  type?: SignalType;
-  limit?: number;
-}): Promise<SignalsResponse> {
+export function getSignals(
+  opts?: {
+    date?: string;
+    type?: SignalType;
+    limit?: number;
+  },
+  signal?: AbortSignal,
+): Promise<SignalsResponse> {
   const p = new URLSearchParams();
   if (opts?.date) p.set("date", opts.date);
   if (opts?.type) p.set("type", opts.type);
   if (opts?.limit != null) p.set("limit", String(opts.limit));
   const qs = p.toString();
-  return getJSON<SignalsResponse>(`/signals${qs ? `?${qs}` : ""}`);
+  return getJSON<SignalsResponse>(`/signals${qs ? `?${qs}` : ""}`, signal);
 }
 
 // --- Phase 2 API 関数（phase2-spec.md §5）---
 // すべて `lib/api.ts` に集約（ADR-005）。DB に触れない。
 
 /** ポートフォリオ一覧（P2-1）。既定ポートフォリオは先頭（裁定 L-9）。 */
-export function getPortfolios(): Promise<Portfolio[]> {
-  return getJSON<Portfolio[]>("/portfolios");
+export function getPortfolios(signal?: AbortSignal): Promise<Portfolio[]> {
+  return getJSON<Portfolio[]>("/portfolios", signal);
 }
 
 /** 保有明細（P2-2）。評価額は Free 12週遅延（valuation_meta.is_delayed）。 */
-export function getHoldings(portfolioId: number): Promise<HoldingsResponse> {
-  return getJSON<HoldingsResponse>(`/holdings?portfolio_id=${portfolioId}`);
+export function getHoldings(portfolioId: number, signal?: AbortSignal): Promise<HoldingsResponse> {
+  return getJSON<HoldingsResponse>(`/holdings?portfolio_id=${portfolioId}`, signal);
 }
 
 /** 取引記録（P2-2）。サーバ側で holdings を再計算し、更新後の一覧を返す（ADR-019）。 */
@@ -448,9 +459,9 @@ export function postTransaction(input: TransactionInput): Promise<TransactionRes
   return postJSON<TransactionResult>("/transactions", input);
 }
 
-/** 現金残高取得（P2-3）。未登録は 404（呼び元で catch して「未設定」表示）。 */
-export function getCash(): Promise<Cash> {
-  return getJSON<Cash>("/cash");
+/** 現金残高取得（P2-3）。未登録は 404（呼び元で ApiError.status===404 を「未設定」表示）。 */
+export function getCash(signal?: AbortSignal): Promise<Cash> {
+  return getJSON<Cash>("/cash", signal);
 }
 
 /** 現金残高更新（P2-3）。 */
@@ -459,8 +470,8 @@ export function putCash(balance: number): Promise<Cash> {
 }
 
 /** 外部資産（投信・コモディティ等）一覧（P2-4）。 */
-export function getExternalAssets(): Promise<ExternalAsset[]> {
-  return getJSON<ExternalAsset[]>("/external-assets");
+export function getExternalAssets(signal?: AbortSignal): Promise<ExternalAsset[]> {
+  return getJSON<ExternalAsset[]>("/external-assets", signal);
 }
 
 /** 外部資産 新規作成（P2-4）。 */
@@ -479,8 +490,11 @@ export function deleteExternalAsset(id: number): Promise<{ ok: true }> {
 }
 
 /** ポートフォリオメトリクス（相関・シャープ・最大DD・逸脱・P2-5）。 */
-export function getPortfolioMetrics(portfolioId: number): Promise<PortfolioMetrics> {
-  return getJSON<PortfolioMetrics>(`/portfolio/${portfolioId}/metrics`);
+export function getPortfolioMetrics(
+  portfolioId: number,
+  signal?: AbortSignal,
+): Promise<PortfolioMetrics> {
+  return getJSON<PortfolioMetrics>(`/portfolio/${portfolioId}/metrics`, signal);
 }
 
 /** 平均分散最適化（P2-6）。body 省略時は policy 制約をそのまま使う。 */
@@ -492,16 +506,16 @@ export function optimizePortfolio(
 }
 
 /** 資産全体像（KPI・配分・逸脱・推移スパークライン・P2-7）。 */
-export function getAssetOverview(): Promise<AssetOverview> {
-  return getJSON<AssetOverview>("/asset-overview");
+export function getAssetOverview(signal?: AbortSignal): Promise<AssetOverview> {
+  return getJSON<AssetOverview>("/asset-overview", signal);
 }
 
 // --- Phase 3 API 関数（phase3-spec.md §9.5・既存 fetch ヘルパと同じ流儀）---
 // すべて `lib/api.ts` に集約（ADR-005）。DB に触れない。エラーは detail を throw する。
 
 /** 現在の投資方針（core / rationale 分離・api.md §7）。 */
-export function getPolicy(): Promise<Policy> {
-  return getJSON<Policy>("/policy");
+export function getPolicy(signal?: AbortSignal): Promise<Policy> {
+  return getJSON<Policy>("/policy", signal);
 }
 
 /** 投資方針の更新（core=承認制 lever / rationale=即時・ADR-013）。比率は 0..1 で送る（UI で ÷100）。 */
@@ -510,18 +524,25 @@ export function putPolicy(update: PolicyUpdate): Promise<Policy> {
 }
 
 /** 投資日記の取得（date 降順・from/to で期間指定・spec §8.2）。 */
-export function getJournal(from?: string, to?: string): Promise<JournalResponse> {
+export function getJournal(
+  from?: string,
+  to?: string,
+  signal?: AbortSignal,
+): Promise<JournalResponse> {
   const p = new URLSearchParams();
   if (from) p.set("from", from);
   if (to) p.set("to", to);
   const qs = p.toString();
-  return getJSON<JournalResponse>(`/journal${qs ? `?${qs}` : ""}`);
+  return getJSON<JournalResponse>(`/journal${qs ? `?${qs}` : ""}`, signal);
 }
 
 /** AI 提案の取得（status で pending/approved/rejected 絞り込み・spec §8.2）。 */
-export function getProposals(status?: Proposal["status"]): Promise<ProposalsResponse> {
+export function getProposals(
+  status?: Proposal["status"],
+  signal?: AbortSignal,
+): Promise<ProposalsResponse> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-  return getJSON<ProposalsResponse>(`/proposals${qs}`);
+  return getJSON<ProposalsResponse>(`/proposals${qs}`, signal);
 }
 
 /** 提案を承認（kind=policy_change なら policy 更新＋journal snapshot・約定はしない＝ADR-001/019）。 */
@@ -543,4 +564,15 @@ export function sendChat(req: ChatRequest): Promise<ChatResponse> {
  * TODO(phase3+): SSE 対応は Phase 3 後に検討（L-16）。現状は未実装。 */
 export function sendChatStream(_req: ChatRequest): never {
   throw new Error("sendChatStream は未実装（Phase 3 は非ストリーミング・spec §4.2）");
+}
+
+/** `GET /health` レスポンス（疎通確認用・main.py）。詳細は使わず到達可否のみ参照する。 */
+export interface HealthResponse {
+  status?: string;
+  [k: string]: unknown;
+}
+
+/** backend への疎通確認（Topbar の健全性バッジ。失敗は ApiError を throw）。 */
+export function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  return getJSON<HealthResponse>("/health", signal);
 }

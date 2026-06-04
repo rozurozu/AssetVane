@@ -46,8 +46,11 @@ def test_momentum_basic():
     assert result[...] == pytest.approx(...)
 ```
 
-- 浮動小数は `pytest.approx` / `np.testing.assert_allclose`、Series/DataFrame は pandas の `assert_series_equal` 等。
+- 比較は**戻り値の型に応じて使い分ける**。現状 AssetVane の quant は **dict を返す契約**（[[backend-service-quant-pattern]]）なので、基本は次で足りる:
+  - **dict の場合**: dict として比較し、**数値は `pytest.approx`**（`np.testing.assert_allclose` も可）。`assert_series_equal` は不要。
+  - **戻り値が Series / DataFrame のときに限り**: pandas の `assert_series_equal` / `assert_frame_equal` を使う。
 - 境界（1 銘柄・履歴不足・NaN 混在）が**安全な既定**を返すことを必ずテストする（quant の規約と対）。
+- テストの **docstring 冒頭に「何を担保するか＋関連 ADR/spec 参照」を日本語で書く**（[[batch-pattern]] 等 他スキルと統一。意図の出所を辿れるように）。
 
 ## エンドポイントテスト
 
@@ -64,7 +67,8 @@ def test_momentum_basic():
 - [ ] 本物の DB に触れていない（`tmp_path` の一時 SQLite ＋ monkeypatch ＋ `reset_engine`）
 - [ ] スキーマ用意は `temp_db`（create_schema）か `client`（alembic lifespan）のどちらか。併用していない
 - [ ] ネットに出ていない（外部 API はサンプル dict で正規化を検証）
-- [ ] quant は DataFrame 直書き＋`approx`/`assert_allclose`。境界（不足/NaN）の既定もテスト
+- [ ] quant は DataFrame 直書き。dict 戻り値は dict 比較＋数値 `approx`／Series・DataFrame 戻り値のときのみ `assert_series_equal`/`assert_frame_equal`。境界（不足/NaN）の既定もテスト
+- [ ] テストの docstring 冒頭に担保内容＋関連 ADR/spec 参照を日本語で書いた
 - [ ] エンドポイントは `client` でステータス＋JSON 検証
 - [ ] `tests/test_*.py` に配置、名前で対象が分かる、観点ごとに分割
 - [ ] `uv run pytest -q` が緑

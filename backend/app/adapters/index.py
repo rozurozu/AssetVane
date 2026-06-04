@@ -18,6 +18,8 @@ from typing import Any
 
 import httpx
 
+from app.config import settings
+
 _DEFAULT_BASE_URL = "https://stooq.com"
 _MIN_INTERVAL_SECONDS = 1.0  # Stooq はリクエスト間隔を 1 秒程度あければ十分
 _MAX_RETRIES = 3
@@ -51,10 +53,13 @@ class IndexAdapter:
         self._base_url = base_url
         self._client = client  # テスト注入用（None なら都度作成）
         self._last_request_ts = 0.0  # スロットル用（monotonic 時刻）
+        # スロットル間隔は設定から読む（Stooq は 1.0 で十分・ADR-010）。
+        # モジュール定数 _MIN_INTERVAL_SECONDS はフォールバック既定。
+        self._min_interval = settings.index_min_interval_seconds or _MIN_INTERVAL_SECONDS
 
     def _throttle(self) -> None:
-        """前回リクエストから最低 _MIN_INTERVAL_SECONDS あける。"""
-        wait = _MIN_INTERVAL_SECONDS - (time.monotonic() - self._last_request_ts)
+        """前回リクエストから最低 self._min_interval あける。"""
+        wait = self._min_interval - (time.monotonic() - self._last_request_ts)
         if wait > 0:
             time.sleep(wait)
         self._last_request_ts = time.monotonic()

@@ -1,8 +1,11 @@
 "use client";
 
-import { type SignalType, type SignalsResponse, getSignals } from "@/lib/api";
+import { DataTable, Td } from "@/components/ui/DataTable";
+import { StatusBlock } from "@/components/ui/StatusBlock";
+import { type SignalType, getSignals } from "@/lib/api";
+import { useApi } from "@/lib/use-api";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 // シグナル一覧「今日の強い銘柄」（screens.md #4・phase1-spec.md §6.2・Phase 1 Trend Vane）。
 // 夜間バッチが事前計算した signals を /signals 経由で読むだけ（AI に計算させない＝ADR-014）。
@@ -16,19 +19,13 @@ const TYPE_TABS: { key: string; label: string; value: SignalType | undefined }[]
 ];
 
 export default function SignalsPage() {
-  const [data, setData] = useState<SignalsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   // 選択中の type フィルタ（undefined = 全 type）。
   const [type, setType] = useState<SignalType | undefined>(undefined);
 
-  useEffect(() => {
-    // type が変わるたび取り直す。読み込み中表示のため一旦クリアする。
-    setData(null);
-    setError(null);
-    getSignals(type ? { type } : undefined)
-      .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [type]);
+  const { data, error, loading } = useApi(
+    (signal) => getSignals(type ? { type } : undefined, signal),
+    [type],
+  );
 
   return (
     <>
@@ -62,55 +59,34 @@ export default function SignalsPage() {
       </div>
 
       <section className="rounded-lg border border-hairline bg-surface-1">
-        {error && (
-          <div className="p-4 text-[13px] text-down">
-            ⚠ 取得に失敗: {error}
-            <div className="mt-1 text-[12px] text-ink-subtle">
-              backend 起動と、夜間バッチ（POST /batch/run）の実行を確認するのだ。
-            </div>
-          </div>
-        )}
-        {!error && data === null && (
-          <div className="p-4 text-[13px] text-ink-subtle">読み込み中…</div>
-        )}
-        {!error && data?.signals.length === 0 && (
-          <div className="p-4 text-[13px] text-ink-subtle">
-            まだシグナルがないのだ。`POST /batch/run` で夜間バッチを回すのだ。
-          </div>
-        )}
-        {!error && data && data.signals.length > 0 && (
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                {[
-                  { h: "コード / 銘柄", right: false },
-                  { h: "スコア", right: true },
-                  { h: "5日", right: true },
-                  { h: "シグナル", right: false },
-                ].map((c) => (
-                  <th
-                    key={c.h}
-                    className={`h-8 border-hairline border-b px-2.5 font-medium text-[11px] text-ink-muted uppercase tracking-[0.3px] ${
-                      c.right ? "text-right" : "text-left"
-                    }`}
-                  >
-                    {c.h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
+        <StatusBlock
+          loading={loading}
+          error={error}
+          empty={data?.signals.length === 0}
+          className="p-4"
+          errorHint="backend 起動と、夜間バッチ（POST /batch/run）の実行を確認するのだ。"
+          emptyText="まだシグナルがないのだ。`POST /batch/run` で夜間バッチを回すのだ。"
+        >
+          {data && (
+            <DataTable
+              columns={[
+                { label: "コード / 銘柄" },
+                { label: "スコア", right: true },
+                { label: "5日", right: true },
+                { label: "シグナル" },
+              ]}
+            >
               {data.signals.map((s) => {
                 const d5 = s.payload.change_5d;
                 return (
                   <tr key={`${s.code}-${s.signal_type}`} className="hover:[&>td]:bg-surface-2">
-                    <td className="h-[34px] border-hairline-soft border-b px-2.5 text-[13px]">
+                    <Td>
                       <Link href={`/stocks/${s.code}`} className="hover:text-accent">
                         <span className="num font-semibold text-accent">{s.code}</span>{" "}
                         <span className="text-[12px] text-ink-muted">{s.company_name ?? "—"}</span>
                       </Link>
-                    </td>
-                    <td className="h-[34px] border-hairline-soft border-b px-2.5 text-right text-[13px]">
+                    </Td>
+                    <Td right>
                       <span className="inline-flex items-center justify-end gap-2">
                         <span className="h-1 w-12 overflow-hidden rounded-full bg-hairline">
                           <i
@@ -120,8 +96,8 @@ export default function SignalsPage() {
                         </span>
                         <span className="num">{s.score.toFixed(2)}</span>
                       </span>
-                    </td>
-                    <td className="h-[34px] border-hairline-soft border-b px-2.5 text-right text-[13px]">
+                    </Td>
+                    <Td right>
                       {d5 != null ? (
                         <span className={`num ${d5 >= 0 ? "text-up" : "text-down"}`}>
                           {d5 >= 0 ? "+" : ""}
@@ -130,18 +106,18 @@ export default function SignalsPage() {
                       ) : (
                         <span className="text-ink-subtle">—</span>
                       )}
-                    </td>
-                    <td className="h-[34px] border-hairline-soft border-b px-2.5 text-[13px]">
+                    </Td>
+                    <Td>
                       <span className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-[12px] text-ink-muted">
                         {s.payload.label ?? "—"}
                       </span>
-                    </td>
+                    </Td>
                   </tr>
                 );
               })}
-            </tbody>
-          </table>
-        )}
+            </DataTable>
+          )}
+        </StatusBlock>
       </section>
     </>
   );

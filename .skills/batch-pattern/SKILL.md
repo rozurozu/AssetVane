@@ -25,7 +25,14 @@ description: 夜間バッチ（batch/ 配下の runner・jobs・lock・notify・
 
 ## 個別ジョブ失敗は握って後続を止めない
 
-- ジョブ単位で `try/except Exception` し（`# noqa: BLE001 — ジョブ単位で握り後続を止めない` の理由コメント付き）、失敗を `JobResult(ok=False, ...)` に畳んで**後続ジョブを続行**する。1 ジョブの失敗で夜間バッチ全体を止めない。
+- ジョブ単位で `try/except Exception` し、失敗を `JobResult(ok=False, ...)` に畳んで**後続ジョブを続行**する。1 ジョブの失敗で夜間バッチ全体を止めない。
+- **各ジョブの `except Exception` には必ず理由コメント付き noqa を添える**。記法は統一する:
+
+```python
+except Exception as exc:  # noqa: BLE001 — ジョブ境界で握り runner に返す
+```
+
+  補足: `BLE001`（blind-except）は現状の ruff `select`（`E/F/I/UP/B`）には含まれないため実際には抑止対象ではないが、**「ここは意図的にジョブ境界で握っている」と読み手に示す統一記法**として必ず付ける（[[backend-foundations]]: `noqa`/`ignore` には理由コメント）。
 - `JobResult`（`name`/`ok`/`rows`/`detail`）で結果を集約する。ログにも 1 ジョブ 1 行で残す。
 
 ```python
@@ -42,7 +49,7 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
         for job in NIGHTLY_JOBS:
             try:
                 results.append(_invoke(job, full_backfill=full_backfill))
-            except Exception as exc:  # noqa: BLE001 — ジョブ単位で握り後続を止めない
+            except Exception as exc:  # noqa: BLE001 — ジョブ境界で握り runner に返す
                 logger.exception("ジョブ %s 失敗", job.__name__)
                 results.append(JobResult(name=job.__name__, ok=False, rows=0, detail=f"未捕捉例外: {exc}"))
     failed = [r for r in results if not r.ok]
@@ -66,7 +73,7 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
 - [ ] cron と `POST /batch/run` が同一関数を呼ぶ（起動口で分岐していない）。競合は呼び出し側で翻訳（cron=ログ / API=409）
 - [ ] バッチ全体を `lock.acquire()` で囲み、多重起動は専用例外で弾く
 - [ ] 各ジョブは独立・冪等（UPSERT）・`fetch_meta`/`full_backfill` で再開可能
-- [ ] 個別ジョブ失敗を握って後続を止めず `JobResult(ok=False)` に集約（理由コメント付き noqa）
+- [ ] 個別ジョブ失敗を握って後続を止めず `JobResult(ok=False)` に集約。`except Exception` に統一記法の理由コメント付き noqa（`# noqa: BLE001 — ジョブ境界で握り runner に返す`）を添えた
 - [ ] 失敗時のみ Discord 通知（無人バッチに限る・対話チャットは通知しない）
 - [ ] 夜のジョブは軽め（無人で使えない外部依存に頼らない）
 - [ ] docstring 冒頭に ADR-002/007/011/018・spec 参照

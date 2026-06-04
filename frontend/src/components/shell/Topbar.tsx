@@ -1,10 +1,11 @@
 "use client";
 
+import { getHealth } from "@/lib/api";
 import { useEffect, useState } from "react";
 
 // topbar 48px / canvas。検索・データ鮮度バッジ・日付に加えて、backend(/health) への
 // 疎通を 1 回確認して出す（CORS が効いているかの最小チェック。失敗しても画面は壊さない）。
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+// 取得は lib/api.ts の getHealth() に集約（生 fetch を散らさない・ADR-005）。
 
 type Health = "checking" | "ok" | "down";
 
@@ -13,8 +14,7 @@ export function Topbar() {
 
   useEffect(() => {
     let alive = true;
-    fetch(`${API}/health`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+    getHealth()
       .then(() => alive && setHealth("ok"))
       .catch(() => alive && setHealth("down"));
     return () => {

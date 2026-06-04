@@ -40,11 +40,13 @@ def list_stocks(
     q: str | None = Query(default=None, description="コード/銘柄名の部分一致"),
     conn: Connection = Depends(get_conn),
 ) -> list[Stock]:
+    """銘柄一覧を検索して返す（docs/api.md §1）。"""
     return [Stock(**row) for row in repo.list_stocks(conn, q)]
 
 
 @router.get("/stocks/{code}", response_model=Stock)
 def get_stock(code: str, conn: Connection = Depends(get_conn)) -> Stock:
+    """銘柄詳細を返す。未取得なら 404（docs/api.md §1）。"""
     row = repo.get_stock(conn, code)
     if row is None:
         raise HTTPException(status_code=404, detail=f"銘柄 {code} は未取得です。")
@@ -58,5 +60,5 @@ def get_quotes(
     to: str | None = Query(default=None, description="終了日 YYYY-MM-DD"),
     conn: Connection = Depends(get_conn),
 ) -> list[Quote]:
-    """チャート用の日足。date 昇順。time への対応付けはフロントの薄い責務。"""
+    """チャート用の日足（docs/api.md §1）。date 昇順。time への対応付けはフロントの薄い責務。"""
     return [Quote(**row) for row in repo.get_quotes(conn, code, from_, to)]

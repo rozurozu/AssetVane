@@ -10,6 +10,9 @@
 import { CorrelationHeatmap } from "@/components/portfolio/CorrelationHeatmap";
 import { OptimizeTable } from "@/components/portfolio/OptimizeTable";
 import { TransactionForm } from "@/components/portfolio/TransactionForm";
+import { Card } from "@/components/ui/Card";
+import { DataTable, Td } from "@/components/ui/DataTable";
+import { StatusBlock } from "@/components/ui/StatusBlock";
 import {
   type AssetOverview,
   type HoldingsResponse,
@@ -23,40 +26,10 @@ import {
   getStocks,
   optimizePortfolio,
 } from "@/lib/api";
+import { fmtJpy, pct } from "@/lib/format";
 import { useEffect, useState } from "react";
 
 type Tab = "holdings" | "input";
-
-function fmtJpy(v: number | null): string {
-  if (v == null) return "—";
-  return `¥${v.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}`;
-}
-
-function pct(v: number | null, digits = 1): string {
-  if (v == null) return "—";
-  return `${(v * 100).toFixed(digits)}%`;
-}
-
-// --- 汎用 UI（page.tsx の Card と同形・ここだけで使う）---
-function Card({
-  title,
-  meta,
-  children,
-}: {
-  title: React.ReactNode;
-  meta?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-lg border border-hairline bg-surface-1">
-      <div className="flex items-center justify-between border-hairline border-b px-3 py-2">
-        <h2 className="font-semibold text-[14px] tracking-[-0.1px]">{title}</h2>
-        {meta && <span className="text-[11px] text-ink-subtle">{meta}</span>}
-      </div>
-      <div className="p-3">{children}</div>
-    </section>
-  );
-}
 
 export default function PortfolioPage() {
   const [tab, setTab] = useState<Tab>("holdings");
@@ -211,66 +184,49 @@ export default function PortfolioPage() {
         <div className="space-y-3">
           {/* 保有テーブル */}
           <Card title="保有銘柄" meta={delayNote}>
-            {holdingsErr && (
-              <div className="text-[13px] text-down">⚠ 取得に失敗: {holdingsErr}</div>
-            )}
-            {!holdingsErr && holdings === null && (
-              <div className="text-[13px] text-ink-subtle">読み込み中…</div>
-            )}
-            {!holdingsErr && holdings?.holdings.length === 0 && (
-              <div className="text-[13px] text-ink-subtle">
-                保有銘柄がないのだ。「入力」タブから取引を記録するのだ。
-              </div>
-            )}
-            {!holdingsErr && holdings && holdings.holdings.length > 0 && (
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr>
-                    {[
-                      { h: "コード / 銘柄", right: false },
-                      { h: "株数", right: true },
-                      { h: "平均取得", right: true },
-                      { h: "現値", right: true },
-                      { h: "評価額", right: true },
-                      { h: "含み損益", right: true },
-                      { h: "比率", right: true },
-                    ].map((c) => (
-                      <th
-                        key={c.h}
-                        className={`h-8 border-hairline border-b px-2.5 font-medium text-[11px] text-ink-muted uppercase tracking-[0.3px] ${
-                          c.right ? "text-right" : "text-left"
-                        }`}
-                      >
-                        {c.h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
+            <StatusBlock
+              loading={holdings === null}
+              error={holdingsErr}
+              empty={holdings?.holdings.length === 0}
+              emptyText="保有銘柄がないのだ。「入力」タブから取引を記録するのだ。"
+            >
+              {holdings && (
+                <DataTable
+                  columns={[
+                    { label: "コード / 銘柄" },
+                    { label: "株数", right: true },
+                    { label: "平均取得", right: true },
+                    { label: "現値", right: true },
+                    { label: "評価額", right: true },
+                    { label: "含み損益", right: true },
+                    { label: "比率", right: true },
+                  ]}
+                >
                   {holdings.holdings.map((h) => {
                     const pnlPos = h.unrealized_pnl != null && h.unrealized_pnl >= 0;
                     return (
                       <tr key={h.id} className="hover:[&>td]:bg-surface-2">
-                        <td className="h-[34px] border-hairline-soft border-b px-2.5 text-[13px]">
+                        <Td>
                           <span className="num font-semibold text-accent">{h.code}</span>{" "}
                           <span className="text-[12px] text-ink-muted">
                             {h.company_name ?? "—"}
                           </span>
-                        </td>
-                        <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-right text-[13px]">
+                        </Td>
+                        <Td right className="num">
                           {h.shares.toLocaleString("ja-JP")}
-                        </td>
-                        <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-right text-[13px] text-ink-muted">
+                        </Td>
+                        <Td right className="num text-ink-muted">
                           {fmtJpy(h.avg_cost)}
-                        </td>
-                        <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-right text-[13px]">
+                        </Td>
+                        <Td right className="num">
                           {fmtJpy(h.last_close)}
-                        </td>
-                        <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-right font-semibold text-[13px]">
+                        </Td>
+                        <Td right className="num font-semibold">
                           {fmtJpy(h.market_value)}
-                        </td>
-                        <td
-                          className={`num h-[34px] border-hairline-soft border-b px-2.5 text-right font-semibold text-[13px] ${
+                        </Td>
+                        <Td
+                          right
+                          className={`num font-semibold ${
                             h.unrealized_pnl == null
                               ? "text-ink-subtle"
                               : pnlPos
@@ -281,16 +237,16 @@ export default function PortfolioPage() {
                           {h.unrealized_pnl != null
                             ? `${pnlPos ? "+" : ""}${fmtJpy(h.unrealized_pnl)}`
                             : "—"}
-                        </td>
-                        <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-right text-[13px]">
+                        </Td>
+                        <Td right className="num">
                           {pct(h.weight)}
-                        </td>
+                        </Td>
                       </tr>
                     );
                   })}
-                </tbody>
-              </table>
-            )}
+                </DataTable>
+              )}
+            </StatusBlock>
           </Card>
 
           {/* 相関ヒートマップ */}
@@ -298,11 +254,9 @@ export default function PortfolioPage() {
             title="相関ヒートマップ"
             meta={metrics?.is_delayed && metrics.as_of ? `${metrics.as_of} 基準` : undefined}
           >
-            {metricsErr && <div className="text-[13px] text-down">⚠ 取得に失敗: {metricsErr}</div>}
-            {!metricsErr && metrics === null && (
-              <div className="text-[13px] text-ink-subtle">読み込み中…</div>
-            )}
-            {!metricsErr && metrics && <CorrelationHeatmap data={metrics.correlation} />}
+            <StatusBlock loading={metrics === null} error={metricsErr}>
+              {metrics && <CorrelationHeatmap data={metrics.correlation} />}
+            </StatusBlock>
           </Card>
 
           {/* メトリクスカード（シャープ / 年率リターン / 最大DD）*/}
