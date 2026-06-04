@@ -183,7 +183,7 @@ asset_snapshots = Table(
 
 # 財務・決算（0005_financials・data-model.md §2・spec §2.1）。
 # 自分データ（保有銘柄）なので code → stocks.code に FK を張る（裁定 L-7）。
-# 実フィールド名は V2 財務エンドポイント実機確認待ち（jquants.md §6 要再確認）。
+# 実フィールド名は V2 財務エンドポイント実 API 確認待ち（jquants.md §6 要再確認）。
 financials = Table(
     "financials",
     metadata,

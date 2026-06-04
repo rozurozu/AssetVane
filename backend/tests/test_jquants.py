@@ -1,6 +1,6 @@
 """JQuantsAdapter の正規化（実 V2 略記キー → 内部列）を固定する。
 
-ネットには出ない。2026-06 に実機確認した実レスポンス形をサンプルにして、
+ネットには出ない。2026-06 に実 API 確認した実レスポンス形をサンプルにして、
 将来キー対応が壊れたら気づけるようにする（docs/data-model.md の対応表と一致）。
 """
 
@@ -13,7 +13,7 @@ from app.adapters.jquants import (
     _to_jq_code,
 )
 
-# 実機確認した V2 /v2/equities/bars/daily の 1 行（略記キー）。
+# 実 API 確認した V2 /v2/equities/bars/daily の 1 行（略記キー）。
 BARS_ROW = {
     "Date": "2026-03-09",
     "Code": "72030",
@@ -29,7 +29,7 @@ BARS_ROW = {
     "AdjC": 3393.0,
 }
 
-# 実機確認した V2 /v2/equities/master の 1 行。
+# 実 API 確認した V2 /v2/equities/master の 1 行。
 MASTER_ROW = {
     "Date": "2026-03-10",
     "Code": "72030",
@@ -75,7 +75,7 @@ def test_normalize_quote() -> None:
 def test_fetch_daily_quotes_by_date() -> None:
     """date だけ指定の全銘柄取得が、正しいパス/パラメータで叩き正規化して返すか。
 
-    実機確認済みの挙動（code 無し → その日の全銘柄）をコード側で固定する。ネットは叩かず
+    実 API 確認済みの挙動（code 無し → その日の全銘柄）をコード側で固定する。ネットは叩かず
     `_get_paginated` を差し替えて、呼び出し引数と正規化結果だけを検証する。
     """
     adapter = JQuantsAdapter(api_key="dummy")  # settings 非依存・ネットも張らない
@@ -116,7 +116,7 @@ FINANCIALS_ROW_FULL = {
     "BookValuePerShare": 7200.0,
 }
 
-# 略記形式（実機確認後に修正・フォールバック機構の動作確認用）。
+# 略記形式（実 API 確認後に修正・フォールバック機構の動作確認用）。
 FINANCIALS_ROW_SHORT = {
     "code": "67580",
     "disclosed_date": "2025-11-15",

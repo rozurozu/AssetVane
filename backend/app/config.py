@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # --- IndexAdapter（主要指数・Phase 2〜・phase2-spec.md §3.1・ADR-010） ---
     # Stooq を既定ソースとして使用（裁定 L-10）。シンボルはカンマ区切りで指定。
     # Stooq シンボル例: ^SPX（S&P500）・^NKX（日経225）・^TPX（TOPIX）。
-    # [OPEN] TOPIX/日経の J-Quants 指数 API 有無は実機確認待ち（spec §3.1）。
+    # [OPEN] TOPIX/日経の J-Quants 指数 API 有無は実 API 確認待ち（spec §3.1）。
     index_source: str = "stooq"
     index_symbols: str = "^SPX,^NKX,^TPX"
     # IndexAdapter（Stooq）取得のスロットル間隔（秒）。Stooq は 1.0 で十分（ADR-010）。

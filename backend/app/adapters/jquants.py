@@ -133,7 +133,7 @@ class JQuantsAdapter:
     def fetch_daily_quotes_by_date(self, date: str) -> list[dict[str, Any]]:
         """指定 1 営業日の**全銘柄**の日足を取得する（内部列名に正規化）。
 
-        実機確認済み（2026-06）: `code` を渡さず `date` だけ指定すると、その日の東証全銘柄
+        実 API 確認済み（2026-06）: `code` を渡さず `date` だけ指定すると、その日の東証全銘柄
         （ETF/REIT 含む・約 4400 行）が 1 リクエスト（＋ページング）で返る。これにより Phase 1
         の初回バックフィルを「銘柄ループ（約4000 req・13時間超）」ではなく「**営業日ループ**
         （2年で約 500 req）」で回せる（docs/jquants.md §4）。`date` は 'YYYY-MM-DD' / 'YYYYMMDD'。
@@ -182,7 +182,7 @@ class JQuantsAdapter:
 
     @staticmethod
     def _normalize_stock(r: dict[str, Any], fetched_at: str) -> dict[str, Any]:
-        # V2 /v2/equities/master の実フィールド名（実機確認済み 2026-06）:
+        # V2 /v2/equities/master の実フィールド名（実 API 確認済み 2026-06）:
         #   Code / CoName / CoNameEn / S17 / S17Nm / S33 / S33Nm / ScaleCat / Mkt / MktNm / ...
         # ETF/REIT 判別は Mkt（市場区分）コードの対応表が要るが、Phase 0 の対象（プライム大型株）は
         # 普通株なので 0 で正しい。ETF を扱う Phase 7（TOPIX-17 ETF）で Mkt→is_etf の対応を足す。
@@ -209,7 +209,7 @@ class JQuantsAdapter:
         V2 財務エンドポイント（/v2/fins/statements）を使用する想定だが、
         パス名・実フィールド名は未確定（jquants.md §6 要再確認）。
         `code` 指定で 1 銘柄、`date` 指定でその日開示の全銘柄を取得する
-        （日付一括が有効かも実機確認待ち）。
+        （日付一括が有効かも実 API 確認待ち）。
 
         フィールド名は `_first` の候補キーフォールバックで略記・フルネーム両対応にする。
         """
@@ -231,7 +231,7 @@ class JQuantsAdapter:
         return {
             "code": _first(r, ["Code", "code"]),
             "disclosed_date": _norm_date(_first(r, ["DisclosedDate", "disclosed_date", "Date"])),
-            # TypeOfCurrentPeriod: 'FY', '1Q', '2Q', '3Q' 等（実機確認待ち）
+            # TypeOfCurrentPeriod: 'FY', '1Q', '2Q', '3Q' 等（実 API 確認待ち）
             "fiscal_period": _first(r, ["TypeOfCurrentPeriod", "FiscalPeriod", "fiscal_period"]),
             "net_sales": _first(r, ["NetSales", "Sales", "net_sales"]),
             "operating_profit": _first(r, ["OperatingProfit", "operating_profit"]),
