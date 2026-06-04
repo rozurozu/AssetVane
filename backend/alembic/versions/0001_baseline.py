@@ -32,10 +32,14 @@ _TABLES = [stocks, daily_quotes]
 
 
 def upgrade() -> None:
+    # checkfirst=True で「CREATE は IF NOT EXISTS 相当」を実装でも保証（docstring の非破壊約束）。
+    # Phase 0 に create_all で作られ alembic 未 stamp の既存 DB へ upgrade head しても、既存
+    # stocks/daily_quotes と衝突せず no-op で通り、0001 を stamp して 0002 以降へ進める。
     for table in _TABLES:
-        table.create(bind=op.get_bind())
+        table.create(bind=op.get_bind(), checkfirst=True)
 
 
 def downgrade() -> None:
+    # 対称に checkfirst=True（DROP は IF EXISTS 相当）で、未作成テーブルがあっても落ちない。
     for table in reversed(_TABLES):
-        table.drop(bind=op.get_bind())
+        table.drop(bind=op.get_bind(), checkfirst=True)

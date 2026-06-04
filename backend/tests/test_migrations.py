@@ -10,6 +10,7 @@ from sqlalchemy import inspect, text
 
 from app.config import settings
 from app.db.engine import get_engine, init_db, reset_engine
+from app.db.schema import daily_quotes, metadata, stocks
 
 
 def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
@@ -50,5 +51,36 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
         assert row is not None, "portfolios に seed 行（id=1）が存在しない"
         assert row["portfolio_id"] == 1
         assert row["name"] == "Default"
+
+    reset_engine()
+
+
+def test_upgrade_head_on_existing_phase0_db(tmp_path, monkeypatch) -> None:
+    """Phase 0 の既存 DB（create_all 済み・alembic 未 stamp）への upgrade head が非破壊で通る。
+
+    init_db/0001_baseline の docstring が約束する「CREATE は IF NOT EXISTS 相当で非破壊」を
+    回帰として固定する。`table.create()` に checkfirst が無いと alembic は 0001 から流して
+    既存 stocks と衝突し `table already exists` で起動ごと落ちる（2026-06-04 に実機検出）。
+    既存行が温存され、後続 Phase のテーブルまで揃うことも確認する。
+    """
+    db_file = tmp_path / "phase0.db"
+    monkeypatch.setattr(settings, "database_path", str(db_file))
+    reset_engine()
+
+    # Phase 0 相当の初期状態を再現: stocks/daily_quotes だけを create_all し、alembic は未 stamp。
+    engine = get_engine()
+    metadata.create_all(engine, tables=[stocks, daily_quotes])
+    with engine.begin() as conn:
+        conn.execute(stocks.insert().values(code="7203", company_name="トヨタ自動車"))
+
+    init_db()  # ここで alembic upgrade head。checkfirst が無いと既存 stocks と衝突して落ちる。
+
+    with get_engine().connect() as conn:
+        names = set(inspect(conn).get_table_names())
+        assert {"stocks", "daily_quotes", "signals", "financials", "alembic_version"} <= names
+
+        # 既存行が温存されている（DROP/再作成されていない＝非破壊）。
+        kept = conn.execute(text("SELECT company_name FROM stocks WHERE code = '7203'")).scalar()
+        assert kept == "トヨタ自動車", "既存 stocks 行が upgrade で失われた（非破壊でない）"
 
     reset_engine()
