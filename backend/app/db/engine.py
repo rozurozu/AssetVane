@@ -26,7 +26,12 @@ _engine: Engine | None = None
 def _build_engine() -> Engine:
     """設定の database_path から SQLite Engine を作る。親ディレクトリは無ければ作る。"""
     db_path = Path(settings.database_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    # 親が symlink（dev の backend/data -> ../data・ADR-021）でも壊さない。symlink を辿って
+    # 既にディレクトリとして解決できるなら mkdir しない（symlink 実体の上に mkdir すると
+    # FileExistsError で起動が落ちる＝2026-06-04 に docker 起動で判明）。
+    parent = db_path.parent
+    if not parent.is_dir():
+        parent.mkdir(parents=True, exist_ok=True)
 
     # check_same_thread=False: FastAPI の同期ルートはスレッドプールで動くため、
     # プールから貸し出した接続が別スレッドで使われても弾かれないようにする。

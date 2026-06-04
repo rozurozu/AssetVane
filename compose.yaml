@@ -16,7 +16,11 @@ services:
     volumes:
       - ./backend:/app
       - /app/.venv # ← anonymous volume。ホスト側の .venv 不在でコンテナ内を上書きしない（ADR-021）
-      - ./data:/app/data # SQLite 置き場（git 管理外）
+      # SQLite 置き場（git 管理外）。backend/data は repo-root ./data への symlink（../data）。
+      # コンテナ内では /app/data の symlink が /app/../data = /data に解決されるため、
+      # マウント先は /app/data ではなく symlink の解決先 /data にする（symlink の上に重ねると
+      # バインドマウントが潰れて壊れた symlink になり起動が落ちる＝2026-06-04 に判明）。
+      - ./data:/data
     # ⚠️ env_file はあえて使わない。compose の env_file はコンテナ「作成時」に env を注入し、
     # それが pydantic の .env 読みを上書きするため、.env を変えても --force-recreate しないと
     # 反映されない（切り替えが激重）。代わりに backend/.env はバインドマウント（/app/.env）越しに
