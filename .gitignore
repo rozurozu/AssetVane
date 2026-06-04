@@ -33,3 +33,6 @@ npm-debug.log*
 .DS_Store
 .idea/
 .vscode/
+
+# Playwright MCP の検証成果物（スナップショット・スクショ・コンソールログ）
+.playwright-mcp/
