@@ -34,3 +34,12 @@
 1. **依存ライブラリの ARM(aarch64) ビルド可否**（ADR-021）: numpy/pandas（Phase 1）、PyPortfolioOpt/cvxpy（Phase 2）、lightgbm（Phase 5）。Docker クロスビルドで検証（段取り=data-arch、依存選定=quant）。
 2. **J-Quants V2 の未確認エンドポイント**（`jquants.md` 要再確認に追記済み）: `/v2/equities/master` の全件取得可否、V2 財務（statements）、取引日カレンダー API、主要指数 API の有無。
 3. **Light プラン移行時期**（ADR-008「実運用時」）: Free は 12 週間遅延。短期シグナルを実弾運用する段になったら Light へ。これは U ではないが運用判断。
+
+---
+
+## 保留中（Phase 3 実機検証で発見・2026-06-04）
+
+- **U-10（保留）: `proposed_policy_change` が `{field,to}` 以外の dict（多フィールド patch 等）のときの扱い。**
+  実機検証で 9B モデルが `{max_position_weight, sector_diversification_limit, target_cash_ratio}` のような**多フィールド patch** を出した。現状 nightly は「dict でありさえすれば proposal を起票」するが、`apply_policy_change` は `{field, to}`（単一変更・ADR-013）しか食えないため、**承認時に `ValueError("field が必要")` で落ちる「適用不能 proposal」が queue に入る**。
+  選択肢: **(A) 起票をゲート**（{field,to} 形だけ proposal 化・他は journal 記録のみ）／**(B) 多フィールド patch を正式対応**（apply_policy_change と body を複数列 patch に拡張＝契約拡張・ADR 案件）。
+  **2026-06-04 時点はユーザー判断で保留**（着工せず）。なお「弱モデルが任意引数に壊れた値を渡す」一般クラス（非 dict の change／`"None"` 文字列の int 等）は別途 `_ToolArgs` 正規化と `submit_journal` で握り済み（ADR-018）。

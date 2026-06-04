@@ -11,13 +11,31 @@ weights は配列 `[{code,current_weight,target_weight,delta}]`（spec §4.4 の
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
+
+# 非力なモデルが「省略」のつもりで渡す null 相当の文字列（小文字化して判定）。
+_NULLISH_STRINGS = {"none", "null", ""}
 
 
 class _ToolArgs(BaseModel):
     """全 Tool 引数の基底。未知キーは無視する（LLM の余分な引数で検証を落とさない）。"""
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_nullish_strings(cls, data: object) -> object:
+        """任意引数に来る "None"/"null"/"" を実 None に正規化する（ADR-018・頑健性）。
+
+        非力なモデルは省略すべき任意引数に文字列 "None" 等を入れてくる（例: portfolio_id="None"
+        で int 検証が落ちる）。これを「省略」と同義に倒し、submission 全体を弾かないようにする。
+        """
+        if isinstance(data, dict):
+            return {
+                k: (None if isinstance(v, str) and v.strip().lower() in _NULLISH_STRINGS else v)
+                for k, v in data.items()
+            }
+        return data
 
 
 class GetIndicatorsArgs(_ToolArgs):

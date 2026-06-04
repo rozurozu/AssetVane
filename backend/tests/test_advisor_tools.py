@@ -173,6 +173,34 @@ def test_handle_submit_journal_validation_error() -> None:
     assert "error" in out
 
 
+def test_handle_submit_journal_tolerates_non_dict_change() -> None:
+    """proposed_policy_change が文字列でも submission 全体を弾かず受理する（ADR-018・頑健性）。
+
+    非力なモデルが変更案を markdown 文字列で渡しても、observations が揃っていれば {"ok": True}。
+    壊れた変更案は落とす（nightly 側も非 dict は起票しない）。
+    """
+    out = _run(
+        handlers.handle_submit_journal(
+            {"observations": "所見", "proposed_policy_change": "- 方針を変える"}
+        )
+    )
+    assert out == {"ok": True}
+
+
+def test_tool_args_coerce_nullish_strings() -> None:
+    """任意引数の "None"/"null"/"" は実 None に正規化される（ADR-018・頑健性）。
+
+    非力なモデルが省略のつもりで文字列 "None" を渡しても int 検証で落ちないことを担保する。
+    """
+    from app.advisor.tools.schemas import GetPortfolioMetricsArgs, GetSignalsArgs
+
+    assert GetPortfolioMetricsArgs.model_validate({"portfolio_id": "None"}).portfolio_id is None
+    assert GetSignalsArgs.model_validate({"type": "null", "code": ""}).type is None
+    assert GetSignalsArgs.model_validate({"type": "null", "code": ""}).code is None
+    # 正常な値はそのまま通る（過剰な正規化をしない）。
+    assert GetPortfolioMetricsArgs.model_validate({"portfolio_id": 3}).portfolio_id == 3
+
+
 def test_handle_get_financials_bridges(monkeypatch: pytest.MonkeyPatch) -> None:
     """handle_get_financials: repo.get_financials→{code, items}。"""
 

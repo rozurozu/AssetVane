@@ -122,6 +122,41 @@ def test_nightly_without_policy_change_no_proposal(
         assert repo.list_proposals(conn) == []
 
 
+def test_nightly_non_dict_policy_change_keeps_journal_no_proposal(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """proposed_policy_change が非 dict（文字列）でも journal は残り proposal は起票しない。
+
+    非力なモデルが変更案を markdown 文字列で渡すケースの回帰（頑健性・ADR-018）。
+    """
+    _stub_briefing(monkeypatch)
+
+    async def _fake_loop(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
+        return "応答", [
+            {
+                "name": "submit_journal",
+                "args": {
+                    "observations": "所見",
+                    "proposal": "提案",
+                    "proposed_policy_change": "- 文字列で来た変更案",
+                },
+            }
+        ]
+
+    monkeypatch.setattr(nightly, "run_tool_loop", _fake_loop)
+
+    with get_engine().begin() as conn:
+        _run(nightly.run_nightly_advisor(conn))
+
+    with get_engine().connect() as conn:
+        journals = repo.list_journal(conn)
+        assert len(journals) == 1
+        assert journals[0]["observations"] == "所見"
+        assert journals[0]["proposal"] == "提案"
+        assert journals[0]["proposed_policy_change"] is None
+        assert repo.list_proposals(conn) == []
+
+
 def test_nightly_llm_failure_skips_journal_and_notifies(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:
