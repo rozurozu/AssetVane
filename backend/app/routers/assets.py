@@ -64,6 +64,12 @@ class ExternalAssetIn(BaseModel):
     as_of: str | None = None
 
 
+class OkOut(BaseModel):
+    """単純な成功応答 {ok: true}（DELETE 等・他ルートと同じく response_model を付ける）。"""
+
+    ok: bool
+
+
 class AllocationSliceOut(BaseModel):
     """spec §5 P2-7 AllocationSlice。"""
 
@@ -160,7 +166,7 @@ def update_external_asset(
     return ExternalAssetOut(**updated)
 
 
-@router.delete("/external-assets/{asset_id}")
+@router.delete("/external-assets/{asset_id}", response_model=OkOut)
 def delete_external_asset(asset_id: int) -> dict[str, bool]:
     """外部資産を削除して {ok: true} を返す（spec P2-4）。"""
     ok = repo.delete_external_asset(asset_id)
