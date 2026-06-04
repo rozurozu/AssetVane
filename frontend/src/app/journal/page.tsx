@@ -16,7 +16,8 @@ function snapshotChips(snapshot: unknown): { label: string; value: string }[] {
   const s = snapshot as Record<string, unknown>;
   const core = (s.core && typeof s.core === "object" ? s.core : s) as Record<string, unknown>;
   const chips: { label: string; value: string }[] = [];
-  const pct = (v: unknown): string | null =>
+  // format.ts の pct は非数を "—" にするためチップ抑止に使えない。ここは null を返す局所版。
+  const pctChip = (v: unknown): string | null =>
     typeof v === "number" ? `${(v * 100).toFixed(1)}%` : null;
 
   if (typeof core.risk_tolerance === "string") {
@@ -25,11 +26,11 @@ function snapshotChips(snapshot: unknown): { label: string; value: string }[] {
   if (typeof core.time_horizon === "string") {
     chips.push({ label: "時間軸", value: core.time_horizon });
   }
-  const cash = pct(core.target_cash_ratio);
+  const cash = pctChip(core.target_cash_ratio);
   if (cash) chips.push({ label: "現金目標", value: cash });
-  const maxPos = pct(core.max_position_weight);
+  const maxPos = pctChip(core.max_position_weight);
   if (maxPos) chips.push({ label: "1銘柄上限", value: maxPos });
-  const ret = pct(core.target_return);
+  const ret = pctChip(core.target_return);
   if (ret) chips.push({ label: "目標リターン", value: ret });
   if (core.no_leverage === true) chips.push({ label: "レバレッジ", value: "不可" });
   if (Array.isArray(core.exclusions) && core.exclusions.length > 0) {

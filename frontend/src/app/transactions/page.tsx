@@ -7,7 +7,8 @@
 
 import { TransactionForm } from "@/components/portfolio/TransactionForm";
 import { Card } from "@/components/ui/Card";
-import { inputCls as fieldInputCls, labelCls } from "@/components/ui/Field";
+import { DataTable, Td } from "@/components/ui/DataTable";
+import { inputCls, labelCls } from "@/components/ui/Field";
 import {
   ApiError,
   type Cash,
@@ -46,8 +47,6 @@ function ExternalAssetForm({
   const [asOf, setAsOf] = useState(initial?.as_of ?? "");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  const inputCls = fieldInputCls;
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -266,9 +265,6 @@ export default function TransactionsPage() {
     setExternalAssets((prev) => prev.filter((a) => a.id !== id));
   }
 
-  const inputCls =
-    "rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-accent";
-
   return (
     <>
       <div className="mb-3">
@@ -313,15 +309,17 @@ export default function TransactionsPage() {
               </div>
               <div className="flex items-center gap-1">
                 <span className="text-[13px] text-ink-muted">¥</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={cashInput}
-                  onChange={(e) => setCashInput(e.target.value)}
-                  placeholder="980000"
-                  className={`${inputCls} w-40`}
-                />
+                <div className="w-40">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={cashInput}
+                    onChange={(e) => setCashInput(e.target.value)}
+                    placeholder="980000"
+                    className={inputCls}
+                  />
+                </div>
               </div>
             </div>
             <button
@@ -353,40 +351,37 @@ export default function TransactionsPage() {
 
           {/* 一覧 */}
           {externalAssets.length > 0 && (
-            <table className="mb-3 w-full border-collapse">
-              <thead>
-                <tr>
-                  {["名称", "カテゴリ", "評価額", "積立/月", "基準日", "操作"].map((h) => (
-                    <th
-                      key={h}
-                      className="h-8 border-hairline border-b px-2.5 text-left font-medium text-[11px] text-ink-muted"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
+            <div className="mb-3">
+              <DataTable
+                columns={[
+                  { label: "名称" },
+                  { label: "カテゴリ" },
+                  { label: "評価額", right: true },
+                  { label: "積立/月", right: true },
+                  { label: "基準日" },
+                  { label: "操作" },
+                ]}
+              >
                 {externalAssets.map((a) => (
                   <tr key={a.id} className="hover:[&>td]:bg-surface-2">
-                    <td className="h-[34px] border-hairline-soft border-b px-2.5 text-[13px] font-semibold">
-                      {a.name}
-                    </td>
-                    <td className="h-[34px] border-hairline-soft border-b px-2.5 text-[12px] text-ink-muted">
-                      {a.category ?? "—"}
-                    </td>
-                    <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-[13px]">
+                    <Td className="font-semibold">{a.name}</Td>
+                    <Td>
+                      <span className="text-[12px] text-ink-muted">{a.category ?? "—"}</span>
+                    </Td>
+                    <Td right className="num">
                       ¥{a.value.toLocaleString("ja-JP")}
-                    </td>
-                    <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-[12px] text-ink-muted">
-                      {a.monthly_contribution != null
-                        ? `¥${a.monthly_contribution.toLocaleString("ja-JP")}`
-                        : "—"}
-                    </td>
-                    <td className="num h-[34px] border-hairline-soft border-b px-2.5 text-[12px] text-ink-muted">
-                      {a.as_of ?? "—"}
-                    </td>
-                    <td className="h-[34px] border-hairline-soft border-b px-2.5">
+                    </Td>
+                    <Td right>
+                      <span className="num text-[12px] text-ink-muted">
+                        {a.monthly_contribution != null
+                          ? `¥${a.monthly_contribution.toLocaleString("ja-JP")}`
+                          : "—"}
+                      </span>
+                    </Td>
+                    <Td>
+                      <span className="num text-[12px] text-ink-muted">{a.as_of ?? "—"}</span>
+                    </Td>
+                    <Td>
                       <div className="flex gap-1">
                         <button
                           type="button"
@@ -403,11 +398,11 @@ export default function TransactionsPage() {
                           削除
                         </button>
                       </div>
-                    </td>
+                    </Td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
+              </DataTable>
+            </div>
           )}
 
           {/* 編集フォーム */}
