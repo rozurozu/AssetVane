@@ -16,6 +16,7 @@ dependencies = [
     "apscheduler>=3.10",  # cron 方式 C・APScheduler 同居（Phase 1・spec §3.7）
     "scipy>=1.13",      # 相関・統計・SLSQP（Phase 2・spec §7）
     "pyportfolioopt>=1.5",  # 平均分散最適化（内部 cvxpy・Phase 2・spec §7・ARM ゲート）
+    "mcp>=1.27.2",
 ]
 
 # アプリケーション（ライブラリではない）なので非パッケージモードで扱う。

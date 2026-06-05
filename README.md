@@ -140,6 +140,23 @@ npm run dev
 
 > ℹ️ 開発は J-Quants **Free プラン**（株価12週間遅延・約2年分）で進められる。ロジックはプラン非依存なので、実運用時に Light 以上へ切り替えれば同じコードが最新データで動く。**Free 期間は評価額・P/L も遅延値**になる点に注意。
 
+### 4. （任意）AI を codex で動かす（API 課金を避ける・[ADR-032](docs/decisions.md)）
+
+AI Advisor は既定で OpenAI 互換 API（OpenRouter 等）を使うが、**面別に `codex` へ切り替えられる**。codex は ChatGPT サブスク認証で動くため **LLM の API 従量課金を避けられる**（限界費用ゼロ）。
+
+```bash
+# 1) 一度だけ codex に ChatGPT でログイン（API キー不要。~/.codex/auth.json に保存される）
+codex login
+
+# 2) backend/.env で切り替えたい面だけ codex に（既定は全面 openai）
+LLM_PROVIDER_CHAT=codex        # 相談チャットを codex で
+# LLM_PROVIDER_NIGHTLY=openai  # 夜間バッチは当面 openai 推奨（無人トークン継続が未実証）
+# LLM_PROVIDER_DOSSIER=openai  # ドシエ要約も既定 openai
+CODEX_MODEL=gpt-5.5            # codex 側の強モデル
+```
+
+仕組み: codex は `codex app-server`（stdio JSON-RPC）として **FastAPI プロセス内に常駐**し、自前 Tool は FastAPI 内の **MCP サーバ（`/mcp`）越し**に呼ぶ（DB に触れるのは FastAPI だけ＝[ADR-005](docs/decisions.md)）。**要 codex-cli 0.136.0 以上**（app-server は experimental protocol）。`codex` が PATH に無ければ `CODEX_BIN` に絶対パスを指定。codex が失敗しても **API へ自動フォールバックしない**（chat は 502・夜間は通知＝[ADR-018](docs/decisions.md)）。
+
 ---
 
 ## License

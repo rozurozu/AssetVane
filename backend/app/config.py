@@ -40,6 +40,27 @@ class Settings(BaseSettings):
     llm_cost_limit_usd: float = 50.0
     llm_cost_guard_mode: str = "warn"
 
+    # --- LLM provider 面別切替（codex 接続・ADR-012 の延長／plans 参照） ---
+    # source（chat/nightly/dossier）ごとに "openai"（既定・OpenRouter 等）か "codex"
+    # （codex app-server ＋ FastAPI ホストの MCP）を選ぶ。何も設定しなければ全面 openai＝従来通り。
+    # codex は ChatGPT サブスク認証（API キー不要）で限界費用ゼロ。無人 cron のトークン継続に
+    # 制約があるため nightly は既定 openai のまま実証後に寄せる方針。
+    llm_provider_chat: str = "openai"
+    llm_provider_nightly: str = "openai"
+    llm_provider_dossier: str = "openai"
+
+    # --- codex app-server（provider="codex" のとき使う） ---
+    # codex CLI を常駐 app-server（stdio JSON-RPC）として駆動し、自前 Tool は MCP 越しに呼ばせる
+    # （plans / ADR-012）。exec は MCP がキャンセルされる既知不具合のため app-server を使う。
+    codex_bin: str = "codex"  # 実行ファイル（PATH 上の名前 or 絶対パス）。`codex app-server` を起動
+    codex_model: str = "gpt-5.5"  # thread/start の model（codex 側の強モデル）
+    # thread/start の sandbox。Advisor は書かない（書き込みは MCP Tool＝FastAPI）。
+    codex_sandbox: str = "read-only"
+    codex_mcp_url: str = "http://localhost:8000/mcp"  # FastAPI 内 MCP の URL（codex が接続する）
+    codex_startup_timeout_seconds: float = 20.0  # app-server ハンドシェイク（initialize）の待ち上限
+    codex_timeout_seconds: float = 180.0  # 1 turn の上限（内部 Tool ループ込みで余裕を持つ）
+    codex_max_retries: int = 2  # 一過性失敗（serverOverloaded 等）の指数バックオフ再試行回数
+
     # --- API サーバ ---
     api_host: str = "0.0.0.0"
     api_port: int = 8000
@@ -75,6 +96,18 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """カンマ区切りの CORS オリジンをリストにする。"""
         return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+
+    def provider_for(self, source: str) -> str:
+        """source（chat/nightly/dossier）から LLM provider を返す（既定 openai）。
+
+        未知 source や未設定は安全側に openai（従来経路）へ落とす。engine が参照する。
+        """
+        mapping = {
+            "chat": self.llm_provider_chat,
+            "nightly": self.llm_provider_nightly,
+            "dossier": self.llm_provider_dossier,
+        }
+        return mapping.get(source, "openai") or "openai"
 
     @property
     def index_symbol_list(self) -> list[str]:

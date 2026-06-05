@@ -19,9 +19,9 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Connection
 
+from app.advisor.engine import run_turn
 from app.advisor.prompt_builder import Message, build_messages
 from app.advisor.router import _CORE
-from app.advisor.service import run_tool_loop
 from app.advisor.tools import handlers
 from app.advisor.tools.registry import CURRENT_PHASE
 from app.advisor.tools.schemas import coerce_policy_change
@@ -90,7 +90,8 @@ async def run_nightly_advisor(conn: Connection) -> None:
     )
 
     try:
-        reply, tool_runs = await run_tool_loop(messages, phase=CURRENT_PHASE, source="nightly")
+        # provider（openai/codex）は engine が source="nightly" から解決する（plans・ADR-012）。
+        reply, tool_runs = await run_turn(messages, phase=CURRENT_PHASE, source="nightly")
     except Exception as exc:  # noqa: BLE001 — LLM 失敗は journal をスキップして通知（ADR-018）
         logger.error("夜の分析AI が失敗（journal スキップ）: %s", exc, exc_info=True)
         notify.error("夜の分析AI 失敗", f"LLM 呼び出しに失敗し当日の投資日記をスキップ: {exc}")

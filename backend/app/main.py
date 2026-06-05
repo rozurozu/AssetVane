@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.advisor import router as advisor_router
+from app.advisor.mcp_server import mount_mcp, session_manager_lifespan
 from app.batch import run_nightly
 from app.config import settings
 from app.db.engine import healthcheck, init_db
@@ -63,12 +64,19 @@ async def lifespan(_app: FastAPI):
             settings.batch_tz,
         )
 
-    try:
-        yield
-    finally:
-        if scheduler is not None:
-            # 実行中ジョブを待たずに止める（プロセス終了をブロックしない）。
-            scheduler.shutdown(wait=False)
+    # codex 接続用の MCP セッションマネージャを常駐させる（plans / ADR-012 の延長）。
+    # provider="codex" のとき codex が /mcp 経由で自前 Tool を呼ぶ。openai 専用でも開いて無害。
+    async with session_manager_lifespan():
+        try:
+            yield
+        finally:
+            if scheduler is not None:
+                # 実行中ジョブを待たずに止める（プロセス終了をブロックしない）。
+                scheduler.shutdown(wait=False)
+            # codex 常駐 app-server を畳む（provider=codex で起動していれば。孤児化防止）。
+            from app.advisor import codex_engine
+
+            await codex_engine.shutdown()
 
 
 app = FastAPI(
@@ -107,6 +115,10 @@ app.include_router(screening_filters_router)
 app.include_router(watchlist_router)
 # ドシエ（Phase 4／spec §5.2）。GET /dossiers/{code}・POST .../investigate（routers/dossier.py）。
 app.include_router(dossier_router)
+
+# codex 接続用 MCP（plans / ADR-012）。FastAPI 内に streamable HTTP の自前 Tool を立てる。
+# DB に触れるのは FastAPI だけ（ADR-005）を保ちつつ codex に Tool を渡す。
+mount_mcp(app)
 
 
 @app.get("/health")

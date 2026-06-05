@@ -17,9 +17,10 @@ from fastapi import APIRouter, HTTPException
 from openai import OpenAIError
 from pydantic import BaseModel
 
+from app.advisor.codex_engine import CodexEngineError
+from app.advisor.engine import run_turn
 from app.advisor.llm import CostGuardError
 from app.advisor.prompt_builder import Message, ScreenContext, build_messages
-from app.advisor.service import run_tool_loop
 from app.advisor.tools.registry import CURRENT_PHASE
 from app.db import repo
 from app.db.engine import get_engine
@@ -70,18 +71,21 @@ async def chat(req: ChatRequest) -> ChatResponse:
     )
 
     try:
-        reply, tool_runs = await run_tool_loop(messages, phase=CURRENT_PHASE, source="chat")
+        # provider（openai/codex）は engine が source="chat" から解決する（plans・ADR-012）。
+        reply, tool_runs = await run_turn(messages, phase=CURRENT_PHASE, source="chat")
     except CostGuardError as exc:
         # 月額コスト上限超過（block）。frontend が detail を吹き出しに出す（spec §7.1・ADR-028）。
         raise HTTPException(
             status_code=429,
             detail=f"LLM 月額上限超過のため応答できません: {exc}",
         ) from exc
-    except OpenAIError as exc:
+    except (OpenAIError, CodexEngineError) as exc:
         # 対話的なチャットなので Discord 通知はしない（あれは無人バッチ＝ADR-018）。
+        # OpenAIError=API 経路の接続失敗、CodexEngineError=codex 経路の失敗（自動フォールバック
+        # しない＝plans）。どちらも 502 で返し frontend が再試行を促す。
         raise HTTPException(
             status_code=502,
-            detail=f"LLM への接続に失敗しました（base_url / モデル / Ollama 稼働を確認）: {exc}",
+            detail=f"LLM への接続に失敗しました（provider / base_url / codex login を確認）: {exc}",
         ) from exc
 
     response_tool_runs: list[ToolRun] = []

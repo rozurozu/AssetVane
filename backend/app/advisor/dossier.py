@@ -27,7 +27,6 @@ from typing import Any, Literal
 from sqlalchemy import Connection
 
 from app.adapters.news import fetch_news
-from app.advisor.llm import complete
 from app.db import repo
 
 logger = logging.getLogger(__name__)
@@ -136,7 +135,8 @@ async def summarize_dossier(
 ) -> tuple[str, str]:
     """既存ドシエを記事要約と財務事実で incremental に更新する（spec §3・ADR-014/020）。
 
-    LLM 単発 `complete()`（Tool ループ不要）。**記事全文は渡さず**、ソースの短い要約
+    LLM 単発 `engine.generate_once`（Tool ループ不要・provider は source="dossier" で解決）。
+    **記事全文は渡さず**、ソースの短い要約
     （title/summary/published_at/source_type）と data レーンの財務事実だけを渡す（生データ
     丸投げ禁止＝ADR-014）。数値は財務の事実に紐づける。
 
@@ -174,8 +174,13 @@ async def summarize_dossier(
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 
-    resp = await complete(messages, source="dossier")
-    return _parse_summary_response(resp.content, existing_summary, existing_key_facts)
+    # provider（openai/codex）は engine が source="dossier" から解決する（plans・ADR-012）。
+    # engine は service→registry→handlers→dossier の import 鎖の先にあるため、ここは関数内で
+    # 遅延 import して循環 import を断つ（dossier は Tool registry に取り込まれる低レイヤ）。
+    from app.advisor.engine import generate_once
+
+    content = await generate_once(messages, source="dossier")
+    return _parse_summary_response(content, existing_summary, existing_key_facts)
 
 
 def _parse_summary_response(

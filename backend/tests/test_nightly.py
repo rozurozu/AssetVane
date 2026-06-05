@@ -59,7 +59,7 @@ def test_nightly_records_journal_and_proposal(
     """submit_journal 経由で journal が残り、proposed_policy_change で proposal が起票される。"""
     _stub_briefing(monkeypatch)
 
-    # run_tool_loop をモックして submit_journal の tool_run を返させる。
+    # engine.run_turn（nightly が呼ぶ provider ディスパッチャ）をモックして tool_run を返させる。
     submit_args = {
         "observations": "今日の所見",
         "proposal": "現金比率を上げる",
@@ -74,7 +74,7 @@ def test_nightly_records_journal_and_proposal(
     async def _fake_loop(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
         return "最終応答", [{"name": "submit_journal", "args": submit_args}]
 
-    monkeypatch.setattr(nightly, "run_tool_loop", _fake_loop)
+    monkeypatch.setattr(nightly, "run_turn", _fake_loop)
 
     with get_engine().begin() as conn:
         _run(nightly.run_nightly_advisor(conn))
@@ -112,7 +112,7 @@ def test_nightly_without_policy_change_no_proposal(
     async def _fake_loop(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
         return "応答", [{"name": "submit_journal", "args": {"observations": "所見のみ"}}]
 
-    monkeypatch.setattr(nightly, "run_tool_loop", _fake_loop)
+    monkeypatch.setattr(nightly, "run_turn", _fake_loop)
 
     with get_engine().begin() as conn:
         _run(nightly.run_nightly_advisor(conn))
@@ -143,7 +143,7 @@ def test_nightly_non_dict_policy_change_keeps_journal_no_proposal(
             }
         ]
 
-    monkeypatch.setattr(nightly, "run_tool_loop", _fake_loop)
+    monkeypatch.setattr(nightly, "run_turn", _fake_loop)
 
     with get_engine().begin() as conn:
         _run(nightly.run_nightly_advisor(conn))
@@ -182,7 +182,7 @@ def test_nightly_multi_field_patch_keeps_journal_no_proposal(
             }
         ]
 
-    monkeypatch.setattr(nightly, "run_tool_loop", _fake_loop)
+    monkeypatch.setattr(nightly, "run_turn", _fake_loop)
 
     with get_engine().begin() as conn:
         _run(nightly.run_nightly_advisor(conn))
@@ -204,7 +204,7 @@ def test_nightly_llm_failure_skips_journal_and_notifies(
     async def _failing_loop(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
         raise RuntimeError("LLM タイムアウト")
 
-    monkeypatch.setattr(nightly, "run_tool_loop", _failing_loop)
+    monkeypatch.setattr(nightly, "run_turn", _failing_loop)
 
     notified: dict[str, Any] = {}
 

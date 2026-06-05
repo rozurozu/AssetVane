@@ -7,7 +7,9 @@
 - mode が fetch_news に正しく渡る（"nightly"/"chat" 経路）。
 - summarize_dossier に渡るのが「記事の要約と財務事実のみ」で、全文を載せない（ADR-014）。
 
-LLM（complete）と fetch_news は必ずモック（ネットを叩かない＝testing-strategy）。DB は一時 SQLite。
+LLM（engine.generate_once）と fetch_news は必ずモック（ネットを叩かない＝testing-strategy）。
+DB は一時 SQLite。dossier は provider 解決を engine.generate_once（遅延 import）経由で呼ぶため、
+モックは engine モジュール側に当てる。
 """
 
 from __future__ import annotations
@@ -18,8 +20,7 @@ from typing import Any
 
 import pytest
 
-from app.advisor import dossier
-from app.advisor.llm import LLMResponse
+from app.advisor import dossier, engine
 from app.db import repo
 from app.db.engine import get_engine
 
@@ -41,19 +42,18 @@ def _run(coro: Any) -> Any:
 def _stub_complete(
     monkeypatch: pytest.MonkeyPatch, *, capture: dict[str, Any] | None = None
 ) -> None:
-    """complete を JSON 応答を返すスタブに差し替える。capture に渡された messages を残す。"""
+    """generate_once を JSON 文字列を返すスタブに差し替える。capture に渡された messages を残す。"""
 
-    async def _fake_complete(messages, *, tools=None, stream=False, source="chat"):  # noqa: ANN001
+    async def _fake_generate(messages, *, source="chat"):  # noqa: ANN001
         if capture is not None:
             capture["messages"] = messages
             capture["source"] = source
-        body = json.dumps(
+        return json.dumps(
             {"summary_md": "# トヨタ\n更新後の要約", "key_facts": {"per": 12.3}},
             ensure_ascii=False,
         )
-        return LLMResponse(content=body, tool_calls=[])
 
-    monkeypatch.setattr(dossier, "complete", _fake_complete)
+    monkeypatch.setattr(engine, "generate_once", _fake_generate)
 
 
 def _stub_fetch_news(
@@ -152,7 +152,7 @@ def test_investigate_passes_mode_to_fetch_news(
 def test_summarize_receives_only_digests_not_full_text(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:
-    """summarize_dossier（complete）に渡るのは記事の要約と財務事実のみで全文は載らない（ADR-014）。"""
+    """summarize_dossier（generate_once）に渡るのは記事の要約と財務事実のみで全文は載らない（ADR-014）。"""
     repo.upsert_stocks([STOCK])
     cap: dict[str, Any] = {}
     _stub_complete(monkeypatch, capture=cap)
@@ -175,10 +175,10 @@ def test_summarize_keeps_existing_on_broken_json(
 ) -> None:
     """LLM 応答が JSON でないとき本文を summary に採用し key_facts は既存維持（堅牢化）。"""
 
-    async def _bad_complete(messages, *, tools=None, stream=False, source="chat"):  # noqa: ANN001
-        return LLMResponse(content="ただのテキスト応答", tool_calls=[])
+    async def _bad_generate(messages, *, source="chat"):  # noqa: ANN001
+        return "ただのテキスト応答"
 
-    monkeypatch.setattr(dossier, "complete", _bad_complete)
+    monkeypatch.setattr(engine, "generate_once", _bad_generate)
 
     existing = {"summary_md": "古い要約", "key_facts": '{"per": 9.0}'}
     summary_md, key_facts = _run(dossier.summarize_dossier(existing, [], []))
