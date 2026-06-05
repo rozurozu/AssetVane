@@ -18,6 +18,7 @@ from app.db.schema import (
     asset_snapshots,
     cash,
     daily_quotes,
+    dossier_sources,
     external_assets,
     fetch_meta,
     financials,
@@ -29,9 +30,11 @@ from app.db.schema import (
     proposals,
     screening_filters,
     signals,
+    stock_dossiers,
     stocks,
     transactions,
     valuation_snapshots,
+    watchlist,
 )
 
 
@@ -836,3 +839,156 @@ def sum_llm_cost_month(conn: Connection, year_month: str) -> float:
         llm_usage.c.created_at.like(f"{year_month}%")
     )
     return float(conn.execute(stmt).scalar() or 0.0)
+
+
+# ===== Phase 4: Stock Dossier（phase4-spec.md §2/§3・ADR-020） =====
+
+# 書き込み規約: upsert_dossier / upsert_dossier_source は investigate_stock パイプラインが
+# 複数ソース＋ドシエ本体を 1 トランザクションに束ねて atomic に書くため、conn を受け取り
+# commit はしない（W2・呼び出し側が `with get_engine().begin() as conn:` で境界を所有）。
+# 一方 watchlist の add/remove は API からの単発書き込みなので repo が自前で begin する（W1）。
+
+
+def upsert_dossier(
+    conn: Connection,
+    *,
+    code: str,
+    summary_md: str | None,
+    key_facts: str | None,
+    last_investigated_at: str | None,
+    updated_at: str | None,
+) -> None:
+    """stock_dossiers を 1 銘柄 1 行で UPSERT する（code 衝突で更新・ADR-020/ADR-002・spec §2.2）。
+
+    living document なので code conflict は do_update（summary_md 等を上書きしていく）。
+    key_facts は呼び出し側で json.dumps 済みの文字列を渡す（JSON 化/パースは router/service）。
+    commit はしない。呼び出し側が `with get_engine().begin() as conn:` で境界を所有する（W2）。
+    """
+    stmt = sqlite_insert(stock_dossiers).values(
+        code=code,
+        summary_md=summary_md,
+        key_facts=key_facts,
+        last_investigated_at=last_investigated_at,
+        updated_at=updated_at,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["code"],
+        set_={
+            "summary_md": stmt.excluded.summary_md,
+            "key_facts": stmt.excluded.key_facts,
+            "last_investigated_at": stmt.excluded.last_investigated_at,
+            "updated_at": stmt.excluded.updated_at,
+        },
+    )
+    conn.execute(stmt)
+
+
+def upsert_dossier_source(
+    conn: Connection,
+    *,
+    code: str,
+    url: str,
+    title: str | None = None,
+    summary: str | None = None,
+    published_at: str | None = None,
+    source_type: str | None = None,
+    processed_at: str | None = None,
+) -> None:
+    """dossier_sources に 1 ソースを取り込む（url 衝突なら skip・ADR-020/ADR-002・spec §2.3）。
+
+    本文は保存せず summary と url のみ（ADR-020）。既定は「既存 url なら skip」＝
+    on_conflict_do_nothing（spec §2.3 の「実装は『既存なら skip』を既定」に従う）。
+    processed_at 未指定なら UTC now を入れる。
+    commit はしない。呼び出し側が `with get_engine().begin() as conn:` で境界を所有する（W2）。
+    """
+    stmt = sqlite_insert(dossier_sources).values(
+        code=code,
+        source_type=source_type,
+        url=url,
+        title=title,
+        summary=summary,
+        published_at=published_at,
+        processed_at=processed_at or datetime.now(UTC).isoformat(),
+    )
+    stmt = stmt.on_conflict_do_nothing(index_elements=["url"])  # 既存 url は無視（skip）
+    conn.execute(stmt)
+
+
+def dossier_source_exists(conn: Connection, url: str) -> bool:
+    """url が dossier_sources に既存か返す（URL 重複排除の存在確認・spec §3）。"""
+    stmt = select(dossier_sources.c.id).where(dossier_sources.c.url == url).limit(1)
+    return conn.execute(stmt).first() is not None
+
+
+def get_dossier(conn: Connection, code: str) -> dict[str, Any] | None:
+    """stock_dossiers の 1 行を素の dict で返す（無ければ None・spec §2.2/§5.2）。
+
+    key_facts（JSON TEXT）はパースせず生のまま返す（json.loads は router の責務）。
+    sources の JOIN はしない（一覧は list_dossier_sources で別途取得）。
+    """
+    row = (
+        conn.execute(select(stock_dossiers).where(stock_dossiers.c.code == code)).mappings().first()
+    )
+    return dict(row) if row else None
+
+
+def list_dossier_sources(conn: Connection, code: str) -> list[dict[str, Any]]:
+    """指定銘柄の dossier_sources を published_at 降順で返す（ソース台帳・spec §5.2）。
+
+    本文は持たない（summary と url のみ＝ADR-020）。published_at が NULL の行は末尾に寄る。
+    """
+    stmt = (
+        select(dossier_sources)
+        .where(dossier_sources.c.code == code)
+        .order_by(dossier_sources.c.published_at.desc(), dossier_sources.c.id.desc())
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def list_watchlist(conn: Connection) -> list[dict[str, Any]]:
+    """watchlist を company_name・last_investigated_at 付きで返す（spec §2.1/§5.1）。
+
+    company_name は stocks JOIN、last_investigated_at は stock_dossiers LEFT JOIN で補う
+    （行レベルに焼かず読むときに結合＝repo 規約）。dossier 未作成の銘柄は
+    last_investigated_at が None で返る。stale 判定（21 日超・L-22）は上位（router/service）の責務。
+    """
+    stmt = (
+        select(
+            watchlist.c.id,
+            watchlist.c.code,
+            stocks.c.company_name,
+            watchlist.c.note,
+            watchlist.c.added_at,
+            stock_dossiers.c.last_investigated_at,
+        )
+        .select_from(
+            watchlist.outerjoin(stocks, watchlist.c.code == stocks.c.code).outerjoin(
+                stock_dossiers, watchlist.c.code == stock_dossiers.c.code
+            )
+        )
+        .order_by(watchlist.c.id)
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def add_watchlist(code: str, note: str | None = None) -> dict[str, Any]:
+    """watchlist に 1 銘柄を追加し、その行（dict）を返す（spec §5.1・ADR-002）。
+
+    UNIQUE(code) 衝突時は do_nothing（既存を重複として扱う＝spec §5.1）。挿入でも既存でも
+    最終的に code に対応する行を読み直して返す（重複時も既存行を返す）。重複の扱い
+    （メッセージ等）は router の責務。added_at 未指定なら UTC now を入れる。
+    """
+    added_at = datetime.now(UTC).isoformat()
+    stmt = sqlite_insert(watchlist).values(code=code, note=note, added_at=added_at)
+    stmt = stmt.on_conflict_do_nothing(index_elements=["code"])
+    with get_engine().begin() as conn:
+        conn.execute(stmt)
+    with get_engine().connect() as conn:
+        row = conn.execute(select(watchlist).where(watchlist.c.code == code)).mappings().first()
+    return dict(row) if row else {}
+
+
+def remove_watchlist(watchlist_id: int) -> None:
+    """watchlist の id 行を削除する（spec §5.1・DELETE /watchlist/{id}）。"""
+    with get_engine().begin() as conn:
+        conn.execute(watchlist.delete().where(watchlist.c.id == watchlist_id))

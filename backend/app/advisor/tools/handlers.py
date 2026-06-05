@@ -21,12 +21,17 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import Connection
 
+from app.adapters.news import fetch_news
+from app.advisor.dossier import investigate_stock
 from app.advisor.tools.schemas import (
+    FetchNewsArgs,
     GetAssetOverviewArgs,
+    GetDossierArgs,
     GetFinancialsArgs,
     GetIndicatorsArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
+    InvestigateStockArgs,
     OptimizePortfolioArgs,
     ScreenStocksArgs,
     SubmitJournalArgs,
@@ -402,4 +407,94 @@ async def handle_submit_journal(args: dict[str, object]) -> dict[str, Any]:
         return {"ok": True}
     except Exception as exc:
         logger.exception("handle_submit_journal 失敗")
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 Tool（Stock Dossier）
+# ---------------------------------------------------------------------------
+
+
+async def handle_investigate_stock(args: dict[str, object]) -> dict[str, Any]:
+    """investigate_stock（spec §4・ADR-020/011）。チャット経路の調査パイプラインを起動する。
+
+    引数は code のみ（spec §4・mode は呼び出し文脈で決まる）。チャット Tool 経由なので
+    内部で `mode="chat"`（リッチ）を渡す。パイプライン本体は dossier.investigate_stock が持ち、
+    本 handler は橋渡しのみ（ADR-014・レイヤ分離）。
+
+    書き込みを伴う（dossier/sources を UPSERT）ので `with get_engine().begin() as conn:` で
+    束ねる（dossier.investigate_stock は conn を受け自分では commit しない＝W2 規約）。
+    戻り値 dict（spec §4 の investigate_stock スキーマ）をそのまま返す。
+    """
+    try:
+        code = InvestigateStockArgs.model_validate(args).code
+        with get_engine().begin() as conn:
+            return await investigate_stock(conn, code, mode="chat")
+    except Exception as exc:
+        logger.exception("handle_investigate_stock 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_dossier(args: dict[str, object]) -> dict[str, Any]:
+    """get_dossier（spec §4・§5.2）。既存ドシエ本体とソース台帳を合成して返す。
+
+    repo.get_dossier（1 行・key_facts は生 TEXT）と repo.list_dossier_sources（published_at 降順）
+    を別々に引いて合成する（get_dossier は sources を JOIN しない＝repo 規約）。key_facts は
+    json.loads でオブジェクト化して返す（spec §5.2 の `Record<string, unknown> | null`）。
+
+    未調査（get_dossier が None）時は spec §5.2 の流儀に従い `summary_md: ""`・空 sources で返す
+    （404 ではなく空ドシエ＝Tool はループを落とさず「まだ調査されていない」を LLM に伝えられる）。
+    """
+    try:
+        code = GetDossierArgs.model_validate(args).code
+        with get_engine().connect() as conn:
+            row = repo.get_dossier(conn, code)
+            source_rows = repo.list_dossier_sources(conn, code)
+
+        sources = [
+            {
+                "url": s["url"],
+                "title": s.get("title"),
+                "summary": s.get("summary"),
+                "published_at": s.get("published_at"),
+                "source_type": s.get("source_type"),
+            }
+            for s in source_rows
+        ]
+        if row is None:
+            # 未調査（spec §5.2: summary_md="" ＋空 sources で返す）。
+            return {
+                "code": code,
+                "summary_md": "",
+                "key_facts": None,
+                "last_investigated_at": None,
+                "updated_at": None,
+                "sources": sources,
+            }
+        return {
+            "code": code,
+            "summary_md": row.get("summary_md") or "",
+            "key_facts": _parse_payload(row.get("key_facts")) or None,
+            "last_investigated_at": row.get("last_investigated_at"),
+            "updated_at": row.get("updated_at"),
+            "sources": sources,
+        }
+    except Exception as exc:
+        logger.exception("handle_get_dossier 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_fetch_news(args: dict[str, object]) -> dict[str, Any]:
+    """fetch_news（spec §4）。チャット経路のニュース取得を起動する（実体はスタブ＝空配列）。
+
+    引数は code・任意 since（spec §4）。チャット Tool 経由なので `mode="chat"`（昼 MCP リッチ）を
+    渡す。取得手段は data レーンの adapters.news.fetch_news が mode で実装する（現状スタブ）。
+    本 handler は橋渡しのみ（ADR-010/014）。
+    """
+    try:
+        parsed = FetchNewsArgs.model_validate(args)
+        articles = await fetch_news(parsed.code, since=parsed.since, mode="chat")
+        return {"code": parsed.code, "articles": articles}
+    except Exception as exc:
+        logger.exception("handle_fetch_news 失敗")
         return {"error": str(exc)}

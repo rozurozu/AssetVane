@@ -321,3 +321,55 @@ screening_filters = Table(
     Column("created_at", String),  # ISO8601
     Column("updated_at", String),  # ISO8601
 )
+
+# ===== Phase 4: Stock Dossier（phase4-spec.md §2・ADR-020・0008_dossier） =====
+
+# watchlist（夜の巡回対象・「最終調査日」の起点＝phase4-spec §2.1）。
+# 自分データ（手入力で監視銘柄を選ぶ）なので code → stocks.code に FK を張る（裁定 L-7）。
+# UNIQUE(code) を UPSERT/重複監視防止キーにする。
+# last_investigated_at は列として持たない（調査側の真実 stock_dossiers を JOIN して一覧に出す）。
+# stale 判定（21 日超）は backend が現在日から算出する（列に持たない・L-22）。
+watchlist = Table(
+    "watchlist",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("code", String, ForeignKey("stocks.code"), nullable=False),
+    Column("note", String),  # メモ（任意）
+    Column("added_at", String),  # 追加時刻 ISO8601
+    UniqueConstraint("code", name="uq_watchlist_code"),  # 重複監視防止（UPSERT キー）
+    Index("ix_watchlist_code", "code"),
+)
+
+# stock_dossiers（1 銘柄 1 行・living document＝phase4-spec §2.2・ADR-020）。
+# AI 生成の調査要約（summary_md）をずっと更新し続ける。数値は Tool の事実に紐づく（ADR-014）。
+# key_facts は JSON 文字列（PER/成長率/直近トピック等・SQLite に JSON 型なし・既存方針）。
+stock_dossiers = Table(
+    "stock_dossiers",
+    metadata,
+    Column("code", String, ForeignKey("stocks.code"), primary_key=True),  # 1 銘柄 1 行
+    Column("summary_md", String),  # AI 生成の調査要約（markdown・living document）
+    Column("key_facts", String),  # JSON 文字列（出所は Tool の事実）
+    Column(
+        "last_investigated_at", String
+    ),  # 最終調査時刻 ISO8601（一覧の「最終調査日」・stale 起点）
+    Column("updated_at", String),  # 行更新時刻 ISO8601
+)
+
+# dossier_sources（ソース台帳・本文非保存＝phase4-spec §2.3・ADR-020）。
+# 取得 → 要約 → 本文は捨て、summary と url だけ残す（ストレージ・著作権の両面で全文保持は不採用）。
+# UNIQUE(url) で再調査の二重取り込みを防ぐ（存在確認・冪等 UPSERT のキー）。
+# 銘柄 FK（この銘柄のソース一覧）。code への索引で銘柄詳細の一覧取得を速くする。
+dossier_sources = Table(
+    "dossier_sources",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("code", String, ForeignKey("stocks.code"), nullable=False),
+    Column("source_type", String),  # 'news'/'disclosure'/'twitter' 等（将来拡張）
+    Column("url", String, nullable=False),  # 取り込み元 URL（本文は保存しない）
+    Column("title", String),
+    Column("summary", String),  # 短い要約（記事全文は捨てる＝ADR-020）
+    Column("published_at", String),  # 発行日 'YYYY-MM-DD'（発行 1 週間以内のみ取り込む）
+    Column("processed_at", String),  # 取り込み・要約した時刻 ISO8601
+    UniqueConstraint("url", name="uq_dossier_sources_url"),  # URL 重複排除
+    Index("ix_dossier_sources_code", "code"),
+)

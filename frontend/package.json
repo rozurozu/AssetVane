@@ -14,7 +14,9 @@
     "lightweight-charts": "^5.2.0",
     "next": "^15.1.6",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "rehype-sanitize": "^6.0.0"
   },
   "//overrides": "Next が内部バンドルする postcss の advisory(GHSA-qx2v-qp2m-jg93) 回避。audit fix --force は next@9 への破滅的ダウングレードを提案するため使わず、安全パッチへピン留めする。",
   "overrides": {

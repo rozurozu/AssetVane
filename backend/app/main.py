@@ -21,10 +21,12 @@ from app.db.engine import healthcheck, init_db
 from app.routers.advisor_state import router as advisor_state_router
 from app.routers.assets import router as assets_router
 from app.routers.batch import router as batch_router
+from app.routers.dossier import router as dossier_router
 from app.routers.portfolio import router as portfolio_router
 from app.routers.screening_filters import router as screening_filters_router
 from app.routers.signals import router as signals_router
 from app.routers.stocks import router as stocks_router
+from app.routers.watchlist import router as watchlist_router
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,10 @@ app.include_router(portfolio_router)
 app.include_router(assets_router)
 # スクリーニング保存フィルタ（ADR-031）。CRUD /screening-filters（routers/screening_filters.py）。
 app.include_router(screening_filters_router)
+# watchlist（Phase 4／spec §5.1）。GET/POST/DELETE /watchlist（routers/watchlist.py）。
+app.include_router(watchlist_router)
+# ドシエ（Phase 4／spec §5.2）。GET /dossiers/{code}・POST .../investigate（routers/dossier.py）。
+app.include_router(dossier_router)
 
 
 @app.get("/health")

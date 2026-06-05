@@ -66,8 +66,190 @@ def test_registry_handlers_are_registered() -> None:
         "get_financials",
         "get_asset_overview",
         "submit_journal",
+        # Phase 4（Stock Dossier）。露出は min_phase=4 ゲートで制御（CURRENT_PHASE=3 では非露出）。
+        "get_dossier",
+        "investigate_stock",
+        "fetch_news",
     }
     assert set(REGISTRY) == expected
+
+
+# ---------------------------------------------------------------------------
+# Phase 4（Stock Dossier）— Phase ゲート・handler 橋渡し（spec §4・§8）
+# ---------------------------------------------------------------------------
+
+
+def test_openai_tools_phase3_hides_dossier_tools() -> None:
+    """available_phase=3 では dossier 系 3 Tool が露出しない（min_phase=4 ゲート・spec §4）。"""
+    names = {t["function"]["name"] for t in openai_tools(3)}  # type: ignore[index]
+    assert "get_dossier" not in names
+    assert "investigate_stock" not in names
+    assert "fetch_news" not in names
+
+
+def test_openai_tools_phase4_exposes_dossier_tools() -> None:
+    """available_phase>=4 で dossier 系 3 Tool が露出する（Phase ゲート・spec §4）。"""
+    names = {t["function"]["name"] for t in openai_tools(4)}  # type: ignore[index]
+    assert {"get_dossier", "investigate_stock", "fetch_news"} <= names
+    # P1〜P3 も引き続き含む（上位 phase は下位を内包する）。
+    assert "get_indicators" in names and "submit_journal" in names
+
+
+class _FakeBeginConn:
+    """begin() 用の偽 conn（with でそのまま返す・commit はしない）。"""
+
+    def __enter__(self) -> _FakeBeginConn:
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        return None
+
+
+class _FakeConnectConn:
+    """connect() 用の偽 conn（with でそのまま返す）。"""
+
+    def __enter__(self) -> _FakeConnectConn:
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        return None
+
+
+def test_handle_investigate_stock_bridges(monkeypatch: pytest.MonkeyPatch) -> None:
+    """handle_investigate_stock: begin() で束ね dossier.investigate_stock を mode="chat" で呼ぶ。"""
+    monkeypatch.setattr(handlers, "get_engine", lambda: type("E", (), {"begin": _FakeBeginConn})())
+    captured: dict[str, Any] = {}
+
+    async def _fake_investigate(conn: Any, code: str, *, mode: str) -> dict[str, Any]:
+        captured["code"] = code
+        captured["mode"] = mode
+        return {
+            "code": code,
+            "summary_md": "本文",
+            "key_facts": "{}",
+            "last_investigated_at": "2026-06-05T00:00:00+00:00",
+            "n_sources_added": 2,
+        }
+
+    monkeypatch.setattr(handlers, "investigate_stock", _fake_investigate)
+    out = _run(handlers.handle_investigate_stock({"code": "7203"}))
+    assert captured == {"code": "7203", "mode": "chat"}  # 文脈で mode="chat" を補う
+    assert out["n_sources_added"] == 2
+    assert out["summary_md"] == "本文"
+
+
+def test_handle_investigate_stock_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """例外時は {"error": ...} を返しループを落とさない（spec §4）。"""
+    monkeypatch.setattr(handlers, "get_engine", lambda: type("E", (), {"begin": _FakeBeginConn})())
+
+    async def _boom(conn: Any, code: str, *, mode: str) -> dict[str, Any]:
+        raise RuntimeError("調査失敗")
+
+    monkeypatch.setattr(handlers, "investigate_stock", _boom)
+    out = _run(handlers.handle_investigate_stock({"code": "7203"}))
+    assert "error" in out
+
+
+def test_handle_get_dossier_composes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """handle_get_dossier: dossier 本体＋sources を合成・key_facts は obj 化（spec §4/§5.2）。"""
+    monkeypatch.setattr(
+        handlers, "get_engine", lambda: type("E", (), {"connect": _FakeConnectConn})()
+    )
+    monkeypatch.setattr(
+        handlers.repo,
+        "get_dossier",
+        lambda conn, code: {
+            "code": code,
+            "summary_md": "## レポート",
+            "key_facts": '{"per": 15.2, "topic": "増配"}',  # 生 TEXT
+            "last_investigated_at": "2026-06-01T00:00:00+00:00",
+            "updated_at": "2026-06-01T00:00:00+00:00",
+        },
+    )
+    monkeypatch.setattr(
+        handlers.repo,
+        "list_dossier_sources",
+        lambda conn, code: [
+            {
+                "id": 1,
+                "code": code,
+                "source_type": "news",
+                "url": "https://example.com/a",
+                "title": "好決算",
+                "summary": "増収増益",
+                "published_at": "2026-06-01",
+                "processed_at": "2026-06-01T00:00:00+00:00",
+            }
+        ],
+    )
+    out = _run(handlers.handle_get_dossier({"code": "7203"}))
+    assert out["code"] == "7203"
+    assert out["summary_md"] == "## レポート"
+    # key_facts は json.loads でオブジェクトになる（生 TEXT のままではない）。
+    assert out["key_facts"] == {"per": 15.2, "topic": "増配"}
+    # sources は spec §4 のキー subset（id/processed_at は出さない）。
+    assert out["sources"] == [
+        {
+            "url": "https://example.com/a",
+            "title": "好決算",
+            "summary": "増収増益",
+            "published_at": "2026-06-01",
+            "source_type": "news",
+        }
+    ]
+
+
+def test_handle_get_dossier_uninvestigated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """未調査（get_dossier=None）は summary_md="" ＋ key_facts=None で返す（spec §5.2）。"""
+    monkeypatch.setattr(
+        handlers, "get_engine", lambda: type("E", (), {"connect": _FakeConnectConn})()
+    )
+    monkeypatch.setattr(handlers.repo, "get_dossier", lambda conn, code: None)
+    monkeypatch.setattr(handlers.repo, "list_dossier_sources", lambda conn, code: [])
+    out = _run(handlers.handle_get_dossier({"code": "9999"}))
+    assert out["summary_md"] == ""
+    assert out["key_facts"] is None
+    assert out["last_investigated_at"] is None
+    assert out["sources"] == []
+
+
+def test_handle_get_dossier_error_no_code() -> None:
+    """code 欠落は {"error": ...}（境界で弾く・ループは落とさない）。"""
+    out = _run(handlers.handle_get_dossier({}))
+    assert "error" in out
+
+
+def test_handle_fetch_news_bridges(monkeypatch: pytest.MonkeyPatch) -> None:
+    """handle_fetch_news: adapters.news.fetch_news を mode="chat" で呼び {code,articles} を返す。"""
+    captured: dict[str, Any] = {}
+
+    async def _fake_fetch(code: str, *, since: Any, mode: str) -> list[dict]:
+        captured["code"] = code
+        captured["since"] = since
+        captured["mode"] = mode
+        return [{"url": "https://example.com/x", "title": "t"}]
+
+    monkeypatch.setattr(handlers, "fetch_news", _fake_fetch)
+    out = _run(handlers.handle_fetch_news({"code": "6758", "since": "2026-06-01"}))
+    assert captured == {"code": "6758", "since": "2026-06-01", "mode": "chat"}
+    assert out == {"code": "6758", "articles": [{"url": "https://example.com/x", "title": "t"}]}
+
+
+def test_handle_fetch_news_stub_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """スタブ（空配列）でも橋渡しが成立する（実体スタブは許容・spec §4）。"""
+
+    async def _empty(code: str, *, since: Any, mode: str) -> list[dict]:
+        return []
+
+    monkeypatch.setattr(handlers, "fetch_news", _empty)
+    out = _run(handlers.handle_fetch_news({"code": "6758"}))
+    assert out == {"code": "6758", "articles": []}
+
+
+def test_handle_fetch_news_error_no_code() -> None:
+    """code 欠落は {"error": ...}。"""
+    out = _run(handlers.handle_fetch_news({}))
+    assert "error" in out
 
 
 # ---------------------------------------------------------------------------

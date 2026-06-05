@@ -39,8 +39,22 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
             "asset_snapshots",
             # Phase 2（0005_financials）
             "financials",
+            # スクリーニング（0007_screening）
+            "valuation_snapshots",
+            "screening_filters",
+            # Phase 4（0008_dossier・phase4-spec §2）
+            "watchlist",
+            "stock_dossiers",
+            "dossier_sources",
             "alembic_version",
         } <= names
+
+        # watchlist は Phase 4（0008_dossier）に一本化（旧 Phase 2 案からは外した＝§2 注記）。
+        # 0004（portfolio）では作られないこと＝二重 CREATE が無いことを保証する回帰。
+        wl_cols = {c["name"] for c in inspect(conn).get_columns("watchlist")}
+        assert wl_cols == {"id", "code", "note", "added_at"}, (
+            "watchlist のカラムが spec §2.1 と一致しない（last_investigated_at は持たない）"
+        )
 
         # 0004 マイグレーションで seed した portfolios の初期行（id=1, name='Default'）を確認。
         row = (

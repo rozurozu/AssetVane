@@ -6,7 +6,8 @@
 スキーマと実装がズレないようにする。dispatch（段2）は `REGISTRY[name].handler(args)` を呼び、
 `openai_tools(phase)` で min_phase ゲートして LLM に露出する Tool を絞る。
 
-dossier 系（P4）はここに登録しない（未実装 Tool を LLM に見せない・Phase ゲート）。
+dossier 系（P4・investigate_stock / get_dossier / fetch_news）は min_phase=4 で登録する。
+`openai_tools(available_phase)` が available_phase>=4 のときだけ LLM に露出する（Phase ゲート）。
 """
 
 from __future__ import annotations
@@ -16,10 +17,13 @@ from dataclasses import dataclass
 
 from app.advisor.tools import handlers
 from app.advisor.tools.schemas import (
+    FetchNewsArgs,
+    GetDossierArgs,
     GetFinancialsArgs,
     GetIndicatorsArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
+    InvestigateStockArgs,
     OptimizePortfolioArgs,
     ScreenStocksArgs,
     SubmitJournalArgs,
@@ -138,6 +142,41 @@ REGISTRY: dict[str, ToolDef] = {
         parameters=_schema(SubmitJournalArgs),
         handler=handlers.handle_submit_journal,
         min_phase=3,
+    ),
+    # --- Phase 4（Stock Dossier）---
+    "get_dossier": ToolDef(
+        name="get_dossier",
+        description=(
+            "指定銘柄の既存ドシエ（定性調査レポートの markdown・key_facts）と"
+            "ソース台帳（要約＋URL・本文なし）を取得する。"
+            "銘柄の物語・直近トピックを語る前に、まず既存の調査結果を読むときに呼ぶ。"
+            "未調査なら summary_md は空で返る（その場合は investigate_stock で調査する）。"
+        ),
+        parameters=_schema(GetDossierArgs),
+        handler=handlers.handle_get_dossier,
+        min_phase=4,
+    ),
+    "investigate_stock": ToolDef(
+        name="investigate_stock",
+        description=(
+            "指定銘柄を今すぐ調査し、ドシエ（定性調査レポート）を生成・更新する。"
+            "ニュース取得→要約→保存を行い、最新の summary_md / key_facts と"
+            "追加したソース件数（n_sources_added）を返す。"
+            "「この銘柄を調査して」と頼まれたとき・既存ドシエが古い/無いときに呼ぶ。"
+        ),
+        parameters=_schema(InvestigateStockArgs),
+        handler=handlers.handle_investigate_stock,
+        min_phase=4,
+    ),
+    "fetch_news": ToolDef(
+        name="fetch_news",
+        description=(
+            "指定銘柄の直近ニュース記事（要約＋URL）を取得する。since で発行下限日を絞れる。"
+            "ドシエ更新の素材や直近の話題を確認したいときに呼ぶ（本文は返さず要約のみ）。"
+        ),
+        parameters=_schema(FetchNewsArgs),
+        handler=handlers.handle_fetch_news,
+        min_phase=4,
     ),
 }
 

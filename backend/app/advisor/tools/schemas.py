@@ -102,6 +102,32 @@ class GetAssetOverviewArgs(_ToolArgs):
     """get_asset_overview の引数（spec §4.4・引数なし）。"""
 
 
+class InvestigateStockArgs(_ToolArgs):
+    """investigate_stock の引数（spec §4・正本）。
+
+    引数は `code` のみ（spec §4）。`mode` は呼び出し文脈で決まり（チャット Tool 経由＝リッチ）、
+    LLM には見せない。handler が内部で `mode="chat"` を補う（spec §4.1）。
+    """
+
+    code: str
+
+
+class GetDossierArgs(_ToolArgs):
+    """get_dossier の引数（spec §4・正本）。"""
+
+    code: str
+
+
+class FetchNewsArgs(_ToolArgs):
+    """fetch_news の引数（spec §4・正本）。
+
+    since は発行下限日 'YYYY-MM-DD'（任意・省略時は取得側既定）。mode は文脈で決まり LLM 非露出。
+    """
+
+    code: str
+    since: str | None = None
+
+
 class ProposedPolicyChange(_ToolArgs):
     """方針変更案（単一フィールド・ADR-013）。
 

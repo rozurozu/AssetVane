@@ -5,8 +5,8 @@
 // KPI / allocation / 資産推移 は getAssetOverview() の実データに配線（Phase 2）。
 // policy / proposals / journal は getPolicy() / getProposals("pending") / getJournal() に配線（Phase 3）。
 // signals は getSignals(limit:5) の実データに配線（Phase 1・screens.md §3「今日の signals は /signals」）。
+// watchlist は getWatchlist() の実データに配線（Phase 4・screens.md §3「watchlist 再調査」）。
 // backend 未起動でも壊れないよう fetch 失敗は握って空表示＋注記にする（spec §9.6）。
-// watchlist は Phase 4（ドシエ）で本配線するので当面モックのまま。
 
 import { Card } from "@/components/ui/Card";
 import { DataTable, Td } from "@/components/ui/DataTable";
@@ -17,15 +17,16 @@ import {
   type Policy,
   type Proposal,
   type Signal,
+  type WatchlistItem,
   getAssetOverview,
   getJournal,
   getPolicy,
   getProposals,
   getSignals,
+  getWatchlist,
   runBatch,
 } from "@/lib/api";
 import { fmtJpy, pct } from "@/lib/format";
-import { watchlist } from "@/lib/mock-data";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -39,6 +40,8 @@ export default function Dashboard() {
   // Phase 1 signals（上位 5 件・score 降順は backend 既定）。
   const [signals, setSignals] = useState<Signal[]>([]);
   const [signalsDelayed, setSignalsDelayed] = useState(false);
+  // Phase 4 watchlist（実配線・上位 5 件のみ表示・古い順は気にせず一覧の先頭）。
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   // 「バッチを今すぐ実行」ボタンの状態（202 受付・進捗は Discord/fetch_meta で追う）。
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchNote, setBatchNote] = useState<string | null>(null);
@@ -62,6 +65,9 @@ export default function Dashboard() {
         setSignals(r.signals);
         setSignalsDelayed(r.is_delayed);
       })
+      .catch(() => {});
+    getWatchlist()
+      .then((r) => setWatchlist(r.items))
       .catch(() => {});
   }, []);
 
@@ -546,41 +552,58 @@ export default function Dashboard() {
 
         <Card
           title="Watchlist ・ 調査ステータス"
-          link={<span className="text-[12px] text-ink-subtle">すべて</span>}
+          link={
+            <Link href="/watchlist" className="text-[12px] text-accent">
+              すべて
+            </Link>
+          }
         >
-          <DataTable
-            columns={[
-              { label: "コード / 銘柄" },
-              { label: "最終調査", right: true },
-              { label: "", right: true },
-            ]}
-          >
-            {watchlist.map((w) => (
-              <tr key={w.code} className="hover:[&>td]:bg-surface-2">
-                <Td>
-                  <span className="num font-semibold">{w.code}</span>{" "}
-                  <span className="text-[12px] text-ink-muted">{w.name}</span>
-                </Td>
-                <Td right>
-                  <span
-                    className={`num text-[12px] ${w.stale ? "text-warning" : "text-ink-subtle"}`}
-                  >
-                    {w.last}
-                  </span>
-                </Td>
-                <Td right>
-                  {w.action && (
-                    <button
-                      type="button"
-                      className="rounded-md px-2 py-1 text-[13px] text-ink-muted hover:text-ink"
+          {watchlist.length === 0 ? (
+            <div className="py-4 text-center text-[13px] text-ink-subtle">
+              監視銘柄がないのだ。
+              <Link href="/watchlist" className="ml-1 text-accent hover:underline">
+                Watchlist
+              </Link>{" "}
+              から追加するのだ。
+            </div>
+          ) : (
+            <DataTable
+              columns={[
+                { label: "コード / 銘柄" },
+                { label: "最終調査", right: true },
+                { label: "", right: true },
+              ]}
+            >
+              {/* 上位 5 件のみ表示（全件は /watchlist へ）。調査操作も /watchlist で行う。 */}
+              {watchlist.slice(0, 5).map((w) => (
+                <tr key={w.id} className="hover:[&>td]:bg-surface-2">
+                  <Td>
+                    <Link href={`/stocks/${w.code}`} className="hover:text-accent">
+                      <span className="num font-semibold text-accent">{w.code}</span>{" "}
+                      <span className="text-[12px] text-ink-muted">{w.company_name ?? "—"}</span>
+                    </Link>
+                  </Td>
+                  <Td right>
+                    <span
+                      className={`num text-[12px] ${w.stale ? "text-warning" : "text-ink-subtle"}`}
                     >
-                      {w.action}
-                    </button>
-                  )}
-                </Td>
-              </tr>
-            ))}
-          </DataTable>
+                      {w.last_investigated_at ? w.last_investigated_at.slice(0, 10) : "未調査"}
+                    </span>
+                  </Td>
+                  <Td right>
+                    {(w.stale || w.last_investigated_at == null) && (
+                      <Link
+                        href="/watchlist"
+                        className="rounded-md px-2 py-1 text-[12px] text-warning hover:text-ink"
+                      >
+                        {w.last_investigated_at == null ? "調査" : "再調査"}
+                      </Link>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </DataTable>
+          )}
         </Card>
       </div>
 

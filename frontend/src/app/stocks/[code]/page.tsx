@@ -1,6 +1,7 @@
 "use client";
 
 import { CandleChart } from "@/components/chart/CandleChart";
+import { DossierSection } from "@/components/dossier/DossierSection";
 import { getQuotes, getStock } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import Link from "next/link";
@@ -49,6 +50,11 @@ export default function StockDetailPage() {
           {!error && quotes && quotes.length > 0 && <CandleChart quotes={quotes} />}
         </div>
       </section>
+
+      {/* ドシエ（定性調査・Phase 4）。チャートの下に挿す（screens.md #3・銘柄詳細内のセクション）。 */}
+      <div className="mt-3">
+        <DossierSection code={code} />
+      </div>
     </>
   );
 }
