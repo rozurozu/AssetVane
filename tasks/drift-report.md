@@ -3,7 +3,8 @@
 作成: 2026-06-03 / 基準: `.skills/` の 10 スキル / 方針: 修正はせず一覧化（リファクタは小バッチ承認制で別フェーズ）
 
 > **更新 2026-06-04（返済済み）**: 本レポートが挙げた frontend 負債は**ほぼ全返済**。共有レイヤ（`lib/format.ts`・`lib/use-api.ts`・`components/ui/Card`・`DataTable`・`Field`・`StatusBlock`）は抽出済みで、各ページも移行済み。残っていた局所ドリフト（transactions の `inputCls` 重複・外部資産の手書きテーブル → `DataTable`/`Td`、journal の `pct` 同名再定義 → `pctChip` にリネーム）も解消した（`biome check`／`tsc --noEmit` 緑）。
-> **未対応はバックエンドの B-1 のみ**（`DELETE /external-assets/{asset_id}` に `response_model` 無し・Low・`204 化 or 付与`は要判断）。F-5 の「手書き fetch」は dashboard（多リソース・失敗握り＝spec §9.6）・mutation 起点ページ（rule (c) で `useState` が正）・Topbar（health チェック）が**正当な例外**として残るのみでドリフトではない。
+> **更新 2026-06-05（B-1 返済済み）**: 唯一残っていたバックエンドの B-1（`DELETE /external-assets/{asset_id}` の `response_model` 無し）も解消済み。現状 `backend/app/routers/assets.py:169` は `response_model=OkOut` を付与済みで、これで**バックエンドのドリフトはゼロ**になった。
+> F-5 の「手書き fetch」は dashboard（多リソース・失敗握り＝spec §9.6）・mutation 起点ページ（rule (c) で `useState` が正）・Topbar（health チェック）が**正当な例外**として残るのみでドリフトではない。
 > 以降の F-1〜F-5 / 推奨バッチA〜F の記述は**着手前のスナップショット**として保存（履歴）。
 
 ベースラインは全緑（backend: `ruff check` clean・`pytest` 全通過 / frontend: `biome check` clean・`tsc --noEmit` 0 エラー）。
@@ -13,7 +14,7 @@
 
 ## サマリ
 
-- **backend**: スキルとほぼ整合。実質ドリフトなし（下記 B-1 の軽微のみ）。二階の書き込み規約（W1/W2）は `backend-repo-pattern` で「意図的」と明文化済みなのでドリフト扱いしない。
+- **backend**: スキルと整合。**ドリフトなし**（旧 B-1 は 2026-06-05 返済済み）。二階の書き込み規約（W1/W2）は `backend-repo-pattern` で「意図的」と明文化済みなのでドリフト扱いしない。
 - **frontend**: 共有レイヤ（`frontend/src/components/ui/`・`frontend/src/lib/format.ts`・`useApi`・`StatusBlock`）が未抽出で、同じ構造のコピペが各所に散在。`frontend-component-pattern` が新たに規約化した対象。挙動バグではなく保守性・一貫性の負債（深刻度 Medium）。
 
 ---
@@ -36,11 +37,11 @@
 
 ## backend ドリフト
 
-| ID | 内容 | 該当箇所 | 深刻度 |
-|---|---|---|---|
-| B-1 | `DELETE /external-assets/{asset_id}` に `response_model` が無い（他 24 ルートは付与済み） | `backend/app/routers/assets.py:163` | Low（DELETE の単純応答。付けるか 204 にするか要判断） |
+| ID | 内容 | 該当箇所 | 深刻度 | 状態 |
+|---|---|---|---|---|
+| B-1 | `DELETE /external-assets/{asset_id}` に `response_model` が無い（他 24 ルートは付与済み） | `backend/app/routers/assets.py:169` | Low | ✅ 返済済み（2026-06-05・`response_model=OkOut` 付与） |
 
-その他は整合（`from __future__ import annotations` 全モジュール完備 / routers に pandas・numpy・数値計算なし / `async def` は LLM を await する `POST /chat` のみ）。
+その他は整合（`from __future__ import annotations` 全モジュール完備 / routers に pandas・numpy・数値計算なし / `async def` は LLM を await する `POST /chat` のみ）。**現状バックエンドの未対応ドリフトはゼロ。**
 
 ---
 
