@@ -183,8 +183,11 @@
   - **`stock_dossiers`（1 銘柄 1 行）**: AI 生成の要約を `summary_md`（markdown）で持ち、ずっと更新する living document。`last_investigated_at` を持ち、watchlist 一覧で「最終調査日」を表示して再調査を促す。
   - **`dossier_sources`（ソース台帳）**: 取り込んだ各ソースを **URL（重複防止の UNIQUE）＋短い要約＋発行日＋種別＋銘柄 FK** で記録。**記事全文は保存しない**（取得→要約→本文は捨て、要約と URL だけ残す）。
   - **`source_type` 列で拡張**: `news` / `disclosure` / `twitter` 等。将来 Twitter/X 等を足しても同じ台帳に入る。
-  - **取得手段の強弱**: 昼のチャットは MCP（playwright/fetch）等でリッチに取得。**夜の無人 cron は MCP に頼らず**（ヘッドレスで使えないことがあるため）財務中心＋取れたらニュースを軽く。取得は `fetch_news` 等の Tool 裏に隠し文脈で実装を変える。
-  - 発行が直近（例 1 週間以内）の新着のみ、URL で重複排除して取り込む。
+  - **取得手段は httpx 一本（NewsAdapter）**: 当初想定した「昼=MCP リッチ／夜=httpx 軽め」の **2 系統は撤回**し、**昼夜とも同じ httpx 取得＋AI 要約**にする。`NewsAdapter` は **Google News RSS 検索 → batchexecute で実 URL 復元 → `trafilatura` で本文抽出 → 既存 LLM `generate_once(source="dossier")` で記事ごと要約 → 本文は破棄して要約と URL のみ残す**（後述「取得→要約→本文破棄」と同じ）。本文抽出が httpx＋`trafilatura` で十分得られると分かったため、ヘッドレスブラウザ（MCP）を夜の無人 cron に持ち込む前提は不要になった。`fetch_news` の `mode`（nightly/chat）引数は**昼夜で取得手段を分けないため廃止**した（dead code 化）。
+  - **MCP は将来の選択肢として残す（今回スコープ外）**: Google の URL エンコード仕様変更・`429`/`403`・JavaScript 必須サイトで httpx＋`trafilatura` では本文が取れない場合の**代替取得手段**として将来検討する。今回は実装しない（撤回したのは「昼夜で取得手段を分ける」運用であって、MCP という選択肢そのものではない）。
+  - **マルチフェッチャ構成**: 源ごとに前提（URL 復元の要否・RSS 形式・レート制限）が違うため、共通 RSS 抽象でまとめず**源別の fetch 関数**に分ける。今回実装するのは **Google News フェッチャ 1 個**のみ。Yahoo!ファイナンス / ニュース API は**差込口（マージ＋URL 重複排除の口）だけ**用意し、本体は後付け。
+  - **取得レベルを `dossier_sources.extraction_status` で記録**（落とさない 3 段フォールバック）: ① 本文取得成功 → AI 要約 → `'summarized'`、② 本文ダメだが og/meta description は取れた → それを要約に採用 → `'description'`、③ どちらもダメ → 見出しのみ・要約なし → `'headline'`。どの段でも見出しは `summarize_dossier` がドシエ合成に使うので無駄にならない。
+  - 発行が直近（例 1 週間以内）の新着のみ、URL で重複排除して取り込む。重複排除・保存キーは**復元後の媒体 URL を基本**にしつつ、復元失敗時は Google URL を使う（`dossier_sources.url` の UNIQUE を壊さない）。
 - **データ源の段階**: 初期は **財務（J-Quants Free）＋ 一般ニュース（Web/MCP）**。**適時開示（J-Quants TDnet アドオン）は有料**で、課金はしばらく後なので**後付け**。一般ニュースの安定した無料 JP 源は不確実なため、当面は AI の Web 取得で代替。
 - **保存場所**: ドシエは**頻繁に AI が自動更新する揮発的・per 銘柄データ**なので **DB**（リポジトリ markdown ではない。CORE/手法カードを repo に置く判断とは逆＝[ADR-015/016](decisions.md) との対比）。中身が markdown なのは「列の型」の話。
 - **理由**: 「1 銘柄 1 レポートを更新し続ける」が利用者の自然なイメージ。全文を溜めるのはストレージ・著作権的に不要で、要約＋URL で足りる。台帳に銘柄 FK と URL UNIQUE を持つことで、重複防止と「この銘柄のソース一覧／最終調査日」が成立する。
@@ -339,3 +342,25 @@
 - **代替案**: (A) `codex exec` → MCP キャンセルのリグレッションで不採用（本 ADR の主因）。(B) function tool を直接注入 → codex に口が無い。(C) stdio プロキシ MCP → DB を別プロセスに晒し ADR-005 違反、不要。(D) 障害時に openai へ自動フォールバック → コスト削減の意図に反し、どちらで答えたか不透明になるため不採用。
 - **段階化**: **今回は chat=codex を実機検証して緑**。nightly/dossier の codex 化は配線のみ（既定 openai・未実証扱い）。無人 cron での ChatGPT トークン継続（8 日ルール・`auth.json` 上書き禁止）を実証してから寄せる。
 - **詳細**: `app/advisor/codex_engine.py`（app-server JSON-RPC シングルトン）・`engine.py`（ディスパッチャ）・`mcp_server.py`（REGISTRY を MCP 公開）・`app/main.py`（`/mcp` マウント）・`app/config.py`（provider＋codex 設定）。protocol は `codex app-server generate-json-schema` で確定（thread/start の `baseInstructions`/`developerInstructions`/`config.mcp_servers`、turn の `item/completed`・`turn/completed`）。
+
+## ADR-033: 銘柄別の調査 cadence（夜間ドシエ巡回を `interval_days`＋夜あたり天井に作り替える）
+
+- **状況**: 夜間ドシエ巡回ジョブ（`investigate_dossier`・[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）は、当初「**全 watchlist 銘柄を一律 `stale=21 日`固定で stale 判定し、古い順に先頭 `N=3` 固定だけ調べる**」だった。だが利用者から「**この銘柄は毎日調べたい・別の銘柄は月 1 でいい**」という**銘柄単位で頻度を変えたい**要求が出た。一律 21 日・先頭 3 固定ではこれを表現できず、また「毎日見たい銘柄」が他の stale 銘柄に押し出されて回ってこない問題もあった。
+- **決定**:
+  - **調査間隔を銘柄ごとに持つ**。`watchlist` に **`interval_days`（既定 21＝現状の stale を維持）** を足し、利用者が銘柄単位で頻度を変えられるようにする（プリセット「毎日=1／週=7／月=30」＋任意整数）。
+  - **stale 判定を per-row 基準に変える**。「最終調査（`last_investigated_at`）が**その銘柄の `interval_days`** より古い（または未調査）」を巡回対象にする。固定 21 日の横並び判定はやめる。
+  - **夜あたりの上限は天井（暴走防止）として残す**。`N=3` の固定枠は廃止し、config の **`DOSSIER_NIGHTLY_MAX`**（env 既定＋[ADR-028](#adr-028-llm-コストガードレール監視と上限3-値トグルenv-既定設定-ui-上書き) と同じ運用設定 UI のツマミ）で `[:cap]` する。`interval_days=1` の銘柄が増えてもコスト（LLM・取得）が暴走しないための保険であって、「毎晩 N 件だけ」という意味づけからは外す（対象が天井を超える晩は古い順に積み残し、翌晩に回る）。
+- **理由**: 「1 銘柄 1 レポートを更新し続ける」（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）の **更新頻度は銘柄ごとに違って当然**で、利用者の関心の濃淡をそのまま cadence に落とせるべき。間隔を銘柄に持たせ、夜あたりは「件数の割当」ではなく「暴走の天井」として扱うのが素直。`DOSSIER_NIGHTLY_MAX` を env＋UI に置くのは運用ツマミの [ADR-028](#adr-028-llm-コストガードレール監視と上限3-値トグルenv-既定設定-ui-上書き) と揃える。
+- **代替案**: 一律 stale=21／先頭 N=3 固定を維持 → 銘柄ごとの頻度差を表現できず利用者要求を満たせないため不採用。間隔を持たせず「毎日全 watchlist を調べる」→ watchlist が増えるとコスト暴走、関心の薄い銘柄まで毎晩叩くため不採用（だから per-row 間隔＋天井）。
+- **詳細**: `db/schema.py`（`watchlist.interval_days`）・`db/repo.py`（`add_watchlist`/`list_watchlist`/`set_watchlist_interval`）・`batch/jobs/investigate_dossier.py`（`_select_targets` の per-stock 間隔判定＋`DOSSIER_NIGHTLY_MAX` キャップ）・`routers/watchlist.py`（`interval_days` 出力・更新 endpoint・`stale` を per-row 基準に）・`config.py`（`DOSSIER_NIGHTLY_MAX`）。
+
+## ADR-034: 一般ニュースダイジェスト構想（銘柄に紐づかないニュースを別系統で持つ・P3・記録のみ・未実装）
+
+- **状況**: ドシエのニュース取得（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）は**個別銘柄に紐づく**ニュースが対象で、台帳 `dossier_sources` は **銘柄 FK（`code`）必須**を前提に設計されている。だが利用者は別途、**銘柄に紐づかない一般ニュース**（その日のホットニュース数件＋世界情勢／マクロ等のカテゴリ）も眺めたい、という要求を持つ。これを `dossier_sources` に無理に載せると「code が無いニュース」が混ざり、銘柄 FK・URL UNIQUE・「この銘柄のソース一覧」という台帳の住所が崩れる。**利用者から「必ず ADR に残して」と明示された**項目なので、実装は次フェーズだが構想を記録する。
+- **決定（構想・今回は未実装）**:
+  - **一般ニュースは `dossier_sources` とは別の住所に持つ**。`dossier_sources`（code FK 必須）は個別銘柄ドシエ専用のまま据え置き、一般ニュースは**新テーブル＋新ジョブ**で別系統にする（code FK を持たない／カテゴリ列を持つ等、スキーマは実装フェーズで確定）。
+  - **内容**: 1 日数件の**ホットニュース**＋「**世界情勢／マクロ**」等の**カテゴリ**でダイジェスト化する。取得・要約は [ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける) と同じ httpx＋AI 要約の流儀を流用しうる（源・実装は次フェーズで決める）。
+  - **消費先**: **dashboard のウィジェット**で眺める／または **軸1（夜の分析 AI・[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットai-で実装する製品の核心)）の briefing** に食わせて当日の市況文脈にする、のいずれか（または両方）。消費先の確定は実装フェーズ。
+- **理由**: 個別銘柄ドシエ（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）と一般ニュースは**住所（紐づく対象）が根本的に違う**ため、同じ台帳に混ぜず別系統で持つのが正しい。今回スコープ（P1 銘柄ニュース実取得＋P2 銘柄別 cadence）からは外れるが、**構想を ADR に明記して取りこぼさない**（利用者の明示要求）。
+- **代替案**: `dossier_sources` を code FK 任意に緩めて一般ニュースも載せる → 銘柄 FK・「この銘柄のソース一覧」という台帳の住所が崩れるため不採用。構想を記録せず後で思い出す → 取りこぼすため不採用（利用者が ADR 記録を明示要求）。
+- **段階**: **実装は次フェーズ**（P3 相当）。今回は記録のみ。スキーマ（新テーブル）・新ジョブ・消費先（ウィジェット or 軸1 briefing）は実装フェーズで詰める。

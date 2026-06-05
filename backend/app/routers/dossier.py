@@ -5,7 +5,7 @@
 HTTP 入出力のみを担う薄い層（調査パイプライン本体は advisor/dossier.py の investigate_stock）。
 - GET は `get_dossier`（stock_dossiers 1 行）＋ `list_dossier_sources`（台帳）を合成して返す。
   key_facts は生 TEXT なので router で json.loads する（壊れた JSON は 500 に翻訳）。
-- POST は `with get_engine().begin() as conn:` で投資を束ね、investigate_stock(mode="chat") を
+- POST は `with get_engine().begin() as conn:` で投資を束ね、investigate_stock を
   同期実行（L-23・処理完了まで待つ）→ 最新ドシエを返す。書き手は FastAPI 1 プロセス（ADR-005）。
 """
 
@@ -117,12 +117,13 @@ def get_dossier(code: str, conn: Connection = Depends(get_conn)) -> Dossier:
 
 @router.post("/dossiers/{code}/investigate", response_model=InvestigateResult)
 async def investigate(code: str) -> InvestigateResult:
-    """銘柄を調査し（mode="chat"）、完了後に最新ドシエを返す（同期・L-23・spec §5.2）。
+    """銘柄を調査し、完了後に最新ドシエを返す（同期・L-23・spec §5.2）。
 
-    investigate_stock はチャット「この銘柄調査して」と共用パイプライン（ADR-020）。
-    書き込みは `with get_engine().begin()` で束ね、同一接続で合成まで読み切る（ADR-005）。
+    investigate_stock はチャット「この銘柄調査して」と共用パイプライン（ADR-020・取得手段は
+    httpx 一本に統一したため mode は廃止）。書き込みは `with get_engine().begin()` で束ね、
+    同一接続で合成まで読み切る（ADR-005）。
     """
     with get_engine().begin() as conn:
-        await investigate_stock(conn, code, mode="chat")
+        await investigate_stock(conn, code)
         dossier = _build_dossier(conn, code)
     return InvestigateResult(dossier=dossier)

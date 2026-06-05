@@ -3,9 +3,9 @@
 設計の真実: docs/phase-specs/phase4-spec.md §3（パイプライン正本）・§4（返却スキーマ）／
 ai-advisor.md §11／ADR-020・ADR-014・ADR-011・ADR-005。
 
-ADR-020: 「1 つの調査パイプライン・2 つの起動口」。`investigate_stock(conn, code, mode)` を
-        夜間 watchlist 巡回（mode="nightly"・軽め）とチャット Tool（mode="chat"・リッチ）の
-        2 経路から共用する。違いは fetch_news の取得手段と要約の濃さだけ（段取りは同一）。
+ADR-020: 「1 つの調査パイプライン・2 つの起動口」。`investigate_stock(conn, code)` を
+        夜間 watchlist 巡回とチャット Tool の 2 経路から共用する。取得手段は httpx 一本に
+        統一したため（ADR-020 改訂）、昼夜で取得を分ける `mode` は廃止した（段取りは同一）。
 ADR-014: AI に数値を計算させない。財務の数値は data レーンの事実（repo.get_financials）から取り、
         LLM は定性要約（物語）だけを担う。生データは丸投げせず、記事は「短い要約」を渡す。
 ADR-020: ソースは「取得 → 要約 → 本文を捨てる」。dossier_sources には summary と url のみ残す。
@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 
 from sqlalchemy import Connection
 
@@ -61,18 +61,20 @@ def _since_today_minus(days: int) -> str:
 async def investigate_stock(
     conn: Connection,
     code: str,
-    *,
-    mode: Literal["nightly", "chat"],
 ) -> dict[str, Any]:
     """個別銘柄を調査しドシエを生成・更新する（spec §3 が正本・ADR-020/014/011）。
 
-    段取り（取得 → 要約 → 保存）は夜間巡回・チャットで共用。`mode` が fetch_news の取得手段と
-    要約の濃さだけを分ける。`conn` は呼び出し側が begin() で束ねる（W2・本モジュール docstring）。
+    段取り（取得 → 要約 → 保存）は夜間巡回・チャットで共用。取得手段は httpx 一本に統一した
+    ため `mode` は廃止した（ADR-020 改訂）。`conn` は呼び出し側が begin() で束ねる
+    （W2・本モジュール docstring）。
+
+    社名解決の責務（W-pipeline / adapter 契約）: NewsAdapter は DB に触らないため、
+    `fetch_news` に渡す社名はこの呼び出し側で `repo.get_stock` から解決する（解決できない
+    場合は code をそのまま社名として渡す＝検索が空振りしても落とさない）。
 
     Args:
         conn: 書き込み接続（呼び出し側が `with get_engine().begin()` で所有・commit しない）。
         code: 調査対象の銘柄コード。
-        mode: "nightly"=夜 MCP 非依存・軽め／"chat"=昼 MCP リッチ（spec §3）。
 
     Returns:
         `{code, summary_md, key_facts, last_investigated_at, n_sources_added}`（spec §4 正本）。
@@ -81,8 +83,11 @@ async def investigate_stock(
     # 1. 財務の事実（data レーン・ADR-014）。AI には計算させず、この事実を要約に渡す。
     financials = repo.get_financials(conn, code)
 
-    # 2. ニュース取得（発行 1 週間以内・mode で取得手段を切替・spec §3）。
-    articles = await fetch_news(code, since=_since_today_minus(_LOOKBACK_DAYS), mode=mode)
+    # 2. ニュース取得（発行 1 週間以内・httpx 一本＝ADR-020 改訂）。社名は呼び出し側で解決する
+    #    （adapter は DB に触らない契約）。社名が取れなければ code を社名代わりに使う。
+    stock = repo.get_stock(conn, code)
+    company_name = (stock or {}).get("company_name") or code
+    articles = await fetch_news(code, company_name, since=_since_today_minus(_LOOKBACK_DAYS))
 
     # 3. URL 重複排除（既存 url の記事は二重に取り込まない・spec §3）。
     new_articles = [a for a in articles if not repo.dossier_source_exists(conn, a["url"])]
@@ -99,6 +104,7 @@ async def investigate_stock(
             published_at=a.get("published_at"),
             source_type=a.get("source_type"),
             processed_at=processed_at,
+            extraction_status=a.get("extraction_status"),
         )
 
     # 5. 既存ドシエ（living document）を読む。

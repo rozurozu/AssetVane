@@ -116,13 +116,15 @@ class _FakeConnectConn:
 
 
 def test_handle_investigate_stock_bridges(monkeypatch: pytest.MonkeyPatch) -> None:
-    """handle_investigate_stock: begin() で束ね dossier.investigate_stock を mode="chat" で呼ぶ。"""
+    """handle_investigate_stock: begin() で束ね investigate_stock を code のみで呼ぶ（mode 廃止）。
+
+    mode は廃止（ADR-020 改訂）。
+    """
     monkeypatch.setattr(handlers, "get_engine", lambda: type("E", (), {"begin": _FakeBeginConn})())
     captured: dict[str, Any] = {}
 
-    async def _fake_investigate(conn: Any, code: str, *, mode: str) -> dict[str, Any]:
+    async def _fake_investigate(conn: Any, code: str) -> dict[str, Any]:
         captured["code"] = code
-        captured["mode"] = mode
         return {
             "code": code,
             "summary_md": "本文",
@@ -133,7 +135,7 @@ def test_handle_investigate_stock_bridges(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(handlers, "investigate_stock", _fake_investigate)
     out = _run(handlers.handle_investigate_stock({"code": "7203"}))
-    assert captured == {"code": "7203", "mode": "chat"}  # 文脈で mode="chat" を補う
+    assert captured == {"code": "7203"}  # mode は廃止（ADR-020 改訂）＝code のみで呼ぶ
     assert out["n_sources_added"] == 2
     assert out["summary_md"] == "本文"
 
@@ -142,7 +144,7 @@ def test_handle_investigate_stock_error(monkeypatch: pytest.MonkeyPatch) -> None
     """例外時は {"error": ...} を返しループを落とさない（spec §4）。"""
     monkeypatch.setattr(handlers, "get_engine", lambda: type("E", (), {"begin": _FakeBeginConn})())
 
-    async def _boom(conn: Any, code: str, *, mode: str) -> dict[str, Any]:
+    async def _boom(conn: Any, code: str) -> dict[str, Any]:
         raise RuntimeError("調査失敗")
 
     monkeypatch.setattr(handlers, "investigate_stock", _boom)
@@ -220,29 +222,46 @@ def test_handle_get_dossier_error_no_code() -> None:
 
 
 def test_handle_fetch_news_bridges(monkeypatch: pytest.MonkeyPatch) -> None:
-    """handle_fetch_news: adapters.news.fetch_news を mode="chat" で呼び {code,articles} を返す。"""
+    """handle_fetch_news: 自前 conn で社名解決し fetch_news(code, company_name, since=...) を呼ぶ。
+
+    mode は廃止（ADR-020 改訂）。adapter は DB に触らない契約なので社名は handler が
+    repo.get_stock から解決して渡す。
+    """
+    monkeypatch.setattr(
+        handlers, "get_engine", lambda: type("E", (), {"connect": _FakeConnectConn})()
+    )
+    monkeypatch.setattr(
+        handlers.repo, "get_stock", lambda conn, code: {"code": code, "company_name": "ソニーG"}
+    )
     captured: dict[str, Any] = {}
 
-    async def _fake_fetch(code: str, *, since: Any, mode: str) -> list[dict]:
+    async def _fake_fetch(code: str, company_name: str, *, since: Any = None) -> list[dict]:
         captured["code"] = code
+        captured["company_name"] = company_name
         captured["since"] = since
-        captured["mode"] = mode
         return [{"url": "https://example.com/x", "title": "t"}]
 
     monkeypatch.setattr(handlers, "fetch_news", _fake_fetch)
     out = _run(handlers.handle_fetch_news({"code": "6758", "since": "2026-06-01"}))
-    assert captured == {"code": "6758", "since": "2026-06-01", "mode": "chat"}
+    assert captured == {"code": "6758", "company_name": "ソニーG", "since": "2026-06-01"}
     assert out == {"code": "6758", "articles": [{"url": "https://example.com/x", "title": "t"}]}
 
 
-def test_handle_fetch_news_stub_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """スタブ（空配列）でも橋渡しが成立する（実体スタブは許容・spec §4）。"""
+def test_handle_fetch_news_falls_back_to_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """社名が引けない（get_stock=None）ときは code を社名代わりに渡す（空振りで落とさない）。"""
+    monkeypatch.setattr(
+        handlers, "get_engine", lambda: type("E", (), {"connect": _FakeConnectConn})()
+    )
+    monkeypatch.setattr(handlers.repo, "get_stock", lambda conn, code: None)
+    captured: dict[str, Any] = {}
 
-    async def _empty(code: str, *, since: Any, mode: str) -> list[dict]:
+    async def _empty(code: str, company_name: str, *, since: Any = None) -> list[dict]:
+        captured["company_name"] = company_name
         return []
 
     monkeypatch.setattr(handlers, "fetch_news", _empty)
     out = _run(handlers.handle_fetch_news({"code": "6758"}))
+    assert captured["company_name"] == "6758"  # 社名が無ければ code を代用
     assert out == {"code": "6758", "articles": []}
 
 

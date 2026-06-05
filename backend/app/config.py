@@ -92,6 +92,22 @@ class Settings(BaseSettings):
     # IndexAdapter（Stooq）取得のスロットル間隔（秒）。Stooq は 1.0 で十分（ADR-010）。
     index_min_interval_seconds: float = 1.0
 
+    # --- NewsAdapter（fetch_news 実取得・Phase 4・ADR-010/ADR-020） ---
+    # httpx 一本（Google News RSS → URL 復元 → trafilatura 本文 → 記事ごと AI 要約 → 本文破棄）。
+    # 直結ハードコード禁止（ADR-010）。値は config 経由で渡す。
+    news_enabled: bool = True  # 無効化スイッチ（false でニュース取得をスキップ）
+    news_max_articles_per_stock: int = 10  # 1 銘柄あたり要約する記事の上限（コスト制御）
+    news_http_timeout_seconds: float = 20.0  # 本文/RSS GET のタイムアウト（秒）
+    news_min_interval_seconds: float = 1.0  # 取得スロットル間隔（秒・throttle）
+    google_news_base_url: str = "https://news.google.com"  # Google News RSS のベース URL
+    google_news_lang: str = "ja"  # クエリの hl（言語）
+    google_news_country: str = "JP"  # クエリの gl/ceid（国）
+
+    # --- 銘柄別調査 cadence（夜の巡回・ADR-033） ---
+    # watchlist の interval_days で各銘柄の調査間隔を持ち、夜あたりの処理本数は天井で抑える。
+    # 固定 N=3 を廃し、暴走防止の上限として残す（投資 dossier 巡回ジョブが消費する）。
+    dossier_nightly_max: int = 3  # 夜あたり巡回上限の天井（暴走防止）
+
     @property
     def cors_origins(self) -> list[str]:
         """カンマ区切りの CORS オリジンをリストにする。"""

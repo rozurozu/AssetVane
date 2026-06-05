@@ -893,12 +893,15 @@ def upsert_dossier_source(
     published_at: str | None = None,
     source_type: str | None = None,
     processed_at: str | None = None,
+    extraction_status: str | None = None,
 ) -> None:
     """dossier_sources に 1 ソースを取り込む（url 衝突なら skip・ADR-020/ADR-002・spec §2.3）。
 
     本文は保存せず summary と url のみ（ADR-020）。既定は「既存 url なら skip」＝
     on_conflict_do_nothing（spec §2.3 の「実装は『既存なら skip』を既定」に従う）。
     processed_at 未指定なら UTC now を入れる。
+    extraction_status は取得レベル（'summarized'/'description'/'headline'）＝本文取得の成否を
+    記録する（NewsAdapter の 3 段フォールバックのどの段まで届いたか・計画/ADR-020）。
     commit はしない。呼び出し側が `with get_engine().begin() as conn:` で境界を所有する（W2）。
     """
     stmt = sqlite_insert(dossier_sources).values(
@@ -909,6 +912,7 @@ def upsert_dossier_source(
         summary=summary,
         published_at=published_at,
         processed_at=processed_at or datetime.now(UTC).isoformat(),
+        extraction_status=extraction_status,
     )
     stmt = stmt.on_conflict_do_nothing(index_elements=["url"])  # 既存 url は無視（skip）
     conn.execute(stmt)
@@ -950,7 +954,8 @@ def list_watchlist(conn: Connection) -> list[dict[str, Any]]:
 
     company_name は stocks JOIN、last_investigated_at は stock_dossiers LEFT JOIN で補う
     （行レベルに焼かず読むときに結合＝repo 規約）。dossier 未作成の銘柄は
-    last_investigated_at が None で返る。stale 判定（21 日超・L-22）は上位（router/service）の責務。
+    last_investigated_at が None で返る。stale 判定は per-row の interval_days 基準（ADR-033）で
+    上位（router/service）が行う。
     """
     stmt = (
         select(
@@ -959,6 +964,7 @@ def list_watchlist(conn: Connection) -> list[dict[str, Any]]:
             stocks.c.company_name,
             watchlist.c.note,
             watchlist.c.added_at,
+            watchlist.c.interval_days,
             stock_dossiers.c.last_investigated_at,
         )
         .select_from(
@@ -971,21 +977,37 @@ def list_watchlist(conn: Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
-def add_watchlist(code: str, note: str | None = None) -> dict[str, Any]:
-    """watchlist に 1 銘柄を追加し、その行（dict）を返す（spec §5.1・ADR-002）。
+def add_watchlist(code: str, note: str | None = None, interval_days: int = 21) -> dict[str, Any]:
+    """watchlist に 1 銘柄を追加し、その行（dict）を返す（spec §5.1・ADR-002/ADR-033）。
 
     UNIQUE(code) 衝突時は do_nothing（既存を重複として扱う＝spec §5.1）。挿入でも既存でも
     最終的に code に対応する行を読み直して返す（重複時も既存行を返す）。重複の扱い
     （メッセージ等）は router の責務。added_at 未指定なら UTC now を入れる。
+    interval_days は銘柄ごとの調査間隔（既定 21・stale 起点＝ADR-033）。
     """
     added_at = datetime.now(UTC).isoformat()
-    stmt = sqlite_insert(watchlist).values(code=code, note=note, added_at=added_at)
+    stmt = sqlite_insert(watchlist).values(
+        code=code, note=note, added_at=added_at, interval_days=interval_days
+    )
     stmt = stmt.on_conflict_do_nothing(index_elements=["code"])
     with get_engine().begin() as conn:
         conn.execute(stmt)
     with get_engine().connect() as conn:
         row = conn.execute(select(watchlist).where(watchlist.c.code == code)).mappings().first()
     return dict(row) if row else {}
+
+
+def set_watchlist_interval(code: str, interval_days: int) -> None:
+    """watchlist の銘柄の調査間隔（interval_days）を更新する（ADR-033・間隔設定 UI/PATCH）。
+
+    code で UPDATE する単発の単純な書き込み（1 文で閉じる）なので repo が自前で begin する
+    （W1・add/remove_watchlist と同じ流儀）。存在しない code は影響行 0 で静かに終わる
+    （存在確認・エラー化は router の責務）。
+    """
+    with get_engine().begin() as conn:
+        conn.execute(
+            watchlist.update().where(watchlist.c.code == code).values(interval_days=interval_days)
+        )
 
 
 def remove_watchlist(watchlist_id: int) -> None:

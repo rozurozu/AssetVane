@@ -70,7 +70,11 @@ def test_get_dossier_missing_returns_none(temp_db) -> None:
 
 
 def test_upsert_dossier_source_dedup_by_url(temp_db) -> None:
-    """同じ url を 2 回 upsert しても 1 行（既存は skip・本文は保存しない＝ADR-020）。"""
+    """同じ url を 2 回 upsert しても 1 行（既存は skip・本文は保存しない＝ADR-020）。
+
+    extraction_status（取得レベル・本文取得の成否＝計画/ADR-020）も保存され、既存 skip 時は
+    初回の値のままになることを確認する。
+    """
     repo.upsert_stocks([STOCK_A])
     with get_engine().begin() as conn:
         repo.upsert_dossier_source(
@@ -81,8 +85,9 @@ def test_upsert_dossier_source_dedup_by_url(temp_db) -> None:
             summary="要約A",
             published_at="2026-06-03",
             source_type="news",
+            extraction_status="summarized",
         )
-        # 2 回目（同じ url・別の title/summary）→ skip され元のまま。
+        # 2 回目（同じ url・別の title/summary/extraction_status）→ skip され元のまま。
         repo.upsert_dossier_source(
             conn,
             code="7203",
@@ -91,11 +96,13 @@ def test_upsert_dossier_source_dedup_by_url(temp_db) -> None:
             summary="要約A改",
             published_at="2026-06-04",
             source_type="news",
+            extraction_status="headline",
         )
     with get_engine().connect() as conn:
         sources = repo.list_dossier_sources(conn, "7203")
     assert len(sources) == 1  # url UNIQUE で重複しない
     assert sources[0]["title"] == "記事A"  # 既存 skip なので初回の値のまま
+    assert sources[0]["extraction_status"] == "summarized"  # 取得レベルも初回の値のまま
     # 本文列が存在しない（summary と url のみ＝ADR-020）。
     assert "body" not in sources[0]
     assert set(sources[0].keys()) == {
@@ -107,6 +114,7 @@ def test_upsert_dossier_source_dedup_by_url(temp_db) -> None:
         "summary",
         "published_at",
         "processed_at",
+        "extraction_status",
     }
 
 

@@ -79,14 +79,13 @@ def test_post_investigate_returns_latest_dossier(client: Any, monkeypatch: Any) 
     """POST investigate は investigate_stock を同期実行し最新ドシエを返す（L-23・spec §5.2）。
 
     investigate_stock をモックし、渡された conn にドシエを書く「体」にする
-    （実 LLM/fetch_news は呼ばない）。mode="chat" で呼ばれることも検証。
+    （実 LLM/fetch_news は呼ばない）。mode は廃止（ADR-020 改訂）＝code のみで呼ばれる。
     """
     repo.upsert_stocks([STOCK_A])
     called: dict[str, Any] = {}
 
-    async def fake_investigate(conn: Any, code: str, *, mode: str) -> dict[str, Any]:
+    async def fake_investigate(conn: Any, code: str) -> dict[str, Any]:
         called["code"] = code
-        called["mode"] = mode
         ts = "2026-06-05T02:00:00+00:00"
         repo.upsert_dossier(
             conn,
@@ -111,7 +110,7 @@ def test_post_investigate_returns_latest_dossier(client: Any, monkeypatch: Any) 
 
     res = client.post("/dossiers/7203/investigate")
     assert res.status_code == 200
-    assert called == {"code": "7203", "mode": "chat"}
+    assert called == {"code": "7203"}
     dossier = res.json()["dossier"]
     assert dossier["code"] == "7203"
     assert dossier["summary_md"] == "調査済み要約"

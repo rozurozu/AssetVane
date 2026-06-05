@@ -416,11 +416,11 @@ async def handle_submit_journal(args: dict[str, object]) -> dict[str, Any]:
 
 
 async def handle_investigate_stock(args: dict[str, object]) -> dict[str, Any]:
-    """investigate_stock（spec §4・ADR-020/011）。チャット経路の調査パイプラインを起動する。
+    """investigate_stock（spec §4・ADR-020/011）。調査パイプラインを起動する。
 
-    引数は code のみ（spec §4・mode は呼び出し文脈で決まる）。チャット Tool 経由なので
-    内部で `mode="chat"`（リッチ）を渡す。パイプライン本体は dossier.investigate_stock が持ち、
-    本 handler は橋渡しのみ（ADR-014・レイヤ分離）。
+    引数は code のみ（spec §4）。取得手段は httpx 一本に統一したため `mode` は廃止した
+    （ADR-020 改訂）。パイプライン本体は dossier.investigate_stock が持ち、本 handler は
+    橋渡しのみ（ADR-014・レイヤ分離）。社名解決は dossier.investigate_stock が repo から行う。
 
     書き込みを伴う（dossier/sources を UPSERT）ので `with get_engine().begin() as conn:` で
     束ねる（dossier.investigate_stock は conn を受け自分では commit しない＝W2 規約）。
@@ -429,7 +429,7 @@ async def handle_investigate_stock(args: dict[str, object]) -> dict[str, Any]:
     try:
         code = InvestigateStockArgs.model_validate(args).code
         with get_engine().begin() as conn:
-            return await investigate_stock(conn, code, mode="chat")
+            return await investigate_stock(conn, code)
     except Exception as exc:
         logger.exception("handle_investigate_stock 失敗")
         return {"error": str(exc)}
@@ -485,15 +485,20 @@ async def handle_get_dossier(args: dict[str, object]) -> dict[str, Any]:
 
 
 async def handle_fetch_news(args: dict[str, object]) -> dict[str, Any]:
-    """fetch_news（spec §4）。チャット経路のニュース取得を起動する（実体はスタブ＝空配列）。
+    """fetch_news（spec §4）。ニュース取得を起動する（取得手段は httpx 一本＝ADR-020 改訂）。
 
-    引数は code・任意 since（spec §4）。チャット Tool 経由なので `mode="chat"`（昼 MCP リッチ）を
-    渡す。取得手段は data レーンの adapters.news.fetch_news が mode で実装する（現状スタブ）。
+    引数は code・任意 since（spec §4）。`mode` は廃止した（昼夜で取得を分けない＝ADR-020 改訂）。
+    NewsAdapter は DB に触らない契約なので、社名解決は呼び出し側（本 handler）の責務として
+    自前で読み取り接続を開き `repo.get_stock` から社名を引く（他 handler が自前 conn を開く流儀）。
+    社名が取れなければ code を社名代わりに渡す（検索が空振りしても落とさない）。
     本 handler は橋渡しのみ（ADR-010/014）。
     """
     try:
         parsed = FetchNewsArgs.model_validate(args)
-        articles = await fetch_news(parsed.code, since=parsed.since, mode="chat")
+        with get_engine().connect() as conn:
+            stock = repo.get_stock(conn, parsed.code)
+        company_name = (stock or {}).get("company_name") or parsed.code
+        articles = await fetch_news(parsed.code, company_name, since=parsed.since)
         return {"code": parsed.code, "articles": articles}
     except Exception as exc:
         logger.exception("handle_fetch_news 失敗")

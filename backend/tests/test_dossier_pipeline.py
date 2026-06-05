@@ -4,7 +4,9 @@
 - URL 重複排除: 既存 url の記事は二重取り込みしない（n_sources_added・行数で確認）。
 - 本文非保存: パイプラインが台帳へ渡すのは summary/url 等のみで全文を渡さない（ADR-020）。
 - last_investigated_at / updated_at が前進する。
-- mode が fetch_news に正しく渡る（"nightly"/"chat" 経路）。
+- 社名解決: repo.get_stock の company_name が fetch_news に渡る（取れなければ code＝ADR-020 改訂）。
+- extraction_status が記事 → dossier_sources まで届く（ADR-020 改訂・3 段フォールバック記録）。
+- since（today-7d）が fetch_news に正しく渡る（取得下限）。
 - summarize_dossier に渡るのが「記事の要約と財務事実のみ」で、全文を載せない（ADR-014）。
 
 LLM（engine.generate_once）と fetch_news は必ずモック（ネットを叩かない＝testing-strategy）。
@@ -62,13 +64,18 @@ def _stub_fetch_news(
     *,
     capture: dict[str, Any] | None = None,
 ) -> None:
-    """fetch_news を固定の記事 list を返すスタブに差し替える（mode/since を capture）。"""
+    """fetch_news を固定の記事 list を返すスタブに差し替える（code/company_name/since を capture）。
 
-    async def _fake_fetch(code, *, since=None, mode):  # noqa: ANN001
+    新シグネチャ `fetch_news(code, company_name, *, since=None)` に合わせる（mode は廃止＝
+    ADR-020 改訂）。adapter は DB に触らず社名は呼び出し側が解決する契約なので、
+    company_name が渡ってくることを capture で検証できるようにする。
+    """
+
+    async def _fake_fetch(code, company_name, *, since=None):  # noqa: ANN001
         if capture is not None:
             capture["code"] = code
+            capture["company_name"] = company_name
             capture["since"] = since
-            capture["mode"] = mode
         return articles
 
     monkeypatch.setattr(dossier, "fetch_news", _fake_fetch)
@@ -80,6 +87,7 @@ _ARTICLE = {
     "summary": "通期最高益の見通し",
     "published_at": "2026-06-04",
     "source_type": "news",
+    "extraction_status": "summarized",
     "body": "ここに全文が入る（パイプラインは渡してはならない）",
 }
 
@@ -87,13 +95,13 @@ _ARTICLE = {
 def test_investigate_records_source_and_advances_timestamp(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:
-    """新着 1 件を台帳に記録し、ドシエ本体の last_investigated_at が前進する。"""
+    """新着 1 件を台帳に記録し last_investigated_at が前進する。extraction_status も届く。"""
     repo.upsert_stocks([STOCK])
     _stub_complete(monkeypatch)
     _stub_fetch_news(monkeypatch, [_ARTICLE])
 
     with get_engine().begin() as conn:
-        result = _run(dossier.investigate_stock(conn, "7203", mode="nightly"))
+        result = _run(dossier.investigate_stock(conn, "7203"))
 
     assert result["code"] == "7203"
     assert result["n_sources_added"] == 1
@@ -111,6 +119,8 @@ def test_investigate_records_source_and_advances_timestamp(
     assert sources[0]["url"] == _ARTICLE["url"]
     assert sources[0]["summary"] == _ARTICLE["summary"]
     assert "body" not in sources[0]
+    # extraction_status が記事 → dossier_sources まで届く（ADR-020 改訂・3 段フォールバック記録）。
+    assert sources[0]["extraction_status"] == "summarized"
 
 
 def test_investigate_dedupes_existing_url(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
@@ -120,9 +130,9 @@ def test_investigate_dedupes_existing_url(monkeypatch: pytest.MonkeyPatch, temp_
     _stub_fetch_news(monkeypatch, [_ARTICLE])
 
     with get_engine().begin() as conn:
-        first = _run(dossier.investigate_stock(conn, "7203", mode="nightly"))
+        first = _run(dossier.investigate_stock(conn, "7203"))
     with get_engine().begin() as conn:
-        second = _run(dossier.investigate_stock(conn, "7203", mode="nightly"))
+        second = _run(dossier.investigate_stock(conn, "7203"))
 
     assert first["n_sources_added"] == 1
     assert second["n_sources_added"] == 0
@@ -131,22 +141,36 @@ def test_investigate_dedupes_existing_url(monkeypatch: pytest.MonkeyPatch, temp_
     assert len(sources) == 1  # 同じ url なので 1 行のまま
 
 
-def test_investigate_passes_mode_to_fetch_news(
+def test_investigate_resolves_company_name_and_since(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:
-    """mode と since（today-7d）が fetch_news に正しく渡る（nightly/chat 経路）。"""
+    """社名解決（repo.get_stock の company_name）と since が fetch_news に渡る（ADR-020）。"""
     repo.upsert_stocks([STOCK])
     _stub_complete(monkeypatch)
 
-    for mode in ("nightly", "chat"):
-        cap: dict[str, Any] = {}
-        _stub_fetch_news(monkeypatch, [], capture=cap)
-        with get_engine().begin() as conn:
-            _run(dossier.investigate_stock(conn, "7203", mode=mode))  # type: ignore[arg-type]
-        assert cap["mode"] == mode
-        assert cap["code"] == "7203"
-        # since は 'YYYY-MM-DD' 形式（発行 1 週間以内の下限）。
-        assert cap["since"] and len(cap["since"]) == 10
+    cap: dict[str, Any] = {}
+    _stub_fetch_news(monkeypatch, [], capture=cap)
+    with get_engine().begin() as conn:
+        _run(dossier.investigate_stock(conn, "7203"))
+    assert cap["code"] == "7203"
+    # 社名は stocks の company_name から解決される（adapter は DB に触らず呼び出し側が解決）。
+    assert cap["company_name"] == "トヨタ自動車"
+    # since は 'YYYY-MM-DD' 形式（発行 1 週間以内の下限）。
+    assert cap["since"] and len(cap["since"]) == 10
+
+
+def test_investigate_falls_back_to_code_when_name_missing(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """company_name が NULL の銘柄は code を社名代わりに渡す（検索が空振りしても落とさない）。"""
+    # stocks 行はあるが company_name は NULL（stock_dossiers の FK は満たす）。
+    repo.upsert_stocks([{**STOCK, "company_name": None}])
+    _stub_complete(monkeypatch)
+    cap: dict[str, Any] = {}
+    _stub_fetch_news(monkeypatch, [], capture=cap)
+    with get_engine().begin() as conn:
+        _run(dossier.investigate_stock(conn, "7203"))
+    assert cap["company_name"] == "7203"
 
 
 def test_summarize_receives_only_digests_not_full_text(
@@ -159,7 +183,7 @@ def test_summarize_receives_only_digests_not_full_text(
     _stub_fetch_news(monkeypatch, [_ARTICLE])
 
     with get_engine().begin() as conn:
-        _run(dossier.investigate_stock(conn, "7203", mode="chat"))
+        _run(dossier.investigate_stock(conn, "7203"))
 
     # complete の user メッセージ（JSON payload）に記事全文が含まれないこと。
     user_msg = next(m for m in cap["messages"] if m["role"] == "user")

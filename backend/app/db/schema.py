@@ -336,6 +336,7 @@ watchlist = Table(
     Column("code", String, ForeignKey("stocks.code"), nullable=False),
     Column("note", String),  # メモ（任意）
     Column("added_at", String),  # 追加時刻 ISO8601
+    Column("interval_days", Integer),  # 銘柄ごとの調査間隔（既定 21・stale 起点・ADR-033）
     UniqueConstraint("code", name="uq_watchlist_code"),  # 重複監視防止（UPSERT キー）
     Index("ix_watchlist_code", "code"),
 )
@@ -370,6 +371,8 @@ dossier_sources = Table(
     Column("summary", String),  # 短い要約（記事全文は捨てる＝ADR-020）
     Column("published_at", String),  # 発行日 'YYYY-MM-DD'（発行 1 週間以内のみ取り込む）
     Column("processed_at", String),  # 取り込み・要約した時刻 ISO8601
+    # 取得レベル 'summarized'/'description'/'headline'・本文取得の成否を記録（計画/ADR-020）
+    Column("extraction_status", String),
     UniqueConstraint("url", name="uq_dossier_sources_url"),  # URL 重複排除
     Index("ix_dossier_sources_code", "code"),
 )

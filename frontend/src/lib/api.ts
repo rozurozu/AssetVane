@@ -428,6 +428,16 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+async function patchJSON<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw await toApiError(r);
+  return r.json() as Promise<T>;
+}
+
 async function del<T>(path: string): Promise<T> {
   const r = await fetch(`${API_BASE}${path}`, {
     method: "DELETE",
@@ -677,7 +687,7 @@ export function sendChatStream(_req: ChatRequest): never {
 // 型は backend Pydantic と 1:1（フィールド名・null 許容を厳密に）。stale は backend 算出（21日・L-22）。
 
 /** watchlist 1 件（spec §5.1・夜の巡回対象・最終調査日の起点）。
- * stale は backend がしきい値（21 日）で算出済み。フロントで再計算しない。
+ * stale は backend が per-row interval_days で算出済み。フロントで再計算しない。
  * last_investigated_at は stock_dossiers JOIN（未調査は null）。 */
 export interface WatchlistItem {
   id: number;
@@ -686,7 +696,8 @@ export interface WatchlistItem {
   note: string | null;
   added_at: string;
   last_investigated_at: string | null; // 未調査は null（一覧の「最終調査日」）
-  stale: boolean; // backend 算出（21 日超過）
+  interval_days: number; // 銘柄ごとの調査間隔（日・既定 21・常に非 null）。stale 算出の基準。
+  stale: boolean; // backend 算出（per-row interval_days 超過）
 }
 
 /** `GET /watchlist` レスポンス（spec §5.1・items ラッパ）。 */
@@ -749,6 +760,18 @@ export function addWatchlist(code: string, note?: string): Promise<WatchlistItem
 /** watchlist から削除（spec §5.1）。存在しない id でも 200 で {ok:true}。 */
 export function removeWatchlist(id: number): Promise<{ ok: boolean }> {
   return del<{ ok: boolean }>(`/watchlist/${id}`);
+}
+
+/** 銘柄ごとの調査間隔を更新（ADR-033・PATCH /watchlist/{code}）。
+ * intervalDays >= 1（違反は backend 422）。更新後の WatchlistItem を返す（stale も再算出済み）。
+ * 未登録 code は 404。 */
+export function updateWatchlistInterval(
+  code: string,
+  intervalDays: number,
+): Promise<WatchlistItem> {
+  return patchJSON<WatchlistItem>(`/watchlist/${encodeURIComponent(code)}`, {
+    interval_days: intervalDays,
+  });
 }
 
 /** ドシエ取得（spec §5.2）。未調査でも 200（summary_md=""・sources=[]・last_investigated_at=null）。 */

@@ -1,18 +1,21 @@
-"""夜間バッチ: watchlist 巡回ドシエ調査ジョブ（phase4-spec.md §6・ADR-020/011/018）。
+"""夜間バッチ: watchlist 巡回ドシエ調査ジョブ（phase4-spec.md §6・ADR-020/033/011/018）。
 
 NIGHTLY_JOBS の末尾（事実が揃った後）で呼ばれる。同期ジョブとして JobResult を返す
 （runner.py の規律）。内部は run_advisor.py の流儀に倣い、銘柄ごとに
 `with get_engine().begin() as conn:` を開き `asyncio.run(investigate_stock(...))` で
 非同期パイプライン（advisor/dossier.py）を駆動する（同期バッチから async を回す）。
 
-巡回ロジック（phase4-spec.md §6・U-8/L-22 裁定）:
-  - watchlist を `last_investigated_at` の**古い順**（未調査=None を最優先）に並べる。
-  - **stale（21 日超 or 未調査）**の銘柄だけを対象にする（backend 算出・L-22）。
-  - 先頭 **N=3 件**だけ `investigate_stock(conn, code, mode="nightly")` を回す。
-    古い順 N 件/晩がコストを頭打ちにし、リストが大きくなってもコストは増えず古くなるだけ。
+巡回ロジック（phase4-spec.md §6・ADR-033）:
+  - 全銘柄 stale=21 日固定・夜あたり N=3 固定はやめ、**watchlist 銘柄ごとの調査間隔
+    （`interval_days`・既定 21）** で stale を判定する（ADR-033）。各 watchlist 行は
+    「未調査(None) もしくは `now - last_investigated_at` がその銘柄の `interval_days` 日を
+    超えた」なら対象。`interval_days` は list_watchlist が常に非 NULL（既定 21）で返す。
+  - 対象を `last_investigated_at` の**古い順**（未調査=None を最優先）に並べる。
+  - 夜あたりの処理本数は `settings.dossier_nightly_max`（config・暴走防止の天井）で `[:cap]`。
+    間隔を短く設定した銘柄が多くても 1 晩のコストは天井で頭打ちになる（古くなるだけ）。
 
 夜は **MCP 非依存で軽め**に回す（無人 cron でヘッドレスが使えないことがある＝ADR-020）。
-取得手段の切替は dossier 側が `mode="nightly"` で吸収する。
+取得手段は httpx 一本に統一したため `mode` は廃止した（ADR-020 改訂）。
 
 部分失敗の握り（ADR-018・batch-pattern）: 1 銘柄が例外でも他の銘柄を止めない。各銘柄を
 個別 try/except で握り detail に記録する。1 件でも失敗があれば JobResult.ok=False で返し、
@@ -27,19 +30,15 @@ from typing import Any
 
 from app.advisor.dossier import investigate_stock
 from app.batch.runner import JobResult
+from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
 
 logger = logging.getLogger(__name__)
 
-# 毎晩巡回する件数 N（古い順・phase4-spec.md §6・U-8 既定値）。
-# U-8 は「env 既定＋設定 UI ツマミ」を将来像とするが、config.py は本レーンの担当外のため
-# 当面は定数で据える（settings へ昇格させるのは次イテレーション・報告参照）。
-DOSSIER_NIGHTLY_COUNT = 3
-
-# stale しきい値（日）。`last_investigated_at` がこれより古い（または未調査）銘柄を対象にする
-# （backend 算出・phase4-spec.md §6・L-22）。
-STALE_THRESHOLD_DAYS = 21
+# interval_days が欠損（万一 NULL）だった場合に使う既定間隔（日）。list_watchlist は常に
+# 非 NULL（既定 21）で返す契約だが、防御的に同値を据える（ADR-033）。
+_DEFAULT_INTERVAL_DAYS = 21
 
 
 def _sort_key(item: dict[str, Any]) -> tuple[int, str]:
@@ -54,11 +53,11 @@ def _sort_key(item: dict[str, Any]) -> tuple[int, str]:
     return (1, last)
 
 
-def _is_stale(last_investigated_at: str | None, now_iso: str) -> bool:
-    """stale 判定（21 日超 or 未調査・spec §6・L-22）。
+def _is_stale(last_investigated_at: str | None, interval_days: int, now_iso: str) -> bool:
+    """stale 判定（per-stock `interval_days` 超 or 未調査・spec §6・ADR-033）。
 
-    未調査（None/空）は常に stale。調査済みは `now - last_investigated_at` が
-    しきい値（21 日）を超えていれば stale。日付パース失敗時は安全側で stale 扱いにする。
+    未調査（None/空）は常に stale。調査済みは `now - last_investigated_at` がその銘柄の
+    `interval_days` 日を超えていれば stale。日付パース失敗時は安全側で stale 扱いにする。
     """
     if not last_investigated_at:
         return True
@@ -70,21 +69,33 @@ def _is_stale(last_investigated_at: str | None, now_iso: str) -> bool:
     except ValueError:
         # パースできない値は安全側で再調査対象にする（古い/壊れた値を放置しない）。
         return True
-    return (now_dt - last_dt).days > STALE_THRESHOLD_DAYS
+    return (now_dt - last_dt).days > interval_days
 
 
 def _select_targets(watchlist: list[dict[str, Any]], now_iso: str) -> list[dict[str, Any]]:
-    """巡回対象を選ぶ: stale フィルタ → 古い順ソート → 先頭 N 件（spec §6）。"""
-    stale = [w for w in watchlist if _is_stale(w.get("last_investigated_at"), now_iso)]
+    """巡回対象を選ぶ: per-stock interval_days で stale フィルタ → 古い順 → 天井（ADR-033）。
+
+    stale しきい値は固定 21 ではなく各 watchlist 行の `interval_days`（既定 21・list_watchlist が
+    常に非 NULL で返す）。古い順に並べ、夜あたり上限 `settings.dossier_nightly_max` で打ち切る。
+    """
+    stale = [
+        w
+        for w in watchlist
+        if _is_stale(
+            w.get("last_investigated_at"),
+            int(w.get("interval_days") or _DEFAULT_INTERVAL_DAYS),
+            now_iso,
+        )
+    ]
     stale.sort(key=_sort_key)
-    return stale[:DOSSIER_NIGHTLY_COUNT]
+    return stale[: settings.dossier_nightly_max]
 
 
 def run() -> JobResult:
-    """watchlist を古い順に巡回し stale な先頭 N 件のドシエを更新する（spec §6）。
+    """watchlist を per-stock interval_days で stale 判定し古い順に天井まで巡回（ADR-033）。
 
     各銘柄を `with get_engine().begin() as conn:` で束ね（書き込みを atomic に）、
-    `asyncio.run(investigate_stock(conn, code, mode="nightly"))` で非同期パイプラインを駆動する。
+    `asyncio.run(investigate_stock(conn, code))` で非同期パイプラインを駆動する（mode は廃止）。
     1 銘柄が例外でも他を止めず detail に記録する（ADR-018）。失敗が 1 件でもあれば ok=False。
     """
     from datetime import UTC, datetime
@@ -117,7 +128,7 @@ def run() -> JobResult:
         try:
             # 銘柄ごとに begin() で束ねる（複数ソース＋ドシエ本体を atomic に・dossier W2 規約）。
             with get_engine().begin() as conn:
-                result = asyncio.run(investigate_stock(conn, code, mode="nightly"))
+                result = asyncio.run(investigate_stock(conn, code))
             n_ok += 1
             n_sources += int(result.get("n_sources_added", 0))
         except Exception as exc:  # noqa: BLE001 — 銘柄境界で握り後続銘柄を止めない（ADR-018）

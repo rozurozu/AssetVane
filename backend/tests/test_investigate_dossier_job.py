@@ -1,13 +1,15 @@
-"""Phase 4 夜間巡回ジョブ（investigate_dossier）を検証する（phase4-spec.md §6・§8）。
+"""Phase 4 夜間巡回ジョブ（investigate_dossier）を検証する（phase4-spec.md §6・§8・ADR-033）。
 
-担保すること（spec §6・U-8/L-22 裁定）:
+担保すること（spec §6・ADR-033）:
 - 古い順選出: `last_investigated_at` が古い/未調査（None）の銘柄が先に巡回される。
-- stale フィルタ: 21 日以内に調査済みの銘柄は巡回しない（未調査・21 日超のみ対象）。
-- N=3 制限: stale が 4 件以上でも先頭 3 件までしか巡回しない。
+- per-stock stale フィルタ: 各銘柄の `interval_days`（既定 21）以内に調査済みなら巡回しない。
+  毎日=1 と 月=30 が混在する watchlist で正しく選ぶ（固定 21 ではなく per-row 基準）。
+- 夜あたり天井: stale が天井超でも `settings.dossier_nightly_max` 件までしか巡回しない。
 - 部分失敗の握り: 1 銘柄が例外でも他は巡回され、失敗があれば JobResult.ok=False。
 
 investigate_stock（async パイプライン）は必ずモック（LLM/fetch_news/ネットに出ない＝
-testing-strategy）。DB は一時 SQLite。watchlist は repo 経由で実テーブルに積む。
+testing-strategy）。mode は廃止（ADR-020 改訂）＝code のみで呼ばれる。DB は一時 SQLite。
+watchlist は repo 経由で実テーブルに積む。
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from typing import Any
 import pytest
 
 from app.batch.jobs import investigate_dossier
+from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
 
@@ -39,13 +42,14 @@ def _days_ago_iso(days: int) -> str:
     return (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
 
-def _seed_watchlist(code: str, last_investigated_at: str | None) -> None:
+def _seed_watchlist(code: str, last_investigated_at: str | None, interval_days: int = 21) -> None:
     """stocks → watchlist →（任意で）stock_dossiers を積む。
 
     last_investigated_at が None なら dossier を作らず未調査（list_watchlist で None になる）。
+    interval_days は per-stock の調査間隔（既定 21・ADR-033）。
     """
     repo.upsert_stocks([_stock(code)])
-    repo.add_watchlist(code)
+    repo.add_watchlist(code, interval_days=interval_days)
     if last_investigated_at is not None:
         with get_engine().begin() as conn:
             repo.upsert_dossier(
@@ -71,9 +75,8 @@ def _stub_investigate(
     """
     fail = fail_codes or set()
 
-    async def _fake(conn, code, *, mode):  # noqa: ANN001, ANN202
+    async def _fake(conn, code):  # noqa: ANN001, ANN202
         calls.append(code)
-        assert mode == "nightly"  # 夜間巡回は必ず nightly 経路（MCP 非依存・ADR-020）
         if code in fail:
             raise RuntimeError(f"わざと失敗: {code}")
         return {"code": code, "n_sources_added": 0}
@@ -99,8 +102,8 @@ def test_oldest_first_and_unvisited_priority(temp_db, monkeypatch) -> None:
     assert calls == ["22220", "11110", "33330"]
 
 
-def test_stale_filter_skips_recent(temp_db, monkeypatch) -> None:
-    """21 日以内に調査済みの銘柄は巡回対象から外れる（spec §6・L-22）。"""
+def test_stale_filter_uses_default_interval(temp_db, monkeypatch) -> None:
+    """既定 interval_days=21 では 21 日以内に調査済みの銘柄を外す（per-row 基準・ADR-033）。"""
     _seed_watchlist("11110", _days_ago_iso(5))  # 最近（巡回しない）
     _seed_watchlist("22220", _days_ago_iso(21))  # ちょうど 21 日（>21 ではない＝stale ではない）
     _seed_watchlist("33330", _days_ago_iso(22))  # 21 日超（stale）
@@ -116,23 +119,51 @@ def test_stale_filter_skips_recent(temp_db, monkeypatch) -> None:
     assert result.rows == 2
 
 
-def test_n_limit_three(temp_db, monkeypatch) -> None:
-    """stale が 4 件以上でも先頭 N=3 件しか巡回しない（spec §6・U-8）。"""
-    _seed_watchlist("11110", _days_ago_iso(40))
-    _seed_watchlist("22220", _days_ago_iso(35))
-    _seed_watchlist("33330", _days_ago_iso(30))
-    _seed_watchlist("44440", _days_ago_iso(25))  # これは N=3 で溢れる（最も新しい stale）
+def test_stale_filter_per_stock_interval(temp_db, monkeypatch) -> None:
+    """per-stock interval_days で stale 判定（毎日=1 と 月=30 混在でも正しく選ぶ・ADR-033）。
+
+    最終調査が 5 日前で揃っていても、間隔が短い銘柄だけが stale になる:
+    - daily(interval=1): 5 日前 > 1 → stale（対象）
+    - weekly(interval=7): 5 日前 ≤ 7 → fresh（除外）
+    - monthly(interval=30): 5 日前 ≤ 30 → fresh（除外）
+    固定 21 ではこの 3 件とも除外されてしまうため、per-row 基準であることを担保する。
+    """
+    _seed_watchlist("11110", _days_ago_iso(5), interval_days=1)  # 毎日（stale）
+    _seed_watchlist("22220", _days_ago_iso(5), interval_days=7)  # 週次（fresh）
+    _seed_watchlist("33330", _days_ago_iso(5), interval_days=30)  # 月次（fresh）
 
     calls: list[str] = []
     _stub_investigate(monkeypatch, calls=calls)
 
     result = investigate_dossier.run()
 
-    assert result.rows == 3
-    assert len(calls) == investigate_dossier.DOSSIER_NIGHTLY_COUNT == 3
-    # 古い順 3 件＝40/35/30 日前。25 日前(44440)は溢れる。
-    assert calls == ["11110", "22220", "33330"]
-    assert "44440" not in calls
+    assert result.ok is True
+    assert calls == ["11110"]  # 間隔が短い銘柄だけが対象
+    assert result.rows == 1
+
+
+def test_nightly_max_cap(temp_db, monkeypatch) -> None:
+    """stale が天井超でも `settings.dossier_nightly_max` 件しか巡回しない（古い順・ADR-033）。"""
+    cap = settings.dossier_nightly_max
+    # 天井 + 1 件すべて stale（古い順に並ぶ）にして、天井で打ち切られることを担保する。
+    days = 40
+    codes = []
+    for i in range(cap + 1):
+        code = f"{i + 1}1110"
+        _seed_watchlist(code, _days_ago_iso(days))
+        codes.append(code)
+        days -= 1  # 後の銘柄ほど新しい（古い順で先頭が選ばれる）
+
+    calls: list[str] = []
+    _stub_investigate(monkeypatch, calls=calls)
+
+    result = investigate_dossier.run()
+
+    assert result.rows == cap
+    assert len(calls) == cap
+    # 古い順 cap 件＝先頭から cap 件。最後の（最も新しい）1 件は溢れる。
+    assert calls == codes[:cap]
+    assert codes[cap] not in calls
 
 
 def test_partial_failure_does_not_stop_others(temp_db, monkeypatch) -> None:
