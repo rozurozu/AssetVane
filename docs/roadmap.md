@@ -115,6 +115,8 @@
 
 **完了条件**: 条件合致時・毎朝、Discord に通知（AI の提案要約を含む）が届く。
 
+**状況（2026-06-06・実装完了・実機検証済み）**: 夜間バッチ末尾に `notify_digest` ジョブを追加し、⑦⑧＋夜AI 当日提案を **1 通の Discord digest** に束ねて送る（phase6-spec.md）。schema `0010_notifications`（複合 PK `notify_key:channel`・自然キー `digest:<UTC日付>`）＋ `DiscordAdapter`（送信失敗で握り・ADR-018）＋冪等 `send_once` で二重送信を防止。⑧は `score>=ALERT_SCORE_MIN` または quant が焼いた `payload.notable` で抽出（3 倍判定を通知層で再閾値化しない＝ADR-016）・score 降順 Top N。⑦は `policy.updated_at` 基準。frontend は `/settings`（health の env 詳細＋手動バッチ起動）を配線。**実機で digest 到達・2 回目の二重送信なしを確認済み**。env: `ALERT_SCORE_MIN`/`ALERT_TOP_N`/`REBALANCE_ALERT_DAYS`/`ALWAYS_DAILY_DIGEST`・`DISCORD_WEBHOOK_URL`。
+
 ---
 
 ## Phase 7: Sector Lead-Lag ＋ 米国株拡張

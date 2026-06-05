@@ -732,9 +732,20 @@ export interface InvestigateResult {
   dossier: Dossier;
 }
 
-/** `GET /health` レスポンス（疎通確認用・main.py）。詳細は使わず到達可否のみ参照する。 */
+/** 環境変数キーの充足状況（config.py env_status・/health の env 要素）。 */
+export interface EnvStatus {
+  set: boolean;
+  required_from_phase: number;
+}
+
+/** `GET /health` レスポンス（疎通確認・Settings の env 詳細表示・main.py）。 */
 export interface HealthResponse {
   status?: string;
+  service?: string;
+  version?: string;
+  phase?: number;
+  db?: string;
+  env?: Record<string, EnvStatus>; // 各キーの set 状況（discord_webhook_url 等）
   [k: string]: unknown;
 }
 

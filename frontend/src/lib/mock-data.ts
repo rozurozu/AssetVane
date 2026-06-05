@@ -42,5 +42,5 @@ export const nav: NavSection[] = [
       { label: "Proposals", icon: "✓", href: "/proposals" },
     ],
   },
-  { group: "システム", items: [{ label: "Settings", icon: "⚙" }] },
+  { group: "システム", items: [{ label: "Settings", icon: "⚙", href: "/settings" }] },
 ];

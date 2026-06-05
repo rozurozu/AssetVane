@@ -8,10 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **AssetVane** は、日米の株式を分析し、**AI と投資方針を相談しながら銘柄・配分を提案する**、個人投資家 1 人用の投資ダッシュボード。自動売買はせず、提示に徹する。
 
-**現状は「Phase 1〜4（Trend Vane / Portfolio Optimizer / AI Advisor / Stock Dossier）着工済み。backend＋frontend が縦に通し検証済み（Phase 4 は 2026-06-05）」**。設計の真実は `docs/` にある。実装を始める前に必ず `docs/` を読むこと。
+**現状は「Phase 1〜4（Trend Vane / Portfolio Optimizer / AI Advisor / Stock Dossier）＋ Phase 6（Signal Beacon 通知）着工済み。backend＋frontend が縦に通し検証済み（Phase 4 は 2026-06-05・Phase 6 は 2026-06-06 に実機で Discord digest 到達・冪等まで確認）」**。設計の真実は `docs/` にある。実装を始める前に必ず `docs/` を読むこと。
 
 - **実装済み（Phase 0〜4 の backend＋frontend が縦に通る）**: Phase 0 の縦スライス（`JQuantsAdapter` V2 → SQLite `stocks`/`daily_quotes` → `/stocks`・`/quotes` → frontend の実データローソク足）に加え、**Phase 1**（`batch/` の夜間バッチ runner/lock/notify ＋ 7 ジョブ・`signals` テーブルと momentum/volume_spike・`GET /signals`・`POST /batch/run`・APScheduler 同居 cron）、**Phase 2**（`portfolios`/`holdings`/`transactions`/`cash`/`external_assets`/`asset_snapshots`・相関／PyPortfolioOpt 最適化／backtest・`/holdings`・`/transactions`・`/portfolio/{id}/metrics`・`/optimize`・`/asset-overview`）、**Phase 3**（AI Advisor 2 軸・**Tool Calling 接続済み**・`submit_journal`・`policy`/`advisor_journal`/`proposals` の承認制提案）、**Phase 4**（Stock Dossier＝`watchlist`/`stock_dossiers`/`dossier_sources`・`investigate_stock` パイプライン・3 Tool〔min_phase=4〕・`/watchlist`・`/dossiers/{code}`・夜間巡回ジョブ・frontend の `/watchlist` ページ＋`DossierSection`。`fetch_news` も実ニュース源を実装済み＝`NewsAdapter`〔Google News RSS → httpx＋trafilatura で本文抽出 → AI 要約・**昼 MCP／夜 httpx の 2 系統は撤回し httpx 一本に**＝ADR-020 改訂〕・銘柄別の調査 cadence〔`interval_days`＋夜あたり天井・ADR-033〕）まで実装済み。`init_db`=`alembic upgrade head`（0009 まで）・pytest 333 件・`/health`・config・Docker Compose・App Router シェルも稼働。**手法（momentum/volume_spike 等）は TA-Lib を使わず自前 quant 純関数で実装**（ADR-016）。
-- **残・次の山**: 全銘柄バッチの本番投入（実 J-Quants・日付一括取得・初回バックフィル所要の実測）、**Phase 3 の LLM 障害時フォールバックの詰め**（API エラー・空応答・Tool 不呼び出し時に observations/journal を欠かさず Discord 通知＝ADR-018 の堅牢化。コード側は coerce/フォールバック対応済み）。**LLM は本番＝クラウド強モデル前提（ADR-012：Tool Calling 確実な品質帯）。ローカル弱モデル（qwen3.5:9b 等）は開発時の動作確認用で、弱モデルに Tool を確実に呼ばせる作り込みはしない＝できないことは割り切る**。frontend は signals／ポートフォリオ／取引／スクリーナー／policy／journal／proposals／Dashboard 本体・常駐 Advisor チャット（画面コンテキスト注入込み）・Phase 4 の `/watchlist`＋銘柄詳細の `DossierSection` まで backend と配線され実データ描画する（Dashboard の watchlist も Phase 4 で実配線済み）。**Phase 4 は実ニュース取得まで完了**（`fetch_news`／`NewsAdapter` 稼働）。**一般ニュースダイジェスト（銘柄に紐づかない別系統・ADR-034）は記録のみで未実装**。Phase 5〜7（AI Alpha Scorer・Signal Beacon 通知・Sector Lead-Lag）は未着手。
+- **残・次の山**: 全銘柄バッチの本番投入（実 J-Quants・日付一括取得・初回バックフィル所要の実測）、**Phase 3 の LLM 障害時フォールバックの詰め**（API エラー・空応答・Tool 不呼び出し時に observations/journal を欠かさず Discord 通知＝ADR-018 の堅牢化。コード側は coerce/フォールバック対応済み）。**LLM は本番＝クラウド強モデル前提（ADR-012：Tool Calling 確実な品質帯）。ローカル弱モデル（qwen3.5:9b 等）は開発時の動作確認用で、弱モデルに Tool を確実に呼ばせる作り込みはしない＝できないことは割り切る**。frontend は signals／ポートフォリオ／取引／スクリーナー／policy／journal／proposals／Dashboard 本体・常駐 Advisor チャット（画面コンテキスト注入込み）・Phase 4 の `/watchlist`＋銘柄詳細の `DossierSection` まで backend と配線され実データ描画する（Dashboard の watchlist も Phase 4 で実配線済み）。**Phase 4 は実ニュース取得まで完了**（`fetch_news`／`NewsAdapter` 稼働）。**一般ニュースダイジェスト（銘柄に紐づかない別系統・ADR-034）は記録のみで未実装**。**Phase 6（Signal Beacon 通知）は実装＋実機検証済み**（夜間バッチ末尾の `notify_digest` が⑦⑧＋夜AI 提案を 1 通の Discord digest に束ね、`notifications` テーブル＋`send_once` で冪等化。`/settings` 画面も配線・phase6-spec.md）。Phase 5（AI Alpha Scorer）・Phase 7（Sector Lead-Lag）は未着手。
 
 ## ドキュメントの地図（実装前に読む）
 
@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/data-model.md` | DB スキーマ（全テーブル） |
 | `docs/api.md` | REST API 契約（Next ↔ FastAPI の境界） |
 | `docs/jquants.md` | J-Quants API V2 の認証・プラン・エンドポイント |
-| `docs/roadmap.md` | Phase 0〜7。**Phase 1〜4 実装済み（backend＋frontend 通し検証済み・実ニュース取得まで完了）。全銘柄バッチ本番投入の所要実測・Phase 3 フォールバック堅牢化が残。Phase 5〜7 未着手** |
+| `docs/roadmap.md` | Phase 0〜7。**Phase 1〜4 ＋ Phase 6 実装済み（backend＋frontend 通し検証済み・実ニュース取得＋Discord 通知まで完了）。全銘柄バッチ本番投入の所要実測・Phase 3 フォールバック堅牢化が残。Phase 5・7 未着手** |
 
 ## アーキテクチャの不変条件（default の直感を上書きする。違反しないこと）
 

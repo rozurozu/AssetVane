@@ -1,5 +1,13 @@
 # Phase 6 着工仕様: Signal Beacon（通知）
-> 出所: roadmap.md Phase 6 / ADR-007(Discord)/ADR-018(失敗を放置しない)。レビュー・裁定反映済み。コード未実装＝着工仕様。
+> **実装反映（2026-06-05）**: 本 Phase は実装済み。グリル裁定と実機ドリフトに合わせ以下を本文から補正した。
+> - **採番**: `0009_notifications` → **`0010_notifications`**（down_revision=`0009_news_extraction_and_watchlist_interval`）。0009 は先行のニュース実装が占有済みのため。
+> - **送り方**: ⑦⑧＋夜AI 提案は **1 通の digest に束ねる**（notify_key=`digest:<UTC日付>` のみ。個別 `signal:*` キーは未使用＝§2 の表からは概念のみ残す）。
+> - **⑧の出来高 3 倍判定**: 通知層で `payload.ratio>=3.0` を再閾値化せず、quant が焼いた **`payload.notable`** を読む（ADR-016）。条件は `score>=ALERT_SCORE_MIN または payload.notable`。
+> - **件数上限**: digest のシグナルは **score 降順 Top N（`ALERT_TOP_N`=10）**＋「…ほか X 件」。
+> - **日付**: digest は **UTC 日付**で統一（夜の分析AI が journal を `datetime.now(UTC)` の日付で書くため・cron 02:00 JST は前日 17:00 UTC）。
+> - **最終見直し日（OPEN-P）**: `policy.updated_at` を正本に確定。**毎朝送信（OPEN-N）**: `ALWAYS_DAILY_DIGEST=True` で確定。**通知履歴 UI（OPEN-O）**: 作らない。
+>
+> 出所: roadmap.md Phase 6 / ADR-007(Discord)/ADR-018(失敗を放置しない)。レビュー・裁定反映済み。
 > 合成元: `_drafts/_arbitration.md`（正本: 採番 `0009_notifications`(送信冪等ログ)・Discord）/ `_drafts/data-arch.md` §6（cron・DiscordAdapter・冪等・notifications）/ `_drafts/app.md` §P6（通知設定/履歴 UI・.env 固定）/ `_drafts/quant.md` §1.3-1.4（アラート条件＝高スコア/出来高異常）/ `_drafts/ai-advisor.md` §7（夜の分析AI の当日提案）/ `_drafts/_current-state.md`（現状）。作成: 2026-06-03。
 > 参照は `path:行` 形式。確定値は理由つき、ユーザー裁定が要る点は `**[OPEN]**`、docs のズレは `**[DOCS要修正]**`。
 

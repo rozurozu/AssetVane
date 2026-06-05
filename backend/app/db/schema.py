@@ -376,3 +376,18 @@ dossier_sources = Table(
     UniqueConstraint("url", name="uq_dossier_sources_url"),  # URL 重複排除
     Index("ix_dossier_sources_code", "code"),
 )
+
+# ===== Phase 6: Signal Beacon（phase6-spec.md §2・ADR-007/018・0010_notifications） =====
+
+# 通知の送信済み記録＝二重送信防止（ADR-002/018）。cron の coalesce 漏れや POST /batch/run の
+# 手動再実行で run_nightly が同日 2 回走っても、同じ notify_key が既存なら 2 回目は送らない。
+# notify_key は連番ではなく「種別:日付」の自然キー（再実行で同じ値になる＝冪等）。
+# 本 Phase は digest 1 通に束ねる方針なので種別は `digest:<date>`・失敗は `error:<job>:<date>`。
+# channel は将来の多チャンネル余地（当面 'discord' のみ＝ADR-007）。
+notifications = Table(
+    "notifications",
+    metadata,
+    Column("notify_key", String, primary_key=True),  # '種別:日付' の自然キー
+    Column("channel", String, primary_key=True),  # 'discord'
+    Column("sent_at", String),  # 送信時刻 ISO8601 UTC
+)

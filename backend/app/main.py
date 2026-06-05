@@ -128,7 +128,7 @@ def health() -> dict[str, object]:
         "status": "ok",
         "service": "assetvane-backend",
         "version": app.version,
-        "phase": 3,
+        "phase": 6,
         "db": "ok" if healthcheck() else "error",
         "env": settings.env_status(),
     }

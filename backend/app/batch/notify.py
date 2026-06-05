@@ -1,39 +1,56 @@
-"""Discord エラー通知（spec §3.9・ADR-018・ADR-007）。
+"""Discord 通知の糊層（spec §3/§4・ADR-007/018）。
 
-Phase 1 は**エラー時のみ**通知する（成功サマリ・シグナル通知は Phase 6・webhook.py へ昇格）。
-`DISCORD_WEBHOOK_URL` 未設定なら no-op（ログのみ）。httpx POST に失敗しても握りつぶす
-（通知の失敗でバッチを落とさない）。通知は LINE Notify ではなく Discord Webhook（ADR-007）。
+送信実体は adapters/discord.py（DiscordAdapter）へ移設・昇格した（Phase 6）。本モジュールは:
+- error():     夜間バッチ/AI 失敗時のエラー通知（Phase 1/3 互換・冪等なし＝毎回送る最善努力）。
+- send_once(): notify_key による冪等送信（Phase 6・二重送信防止）。
+を提供する薄い糊。DISCORD_WEBHOOK_URL 未設定なら no-op（アダプタが握る・ADR-018）。
+通知は LINE Notify ではなく Discord Webhook（ADR-007）。
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
+from typing import Any
 
-import httpx
-
-from app.config import settings
+from app.adapters.discord import DiscordAdapter
+from app.db import repo
+from app.db.engine import get_engine
 
 logger = logging.getLogger(__name__)
 
-# Discord メッセージの content 上限（2000 字）に収めるための上限。
-_MAX_CONTENT = 1900
-
 
 def error(title: str, detail: str) -> None:
-    """夜間バッチ失敗時に Discord へエラー通知する（spec §3.9）。
+    """夜間バッチ/AI 失敗時に Discord へエラー通知する（spec §3.9・ADR-018）。
 
-    webhook 未設定ならログのみで no-op。POST 失敗（タイムアウト・4xx/5xx）も握りつぶす。
+    webhook 未設定なら no-op（アダプタがログのみ）。送信失敗も握りつぶす（通知の失敗でバッチを
+    落とさない）。冪等管理はしない（失敗通知は重複しても害が小さく、毎回気づきたいため）。
     """
-    content = f"**[AssetVane バッチ失敗] {title}**\n{detail}"[:_MAX_CONTENT]
+    content = f"**[AssetVane バッチ失敗] {title}**\n{detail}"
+    DiscordAdapter().send(content)
 
-    url = settings.discord_webhook_url
-    if not url:
-        # 未設定時はログだけ残す（家庭内 LAN・単一ユーザー前提＝ADR-001）。
-        logger.error("batch error (Discord 未設定): %s / %s", title, detail)
-        return
 
-    try:
-        httpx.post(url, json={"content": content}, timeout=10.0)
-    except httpx.HTTPError as exc:
-        # 通知の失敗でバッチ自体を落とさない（観測性は最善努力）。
-        logger.warning("Discord 通知に失敗: %s", exc)
+def send_once(
+    notify_key: str,
+    content: str,
+    *,
+    embeds: list[dict[str, Any]] | None = None,
+    channel: str = "discord",
+) -> bool:
+    """notify_key で冪等に 1 通送る（spec §3・二重送信防止＝ADR-002/018）。
+
+    1) 既送（notification_exists）なら送らず False。
+    2) DiscordAdapter.send を呼ぶ。
+    3) 送信成功（True）なら record_notification で記録する。
+    送信失敗（False）は記録しない（翌実行で再試行＝at-least-once 受容・spec §3 注）。
+    送信成功 → 記録の間で落ちると稀に再送するが、digest は同日同キーなので翌実行で重複しない。
+    """
+    with get_engine().connect() as conn:
+        if repo.notification_exists(conn, notify_key, channel):
+            logger.info("通知は既送のためスキップ: %s", notify_key)
+            return False
+
+    sent = DiscordAdapter().send(content, embeds=embeds)
+    if sent:
+        repo.record_notification(notify_key, channel, datetime.now(UTC).isoformat())
+    return sent

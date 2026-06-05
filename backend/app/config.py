@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     # --- 通知 (Discord) --- Phase 6〜
     discord_webhook_url: str = ""
 
+    # --- 通知 digest（Phase 6 Signal Beacon・phase6-spec.md §3・ADR-007/018） ---
+    # 夜間バッチ末尾の notify_digest が⑦⑧＋夜AI 提案を 1 通に束ねて送る。閾値は env で後から差替可。
+    alert_score_min: float = 0.6  # ⑧ 高スコア銘柄の閾値（signals.score 0..1）
+    alert_top_n: int = 10  # digest に載せるシグナルの上限（score 降順・残りは件数のみ）
+    rebalance_alert_days: int = 14  # ⑦ 最終見直し（policy.updated_at）からの経過閾値（日）
+    always_daily_digest: bool = True  # 検知ゼロでも毎朝サマリを送る（False で好機がある日だけ）
+    # ⑧ 出来高急増（平常 3 倍）の閾値は quant が payload.notable に焼く（ADR-016）。通知層は
+    # 閾値を再定義せず notable を読む（score>=alert_score_min または notable で⑧アラート）。
+
     # --- 夜間バッチ / cron --- Phase 1〜（spec §3.7・ADR-021・ADR-011）
     # APScheduler を FastAPI プロセスに同居させる（追加コンテナ 0）。
     # dev の --reload 二重起動を避けるため既定は false（prod で true）。

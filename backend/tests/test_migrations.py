@@ -46,8 +46,18 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
             "watchlist",
             "stock_dossiers",
             "dossier_sources",
+            # Phase 6（0010_notifications・phase6-spec §2）
+            "notifications",
             "alembic_version",
         } <= names
+
+        # notifications は Phase 6（0010_notifications）で追加。(notify_key, channel) 複合 PK。
+        notif_pk = {
+            c for c in inspect(conn).get_pk_constraint("notifications")["constrained_columns"]
+        }
+        assert notif_pk == {"notify_key", "channel"}, (
+            "notifications の PK が (notify_key, channel) でない（0010 が当たっていない）"
+        )
 
         # watchlist は Phase 4（0008_dossier）に一本化（旧 Phase 2 案からは外した＝§2 注記）。
         # 0004（portfolio）では作られないこと＝二重 CREATE が無いことを保証する回帰。

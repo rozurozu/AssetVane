@@ -29,6 +29,9 @@ services:
     environment:
       # Docker volume 上では inotify が効かないことがあるため polling で reload を担保。
       - WATCHFILES_FORCE_POLLING=true
+      # タイムゾーンを JST に固定（Phase 6・phase6-spec §5）。夜間バッチ cron は
+      # CronTrigger(timezone="Asia/Tokyo") で明示するが、ログの時刻表記も JST に揃える。
+      - TZ=Asia/Tokyo
     ports:
       - "${BACKEND_PORT:-8000}:8000"
 
