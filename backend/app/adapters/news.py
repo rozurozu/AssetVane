@@ -224,7 +224,9 @@ async def _process_item(item: dict) -> dict:
 
     try:
         html = await _fetch_html(real_url)
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, NewsAdapterError) as exc:
+        # 本文 GET の失敗（タイムアウト・4xx/5xx・Cloudflare 403 等）は 1 記事だけ握って
+        # 見出しにフォールバックする（1 記事の失敗で銘柄全体を落とさない・計画/ADR-018）。
         logger.debug("記事本文の取得に失敗（%s）: %s → 見出しのみ", real_url, exc)
         return _article(real_url, None, "headline")
 
@@ -293,7 +295,7 @@ async def _decode_google_url(google_url: str) -> str:
 
     方式（参考: gist huksley/bc3cb046… ・n8n テンプレ）:
       1. 記事ページ（rss/articles/<base64id>）を GET し、HTML 中の <c-wiz> から
-         パラメータ（signature=data-n-a-id・timestamp=data-n-a-ts・id=URL の base64 部）を抜く。
+         パラメータ（signature=data-n-a-sg・timestamp=data-n-a-ts・id=URL の base64 部）を抜く。
       2. batchexecute（Fbv4je=garturlreq）へ POST し、応答（`)]}'` 付き配列）から実 URL を得る。
     失敗時は例外を握って **元の Google URL を返す**（落とさない・以降は Google URL のまま続行）。
     """
@@ -332,14 +334,16 @@ def _extract_article_id(google_url: str) -> str | None:
 
 
 def _extract_decode_params(page_html: str) -> tuple[str | None, str | None]:
-    """記事ページ HTML の <c-wiz> から signature(data-n-a-id) と timestamp(data-n-a-ts) を抜く。
+    """記事ページ HTML の <c-wiz> から signature(data-n-a-sg) と timestamp(data-n-a-ts) を抜く。
 
+    署名は `data-n-a-sg` 属性に入る（`data-n-a-id` は別物の要素 id なので使わない＝実地検証済み）。
     Google 仕様変更に弱いので、見つからなければ (None, None) を返し、呼び出し側が Google URL の
-    まま続行する。正規表現で属性を拾う（ブラウザ不要・stdlib のみ）。
+    まま続行する。正規表現で属性を拾う（ブラウザ不要・stdlib のみ）。記事ページは JS リダイレクト
+    を挟むため follow_redirects=True で 200 のラッパーページまで追ってから渡すこと。
     """
     import re
 
-    sig_match = re.search(r'data-n-a-id="([^"]+)"', page_html)
+    sig_match = re.search(r'data-n-a-sg="([^"]+)"', page_html)
     ts_match = re.search(r'data-n-a-ts="([^"]+)"', page_html)
     signature = sig_match.group(1) if sig_match else None
     timestamp = ts_match.group(1) if ts_match else None

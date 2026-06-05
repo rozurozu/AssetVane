@@ -307,11 +307,13 @@ def test_extract_article_id() -> None:
 
 
 def test_extract_decode_params() -> None:
-    """記事ページ HTML から signature(data-n-a-id)・timestamp(data-n-a-ts) を抜く。"""
-    html = '<c-wiz data-n-a-id="SIG123" data-n-a-ts="1700000000">x</c-wiz>'
+    """記事ページ HTML から signature(data-n-a-sg)・timestamp(data-n-a-ts) を抜く。"""
+    html = '<c-wiz data-n-a-sg="SIG123" data-n-a-ts="1700000000">x</c-wiz>'
     sig, ts = news._extract_decode_params(html)
     assert sig == "SIG123"
     assert ts == "1700000000"
+    # data-n-a-id は別物（要素 id）なので署名には使わない
+    assert news._extract_decode_params('<c-wiz data-n-a-id="X">y</c-wiz>') == (None, None)
     # 無ければ (None, None)
     assert news._extract_decode_params("<div></div>") == (None, None)
 
