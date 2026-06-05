@@ -78,11 +78,11 @@
 
 **目的**: ニュース・財務（将来は適時開示）を読み、個別銘柄の**定性的な調査レポート（ドシエ）**を作って更新し続ける。数理・ML（数字）を補う「物語」担当。
 
-**状況（2026-06-05・着工済み）**: backend＋frontend を縦に通し実装済み（schema `0008_dossier`・repo・`investigate_stock` パイプライン・3 Tool〔`investigate_stock`/`get_dossier`/`fetch_news`・min_phase=4〕・REST〔`/watchlist`・`/dossiers/{code}`〕・夜間巡回ジョブ〔古い順 N=3・stale 21 日・MCP 非依存〕・`/watchlist` ページ・`DossierSection`〔react-markdown+rehype-sanitize〕）。pytest green。**ただし `fetch_news` は現状スタブ（空配列）で、実ニュース源〔昼 MCP／夜 httpx〕の `NewsAdapter` は次イテレーション**（下記「留意点」の不確実性ゆえモック境界で着地＝骨格優先）。
+**状況（2026-06-05・実装完了）**: backend＋frontend を縦に通し実装済み（schema `0008_dossier`＋`0009_news_extraction_and_watchlist_interval`・repo・`investigate_stock` パイプライン・3 Tool〔`investigate_stock`/`get_dossier`/`fetch_news`・min_phase=4〕・REST〔`/watchlist`・`/dossiers/{code}`〕・夜間巡回ジョブ〔銘柄別 `interval_days`＋夜あたり天井＝ADR-033・MCP 非依存〕・`/watchlist` ページ・`DossierSection`〔react-markdown+rehype-sanitize〕）。pytest green。**`fetch_news` も実ニュース源を実装済み＝`NewsAdapter`〔Google News RSS → httpx＋trafilatura で本文抽出 → AI 要約〕。昼 MCP／夜 httpx の 2 系統は撤回し httpx 一本にした（ADR-020 改訂）**。MCP は将来 403/JS 必須サイト・Google URL 復元の代替候補として残す。
 
 - **`investigate_stock(code)` の調査パイプラインを 1 本実装**し、**夜間バッチ（watchlist 巡回・軽め）とチャット Tool（「この銘柄調査して」・リッチ）の両方から呼ぶ**（[ADR-020](decisions.md)）。
 - `watchlist`（監視銘柄）＋ `stock_dossiers`（1 銘柄 1 レポート・markdown 要約・`last_investigated_at`）＋ `dossier_sources`（URL＋要約＋日付の台帳・**本文は保存しない**・`source_type` で将来 Twitter 等も）を実装。**`watchlist` はこの Phase 4 で追加**（ドシエと同時・管轄=ai-advisor・`0008_dossier`＝先行の `0007_screening`〔ADR-031〕と revision 衝突を避けて繰り下げ）。Phase 2 では追加しない（`_arbitration.md` 決定1・[DOC-12]）。
-- ニュース取得は `fetch_news` Tool 裏に隠し、**昼は MCP（playwright/fetch）等でリッチ・夜は MCP に頼らず軽め**。発行 1 週間以内・URL 重複排除。
+- ニュース取得は `fetch_news` Tool 裏に隠す。**当初案の「昼 MCP／夜 httpx」は撤回し、httpx 一本にした（本文抽出は httpx＋trafilatura で足りるため＝ADR-020 改訂）**。発行 1 週間以内・URL 重複排除。MCP は将来 403/JS 必須サイトの代替候補として残す。
 - **watchlist 一覧ページに「最終調査日」を表示**し、再調査を促す。
 - データ源: 初期は**財務（J-Quants Free）＋一般ニュース（Web/MCP）**。**適時開示（TDnet 有料アドオン）は課金後に後付け**。
 
