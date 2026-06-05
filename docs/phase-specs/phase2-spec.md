@@ -45,7 +45,7 @@
 | `0005_financials` | `0004` | financials | data-arch（B-7） |
 
 - DDL は `backend/app/db/schema.py`（`metadata` が単一の真実）に追記 → `alembic/versions/0004_portfolio_and_assets.py` / `0005_financials.py` に autogenerate。
-- **watchlist はここで作らない**（B-13）。Phase 4・ai-advisor の `0007_dossier` に一本化（二重 CREATE で移行が壊れるため）。
+- **watchlist はここで作らない**（B-13）。Phase 4・ai-advisor の `0008_dossier` に一本化（二重 CREATE で移行が壊れるため）。
 - **FK 方針（裁定 L-7）**: **自分データ（手入力）は FK を張る**（誤入力防止の価値が高い・`foreign_keys=ON` は engine.py 既設）＝`transactions`/`holdings`/`financials` の `code→stocks.code`、`portfolio_id→portfolios.portfolio_id`。**生データ間（daily_quotes→stocks）は既存どおり張らない**方針を維持。
 - **`portfolios` seed**: `0004` 移行内で `(portfolio_id=1, name='Default')` を 1 行 seed。
 

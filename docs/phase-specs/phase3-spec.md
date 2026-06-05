@@ -603,4 +603,4 @@ DB は既存方針どおり**一時 SQLite**（conftest）。LLM/外部は必ず
 ## 付録. [DOCS要修正]（lead 統合の対象・正本に反映済み）
 - **DOC-4 / api.md §4** `/chat` body に `context` 明記＋`focus: {type, code?, id?}` に拡張（決定3）。本書 §6.2 と一致。
 - **DOC-9 / ADR-002 or data-model.md** 「書き手の系統は FastAPI 1 プロセス内同居で直列化＋busy_timeout」を補注（決定5・data-arch 主管）。本書 §2 と一致。
-- **DOC-12 / roadmap・data-model.md** `watchlist` の所属を Phase 4（ai-advisor `0007_dossier`）に確定（決定1・B-13）。本書では Phase 4 として扱い、本 Phase（`0006`）では作らない。
+- **DOC-12 / roadmap・data-model.md** `watchlist` の所属を Phase 4（ai-advisor `0008_dossier`）に確定（決定1・B-13）。本書では Phase 4 として扱い、本 Phase（`0006`）では作らない。

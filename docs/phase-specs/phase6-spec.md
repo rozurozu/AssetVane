@@ -1,6 +1,6 @@
 # Phase 6 着工仕様: Signal Beacon（通知）
 > 出所: roadmap.md Phase 6 / ADR-007(Discord)/ADR-018(失敗を放置しない)。レビュー・裁定反映済み。コード未実装＝着工仕様。
-> 合成元: `_drafts/_arbitration.md`（正本: 採番 `0008_notifications`(送信冪等ログ)・Discord）/ `_drafts/data-arch.md` §6（cron・DiscordAdapter・冪等・notifications）/ `_drafts/app.md` §P6（通知設定/履歴 UI・.env 固定）/ `_drafts/quant.md` §1.3-1.4（アラート条件＝高スコア/出来高異常）/ `_drafts/ai-advisor.md` §7（夜の分析AI の当日提案）/ `_drafts/_current-state.md`（現状）。作成: 2026-06-03。
+> 合成元: `_drafts/_arbitration.md`（正本: 採番 `0009_notifications`(送信冪等ログ)・Discord）/ `_drafts/data-arch.md` §6（cron・DiscordAdapter・冪等・notifications）/ `_drafts/app.md` §P6（通知設定/履歴 UI・.env 固定）/ `_drafts/quant.md` §1.3-1.4（アラート条件＝高スコア/出来高異常）/ `_drafts/ai-advisor.md` §7（夜の分析AI の当日提案）/ `_drafts/_current-state.md`（現状）。作成: 2026-06-03。
 > 参照は `path:行` 形式。確定値は理由つき、ユーザー裁定が要る点は `**[OPEN]**`、docs のズレは `**[DOCS要修正]**`。
 
 ---
@@ -35,11 +35,11 @@
 
 ---
 
-## 2. スキーマ変更（`0008_notifications`: 送信冪等ログ）
+## 2. スキーマ変更（`0009_notifications`: 送信冪等ログ）
 
-該当: `_arbitration.md` 決定1 採番表（0008_notifications・Phase 6・定義レーン=data-arch）/ data-arch:33,642-668 / ADR-002（冪等）/ ADR-018。
+該当: `_arbitration.md` 決定1 採番表（0009_notifications・Phase 6・定義レーン=data-arch）/ data-arch:33,642-668 / ADR-002（冪等）/ ADR-018。
 
-**採番**: `revision='0008_notifications'`・`down_revision='0007_dossier'`（単線チェーン・採番表 §0.1）。移行ファイルの発行は data-arch が一元管理。
+**採番**: `revision='0009_notifications'`・`down_revision='0008_dossier'`（単線チェーン・採番表 §0.1）。移行ファイルの発行は data-arch が一元管理。
 
 ```sql
 CREATE TABLE notifications (
@@ -143,7 +143,7 @@ Phase 1 の `backend/app/batch/notify.py`（エラー通知最小版・data-arch
 | 新規/昇格 | `backend/app/adapters/discord.py` | Discord Webhook 送信アダプタ（`batch/notify.py` の送信実体を移設） |
 | 変更 | `backend/app/batch/notify.py` | `error()` と新規 `send_once()`（§3）は残し、送信実体は `DiscordAdapter` を呼ぶ薄い糊に |
 | 変更 | `backend/app/db/schema.py` | `notifications` テーブル追記（§2） |
-| 新規 | `backend/alembic/versions/0008_notifications.py` | autogenerate 移行（採番表 §0.1） |
+| 新規 | `backend/alembic/versions/0009_notifications.py` | autogenerate 移行（採番表 §0.1） |
 | 新規 | `backend/app/batch/jobs/notify_digest.py` | digest ジョブ（§3・`NIGHTLY_JOBS` 末尾） |
 | 変更 | `backend/app/batch/jobs/__init__.py` | `NIGHTLY_JOBS` に `notify_digest.run` を append |
 
@@ -227,7 +227,7 @@ class DiscordAdapter:
 
 data-arch:687 の順序を踏襲し、依存（Phase 1 の `signals`/`run_nightly`、Phase 3 の `advisor_journal`）が揃っていることを前提に進める。
 
-1. [ ] `notifications` を `schema.py` に追記 → autogenerate `0008_notifications`（down_revision=`0007_dossier`）→ `test_migrations` に存在・PK 確認を追加。
+1. [ ] `notifications` を `schema.py` に追記 → autogenerate `0009_notifications`（down_revision=`0008_dossier`）→ `test_migrations` に存在・PK 確認を追加。
 2. [ ] `repo.py`: `notification_exists` / `record_notification` / `list_signals_for_alert` / `get_journal_for_date` を追加（既存流儀）＋単体テスト。
 3. [ ] `adapters/discord.py`（`DiscordAdapter`）を新規 → `batch/notify.py` の送信実体を移設・`error()` をアダプタ経由に統一 ＋ `test_discord_adapter.py`。
 4. [ ] `batch/notify.py` に冪等 `send_once`（§3）＋ `test_notifications_idempotent.py`（**冪等の中核テスト**）。

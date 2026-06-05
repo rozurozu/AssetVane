@@ -18,8 +18,9 @@
 | `0004_portfolio_and_assets` | 0003 | 2 | portfolios, holdings, transactions, cash, external_assets, index_quotes, asset_snapshots | data-arch |
 | `0005_financials` | 0004 | 2 | financials | data-arch（B-7） |
 | `0006_advisor_state` | 0005 | 3 | policy, advisor_journal, proposals（+depends_on） | ai-advisor |
-| `0007_dossier` | 0006 | 4 | watchlist, stock_dossiers, dossier_sources | ai-advisor（B-13） |
-| `0008_notifications` | 0007 | 6 | notifications（送信冪等ログ・必要時） | data-arch |
+| `0007_screening` | 0006 | 1 | valuation_snapshots, screening_filters（ADR-031・後付け割り込み） | data-arch |
+| `0008_dossier` | 0007 | 4 | watchlist, stock_dossiers, dossier_sources | ai-advisor（B-13） |
+| `0009_notifications` | 0008 | 6 | notifications（送信冪等ログ・必要時） | data-arch |
 
 - **watchlist は `0007`(Phase 4・ai-advisor)に一本化**。data-arch は Phase 2 から watchlist を外す（B-13）。
 - **financials は `0005`(Phase 2・data-arch)** で取得仕様ごと定義（B-7）。

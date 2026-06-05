@@ -108,7 +108,7 @@ signals = Table(
 - インデックス: `(date, signal_type)`（一覧・通知の主クエリ）＋ `code`（銘柄詳細横断）。
 - **設計思想（ADR-026）**: signals は **AI Advisor に食わせる「材料」**で、`score` は**連続値（0..1）**。閾値は「保存時の破壊的ゲート」ではなく **`notable` フラグ＋読み取り時の既定カットオフ**にすぎない。夜間バッチは**低フロア以上の行を広めに保存**して near-miss を残し、絞り込みは AI（`screen_stocks` の `min_score` 等）と一覧 UI が行う。個別銘柄の素の指標は保存せず `get_indicators(code)` で都度計算（L-13）。**human 向け一覧は副産物**で、主経路は「AI が Tool で読み、根拠つきで推す」。
 
-> **採番予約（本 Phase 外）**: `0004_portfolio_and_assets`(P2・data-arch)・`0005_financials`(P2・data-arch)・`0006_advisor_state`(P3・ai-advisor)・`0007_dossier`(P4・ai-advisor・watchlist はここに一本化)・`0008_notifications`(P6・data-arch)。Phase 1 では作らない。
+> **採番予約（本 Phase 外）**: `0004_portfolio_and_assets`(P2・data-arch)・`0005_financials`(P2・data-arch)・`0006_advisor_state`(P3・ai-advisor)・`0007_screening`(P1・ADR-031・後付け割り込み)・`0008_dossier`(P4・ai-advisor・watchlist はここに一本化)・`0009_notifications`(P6・data-arch)。Phase 1 では作らない。
 
 ---
 
