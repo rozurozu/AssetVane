@@ -12,7 +12,7 @@
 # 前提（初回セットアップは docs/deploy.md）:
 #   - ローカルに docker buildx・ghcr.io へ `docker login ghcr.io` 済み。
 #   - ラズパイへ ssh 鍵で入れる・ラズパイで `docker login ghcr.io`（read:packages PAT）済み。
-#   - ラズパイの ~/$PI_DIR に backend/.env と data/ を配置済み。
+#   - ラズパイの $PI_DIR（既定 /opt/assetvane）に backend/.env と data/ を配置済み。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -25,8 +25,9 @@ cd "$(dirname "$0")/.."
 # ---- 設定（deploy.env または実行時の環境変数で上書き可） ----
 REGISTRY="${REGISTRY:-ghcr.io/rozurozu}"
 PI_HOST="${PI_HOST:-raspberrypi.local}"
-# ラズパイのホームからの相対パス（~ を渡すと remote で展開されない罠を避ける）。
-PI_DIR="${PI_DIR:-assetvane}"
+# ラズパイ上のデプロイ先（絶対パス）。/opt は add-on アプリの定番で、ユーザーのホームから
+# 切り離す（アカウント削除/改名に巻き込まれない・FHS）。初回作成＋chown は docs/deploy.md 参照。
+PI_DIR="${PI_DIR:-/opt/assetvane}"
 # frontend に焼き込む本番 API URL（ブラウザから到達できる名前・architecture.md §7.1）。
 API_URL="${API_URL:-http://raspberrypi.local:8000}"
 PLATFORM="${PLATFORM:-linux/arm64}"
@@ -59,7 +60,7 @@ if [ "${1:-}" = "--build-only" ]; then
 fi
 
 # ---- compose.prod.yaml をラズパイへ同期（Pi が常に最新の定義を持つ） ----
-echo "▶ sync compose.prod.yaml → $PI_HOST:~/$PI_DIR/"
+echo "▶ sync compose.prod.yaml → $PI_HOST:$PI_DIR/"
 ssh "$PI_HOST" "mkdir -p $PI_DIR"
 rsync -az ./compose.prod.yaml "$PI_HOST:$PI_DIR/compose.prod.yaml"
 
@@ -67,7 +68,7 @@ rsync -az ./compose.prod.yaml "$PI_HOST:$PI_DIR/compose.prod.yaml"
 echo "▶ deploy on $PI_HOST"
 ssh "$PI_HOST" IMAGE_TAG="$IMAGE_TAG" PI_DIR="$PI_DIR" bash -s <<'REMOTE'
 set -euo pipefail
-cd "$HOME/$PI_DIR"
+cd "$PI_DIR"
 export IMAGE_TAG
 
 # 1) デプロイ前バックアップ（旧コンテナで VACUUM INTO・ADR-017）。初回（未起動）は握りつぶす。
