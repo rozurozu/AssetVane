@@ -342,3 +342,31 @@ def test_parse_pubdate() -> None:
     assert news._parse_pubdate("Wed, 04 Jun 2026 09:00:00 GMT") == "2026-06-04"
     assert news._parse_pubdate(None) is None
     assert news._parse_pubdate("garbage") is None
+
+
+def test_throttle_survives_multiple_event_loops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """複数の asyncio.run() をまたいでも _throttle が壊れないこと（event loop バグの回帰）。
+
+    夜間バッチのジョブは asyncio.run() で毎回新ループを作る。_throttle_lock を
+    モジュールレベルで 1 個固定していた頃は 2 回目の run で
+    「bound to a different event loop」で落ちた（2026-06-07 自動バッチで露見）。
+
+    無競合の Lock.acquire はループに bind しないため、再現には gather による**競合**
+    （waiter 生成時に loop へ bind される）が要る。実ジョブも fetch_general_news の
+    asyncio.gather で競合する。_last_request_ts を直近にして wait>0 を保証し、ロック保持中の
+    sleep で 2 本目を確実に待たせる（タイミング非依存に競合を起こす）。
+    """
+    import time
+
+    monkeypatch.setattr(settings, "news_min_interval_seconds", 0.05)
+
+    async def _contend() -> None:
+        await asyncio.gather(news._throttle(), news._throttle())
+
+    saved_ts = news._last_request_ts
+    try:
+        for _ in range(2):  # 2 回の asyncio.run（＝別ループ）をまたぐ
+            news._last_request_ts = time.monotonic()  # wait>0 を保証＝ロック保持中に sleep→競合
+            asyncio.run(_contend())  # 修正前は 2 周目でここが RuntimeError（別ループ）
+    finally:
+        news._last_request_ts = saved_ts

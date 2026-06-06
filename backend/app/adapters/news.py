@@ -569,16 +569,36 @@ async def _get_with_retry(client: httpx.AsyncClient, url: str) -> str:
 
 # プロセス共有のスロットル時刻（全フェッチ横断・monotonic 時刻）。Google への過剰アクセスを避ける。
 _last_request_ts: float = 0.0
-_throttle_lock = asyncio.Lock()
+# Lock はイベントループ固有。夜間バッチのジョブ（fetch_general_news / investigate_dossier）は
+# asyncio.run() で**毎回新しいイベントループ**を作るため、ここで asyncio.Lock() を 1 個固定すると
+# 2 回目以降の asyncio.run() で「bound to a different event loop」で落ちる（ADR-018 の静かな事故）。
+# 実行中のループに紐付けて遅延生成し、ループが変われば作り直す
+# （同一ループ内の並行コルーチン直列化が Lock の役割）。
+_throttle_lock: asyncio.Lock | None = None
+_throttle_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_throttle_lock() -> asyncio.Lock:
+    """実行中のイベントループに紐付いた _throttle_lock を返す（ループが変われば作り直す）。"""
+    global _throttle_lock, _throttle_loop
+    loop = asyncio.get_running_loop()
+    if _throttle_lock is None or _throttle_loop is not loop:
+        _throttle_lock = asyncio.Lock()
+        _throttle_loop = loop
+    return _throttle_lock
 
 
 async def _throttle() -> None:
-    """前回リクエストから最低 news_min_interval_seconds あける（index.py の _throttle に倣う）。"""
+    """前回リクエストから最低 news_min_interval_seconds あける（index.py の _throttle に倣う）。
+
+    _last_request_ts はプロセス共有（全 asyncio.run をまたいで最低間隔を守る）。Lock だけは
+    ループ固有なので _get_throttle_lock() で実行中ループに紐付け直す（event loop バグ回避）。
+    """
     import time
 
     global _last_request_ts
     min_interval = settings.news_min_interval_seconds
-    async with _throttle_lock:
+    async with _get_throttle_lock():
         wait = min_interval - (time.monotonic() - _last_request_ts)
         if wait > 0:
             await asyncio.sleep(wait)
