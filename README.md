@@ -160,6 +160,23 @@ CODEX_MODEL=gpt-5.5            # codex 側の強モデル
 
 ---
 
+## 便利コマンド（Makefile）
+
+よく使う運用・開発コマンドを `Makefile` に集約した。**運用ターゲットは dev でも Pi 本番でも同じコマンドで動く**（compose ファイルの違いは Makefile が自動判定で吸収する。dev=`compose.yaml`／Pi=`compose.prod.yaml`）。Pi 本番では `make deploy` で Makefile も配られるので、ラズパイに `ssh` してそのまま叩ける。
+
+| コマンド | 内容 | 実行場所 |
+|---|---|---|
+| `make discord-test` | Discord に疎通テストを 1 通送る（冪等回避＝毎回飛ぶ。digest を待たず通知を確認） | dev / Pi 共通 |
+| `make test` | backend テスト（`uv run pytest -q`・一時 SQLite） | Mac（開発）|
+| `make lint` | backend lint（Ruff・ADR-023） | Mac（開発）|
+| `make format` | backend format（Ruff・ADR-023） | Mac（開発）|
+| `make deploy` | Mac で arm64 ビルド → ghcr.io → ラズパイへデプロイ | Mac 専用 |
+| `make deploy-build` | ビルド→push のみ（ラズパイは触らない） | Mac 専用 |
+
+`discord-test` の実体は `app.scripts.notify_test`（CLI 口）。同じ脳を REST（`POST /diagnostics/discord-test`）と `/settings` 画面のボタンからも叩ける（ADR-011「1つの脳・複数の起動口」）。`make deploy`/`deploy-build` は Pi で誤実行すると 1 行ガードで止まる（Mac から実行する）。
+
+---
+
 ## Deployment (Production)
 
 本番（ラズパイ 4B・aarch64・家庭内 LAN）へは **Mac（Apple Silicon）で `linux/arm64` をネイティブビルド → `ghcr.io` に push → 同一 LAN のラズパイへ `ssh` で `compose pull → up`** する。1 コマンド:

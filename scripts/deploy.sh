@@ -59,10 +59,13 @@ if [ "${1:-}" = "--build-only" ]; then
   exit 0
 fi
 
-# ---- compose.prod.yaml をラズパイへ同期（Pi が常に最新の定義を持つ） ----
-echo "▶ sync compose.prod.yaml → $PI_HOST:$PI_DIR/"
+# ---- compose.prod.yaml と Makefile をラズパイへ同期（Pi が常に最新の定義を持つ） ----
+# Makefile も配ることで、Pi に ssh して `make discord-test` 等の運用コマンドを叩ける。
+# Pi には compose.yaml が無いので Makefile は自動で compose.prod.yaml を使う（Makefile 冒頭参照）。
+echo "▶ sync compose.prod.yaml / Makefile → $PI_HOST:$PI_DIR/"
 ssh "$PI_HOST" "mkdir -p $PI_DIR"
 rsync -az ./compose.prod.yaml "$PI_HOST:$PI_DIR/compose.prod.yaml"
+rsync -az ./Makefile "$PI_HOST:$PI_DIR/Makefile"
 
 # ---- ラズパイ上でデプロイ（backup → pull → up → health → 失敗で自動ロールバック） ----
 echo "▶ deploy on $PI_HOST"

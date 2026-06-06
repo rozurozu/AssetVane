@@ -3,6 +3,7 @@
 送信実体は adapters/discord.py（DiscordAdapter）へ移設・昇格した（Phase 6）。本モジュールは:
 - error():     夜間バッチ/AI 失敗時のエラー通知（Phase 1/3 互換・冪等なし＝毎回送る最善努力）。
 - send_once(): notify_key による冪等送信（Phase 6・二重送信防止）。
+- send_test_notification(): Discord 疎通テスト（冪等回避＝毎回飛ぶ・ADR-011 の脳）。
 を提供する薄い糊。DISCORD_WEBHOOK_URL 未設定なら no-op（アダプタが握る・ADR-018）。
 通知は LINE Notify ではなく Discord Webhook（ADR-007）。
 """
@@ -10,6 +11,8 @@
 from __future__ import annotations
 
 import logging
+import socket
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +21,18 @@ from app.db import repo
 from app.db.engine import get_engine
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TestNotifyResult:
+    """Discord 疎通テストの結果（CLI/API/Web UI 共通の戻り値）。
+
+    enabled: Webhook URL が設定されているか（False なら送信は no-op）。
+    sent:    実際に 2xx で届いたか（enabled=False のときは常に False）。
+    """
+
+    enabled: bool
+    sent: bool
 
 
 def error(title: str, detail: str) -> None:
@@ -54,3 +69,22 @@ def send_once(
     if sent:
         repo.record_notification(notify_key, channel, datetime.now(UTC).isoformat())
     return sent
+
+
+def send_test_notification() -> TestNotifyResult:
+    """Discord 疎通テストを 1 通送る（CLI/API/Web UI 共通の脳・ADR-011）。
+
+    冪等（send_once）は通さず DiscordAdapter().send() を直接呼ぶ＝テストは何度叩いても飛ぶ。
+    どの環境（dev/Pi）から来たか分かるよう host 名と送信時刻を載せる。Webhook 未設定なら
+    enabled=False・sent=False を返す（アダプタが no-op・ADR-018）。送信失敗も例外を投げず
+    enabled=True・sent=False（呼び出し側が「未設定」と「送信失敗」を区別できる）。
+    """
+    adapter = DiscordAdapter()
+    if not adapter.enabled:
+        logger.warning("Discord 未設定のため疎通テストをスキップ")
+        return TestNotifyResult(enabled=False, sent=False)
+
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    content = f"🔔 AssetVane Discord 疎通テスト — {socket.gethostname()} {stamp}"
+    sent = adapter.send(content)
+    return TestNotifyResult(enabled=True, sent=sent)

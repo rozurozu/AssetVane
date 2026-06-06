@@ -558,6 +558,18 @@ export function runBatch(fullBackfill = false): Promise<BatchRunResponse> {
   return postJSON<BatchRunResponse>("/batch/run", { full_backfill: fullBackfill });
 }
 
+/** Discord 疎通テストのレスポンス（POST /diagnostics/discord-test・diagnostics.py）。 */
+export interface DiscordTestResponse {
+  enabled: boolean; // Webhook URL が設定されているか（false なら未設定で送らない）
+  sent: boolean; // 実際に 2xx で届いたか（enabled=false のときは常に false）
+}
+
+/** Discord にテスト通知を 1 通送る（ADR-011「複数の起動口」・冪等回避＝毎回飛ぶ）。
+ * enabled=false は未設定、sent=false は送信失敗。両者を呼び出し側で区別して表示する。 */
+export function sendDiscordTest(): Promise<DiscordTestResponse> {
+  return postJSON<DiscordTestResponse>("/diagnostics/discord-test", {});
+}
+
 // --- Phase 2 API 関数（phase2-spec.md §5）---
 // すべて `lib/api.ts` に集約（ADR-005）。DB に触れない。
 

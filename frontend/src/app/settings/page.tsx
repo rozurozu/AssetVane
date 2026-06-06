@@ -2,7 +2,7 @@
 
 import { Card } from "@/components/ui/Card";
 import { StatusBlock } from "@/components/ui/StatusBlock";
-import { type HealthResponse, getHealth, runBatch } from "@/lib/api";
+import { type HealthResponse, getHealth, runBatch, sendDiscordTest } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import { useState } from "react";
 
@@ -36,6 +36,29 @@ export default function SettingsPage() {
       setBatchNote(e instanceof Error ? e.message : String(e));
     } finally {
       setBatchBusy(false);
+    }
+  }
+
+  // Discord 疎通テスト（冪等回避＝毎回飛ぶ・ADR-011 の別口）。
+  const [discordBusy, setDiscordBusy] = useState(false);
+  const [discordNote, setDiscordNote] = useState<string | null>(null);
+
+  async function onDiscordTest() {
+    setDiscordBusy(true);
+    setDiscordNote(null);
+    try {
+      const r = await sendDiscordTest();
+      if (!r.enabled) {
+        setDiscordNote("Discord Webhook URL が未設定なのだ（backend の .env を確認するのだ）。");
+      } else if (!r.sent) {
+        setDiscordNote("送信に失敗したのだ（Webhook URL・ネットワークを確認するのだ）。");
+      } else {
+        setDiscordNote("テストメッセージを送ったのだ ✅ Discord を確認するのだ。");
+      }
+    } catch (e) {
+      setDiscordNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDiscordBusy(false);
     }
   }
 
@@ -99,6 +122,23 @@ export default function SettingsPage() {
             {batchBusy ? "起動中…" : "バッチを今すぐ実行"}
           </button>
           {batchNote && <p className="mt-2 text-[12px] text-ink-muted">{batchNote}</p>}
+        </Card>
+
+        {/* Discord 疎通テスト（冪等回避＝毎回飛ぶ・ADR-011） */}
+        <Card title="Discord 通知">
+          <p className="mb-2 text-[12px] text-ink-muted">
+            Discord Webhook に単発のテストメッセージを送って、通知が届くか確認する。 dossier の
+            digest を待たずに今すぐ疎通確認できるのだ。
+          </p>
+          <button
+            type="button"
+            onClick={onDiscordTest}
+            disabled={discordBusy}
+            className="rounded-md border border-hairline bg-surface-2 px-3 py-1.5 text-[13px] font-medium hover:bg-surface-3 disabled:opacity-50"
+          >
+            {discordBusy ? "送信中…" : "テスト通知を送る"}
+          </button>
+          {discordNote && <p className="mt-2 text-[12px] text-ink-muted">{discordNote}</p>}
         </Card>
       </div>
     </>

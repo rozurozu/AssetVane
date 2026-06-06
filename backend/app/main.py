@@ -22,6 +22,7 @@ from app.db.engine import healthcheck, init_db
 from app.routers.advisor_state import router as advisor_state_router
 from app.routers.assets import router as assets_router
 from app.routers.batch import router as batch_router
+from app.routers.diagnostics import router as diagnostics_router
 from app.routers.dossier import router as dossier_router
 from app.routers.general_news import router as general_news_router
 from app.routers.portfolio import router as portfolio_router
@@ -102,6 +103,8 @@ app.include_router(stocks_router)
 app.include_router(signals_router)
 # 手動バッチ起動（Phase 1／spec §3.8）。POST /batch/run（routers/batch.py）。
 app.include_router(batch_router)
+# 診断（ADR-011）。POST /diagnostics/discord-test（routers/diagnostics.py）。
+app.include_router(diagnostics_router)
 # AI Advisor（軸2・相談チャット）。POST /chat（advisor/router.py）。
 app.include_router(advisor_router)
 # AI Advisor 状態（Phase 3）。/policy・/journal・/proposals（routers/advisor_state.py）。
