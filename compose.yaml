@@ -8,7 +8,11 @@
 
 services:
   backend:
-    build: ./backend
+    # dev ステージを明示（Dockerfile は base→dev→prod のマルチステージ・ADR-021）。
+    # 本番は compose.prod.yaml が ghcr の prod イメージを pull する（scripts/deploy.sh）。
+    build:
+      context: ./backend
+      target: dev
     # dev は --reload。ソースはバインドマウントなのでホスト編集が即反映される。
     # --reload-include .env: .env を編集したら自動リロード（pydantic が読み直して設定反映）。
     command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-include .env
@@ -36,7 +40,10 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
 
   frontend:
-    build: ./frontend
+    # dev ステージを明示（Dockerfile は dev→deps→builder→runner のマルチステージ・ADR-021/022）。
+    build:
+      context: ./frontend
+      target: dev
     command: npm run dev
     working_dir: /app
     volumes:

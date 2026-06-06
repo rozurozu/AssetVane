@@ -1,0 +1,40 @@
+# AssetVane — 本番（ラズパイ aarch64）。別 PC（Apple Silicon Mac）で arm64 ビルド → ghcr.io →
+# ラズパイは pull のみ（ADR-006/021/035）。dev の compose.yaml とは別物：ソース bind も --reload も
+# 無く、ghcr の prod イメージを pull して起動する。デプロイは scripts/deploy.sh 経由が既定。
+#
+# 手動で動かす場合（IMAGE_TAG は必須・タイムスタンプタグ）:
+#   IMAGE_TAG=20260606-120000 docker compose -f compose.prod.yaml pull
+#   IMAGE_TAG=20260606-120000 docker compose -f compose.prod.yaml up -d
+services:
+  backend:
+    image: ghcr.io/rozurozu/assetvane-backend:${IMAGE_TAG:?IMAGE_TAG required（例 20260606-120000）}
+    restart: unless-stopped
+    # 秘密は backend/.env のみ（ADR-005）。prod は --reload しないので env_file 注入で良い
+    # （dev が env_file を避ける理由＝reload 上書き問題は prod では起きない）。
+    env_file:
+      - ./backend/.env
+    environment:
+      - TZ=Asia/Tokyo
+      # 本番は DB を /data 直下に固定（dev の backend/data symlink に依存しない）。
+      - DATABASE_PATH=/data/assetvane.db
+      # 本番は APScheduler 同居の夜間バッチを起動（02:00 JST・U-9・config 既定は dev 用の false）。
+      - BATCH_SCHEDULER_ENABLED=true
+    volumes:
+      # SQLite 永続（git 管理外）。デプロイ前バックアップ /data/backups もここに残る（ADR-017）。
+      - ./data:/data
+      # Phase 5 の推論モデル（別 PC 産 .pkl・git 管理外・ADR-006）。今は空でよい。
+      - ./backend/models:/app/models
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+
+  frontend:
+    image: ghcr.io/rozurozu/assetvane-frontend:${IMAGE_TAG:?IMAGE_TAG required（例 20260606-120000）}
+    restart: unless-stopped
+    # NEXT_PUBLIC_API_BASE_URL はビルド時に bundle へ焼き込み済み（scripts/deploy.sh の build-arg）。
+    # 実行時 env は不要。ブラウザから到達できる URL を build 時に渡すこと（architecture.md §7.1）。
+    environment:
+      - TZ=Asia/Tokyo
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - backend

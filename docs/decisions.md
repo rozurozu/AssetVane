@@ -366,3 +366,24 @@
 - **理由**: 個別銘柄ドシエ（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）と一般ニュースは**住所（紐づく対象）が根本的に違う**ため、同じ台帳に混ぜず別系統で持つのが正しい。
 - **代替案**: `dossier_sources` を code FK 任意に緩めて一般ニュースも載せる → 台帳の住所が崩れるため不採用。`fetch_news` を汎用化して共用 → 銘柄専用シグネチャがぶれるため不採用（新メソッド追加に留めた）。日次総括 markdown を別テーブルに焼く 2 テーブル構成 → 消費先が「眺める＋文脈材料」だけなので YAGNI（必要になれば後付け）。カテゴリ定義を env 化 → 構造データの JSON 文字列化・`.env.example` 同期が煩雑なだけで益が無いため定数モジュールに。
 - **段階**: **実装済み（2026-06-06）**。pytest green（adapter / repo / API / job の単体＋migration 回帰）。frontend は Dashboard widget まで配線（専用ページは作らない）。
+
+## ADR-035: ラズパイへのデプロイは「Mac(arm64) ローカルビルド → ghcr.io → ssh デプロイ」（GitHub Actions 不採用）
+
+- **状況**: 本番母艦はラズパイ 4B（aarch64・8GB・家庭内 LAN・外部公開しない＝[ADR-001](#adr-001-単一ユーザー認証なし)）。[ADR-021](#adr-021-開発本番ともコンテナdocker-compose-で動かす) で「**イメージは別 PC でクロスビルド → ラズパイは pull のみ**」と方針だけ決めていたが、配布経路（誰がどこでビルドし、どうラズパイへ届け、どう起動するか）が未実装だった。CI/CD として GitHub Actions を使うか検討した。
+- **決定**: GitHub Actions は使わず、**開発機の Apple Silicon Mac を ADR-021 の「別 PC」に充て、ローカルで `linux/arm64` をネイティブビルド → `ghcr.io` に push → 同一 LAN のラズパイへ `ssh` で入って `compose pull → up` するデプロイスクリプト（`scripts/deploy.sh`・`make deploy`）**で配布する。
+  - **ビルド**: `docker buildx --platform linux/arm64 --target prod/runner`。Mac(arm64)＝ラズパイ(aarch64) と**同アーキなのでネイティブビルド**（エミュレーション無し）。Dockerfile は `dev`/`prod`（backend）・`dev`/`runner`（frontend standalone）のマルチステージにし、dev の `compose.yaml` は `target: dev` を明示して本番と分離。
+  - **配布**: `ghcr.io/rozurozu/assetvane-{backend,frontend}`。タグはイミュータブルな **`YYYYMMDD-HHMMSS`** ＋追従用 `latest`。トレース用に **jj の short change-id を OCI label**（`org.opencontainers.image.revision`）に焼く。`compose.prod.yaml` は `${IMAGE_TAG}` を参照し、**ロールバックは `IMAGE_TAG` を前値に戻して `up -d`**（ラズパイの `.last_good_tag` に直近正常タグを記録）。
+  - **デプロイ手順**: `ssh` で ① **デプロイ前バックアップ**（旧コンテナで `VACUUM INTO`＝[ADR-017](#adr-017-sqlite-を定期バックアップする)・`app.scripts.backup`）→ ② `compose pull` → ③ `up -d`（FastAPI 起動で `alembic upgrade head` が自動実行）→ ④ `/health` ポーリング → ⑤ 失敗なら `.last_good_tag` で自動ロールバック。down→up の一瞬の停止は許容（自分専用ダッシュボード・ゼロダウンタイム不要）。
+  - **`NEXT_PUBLIC_API_BASE_URL` はビルド時に bundle へ焼き込む**（Next の仕様）。`scripts/deploy.sh` が build-arg で本番 URL（`http://raspberrypi.local:8000`）を渡す（[architecture.md §7.1](architecture.md) の落とし穴）。
+- **理由**:
+  - **GHA のクラウドランナーは x86** で、`linux/arm64` を焼くには QEMU エミュが要り、`lightgbm`/`cvxpy`/`pandas` 等のネイティブビルドが重く失敗しやすい（[ADR-021](#adr-021-開発本番ともコンテナdocker-compose-で動かす) が警告する罠を自ら踏みに行く形）。**Apple Silicon Mac ならネイティブで速く確実**。
+  - **クラウドは家庭内 LAN のラズパイに到達できない**（外部非公開＝[ADR-001](#adr-001-単一ユーザー認証なし)）。ビルド機が LAN 内の Mac なら `ssh` 直結で済み、self-hosted runner も VPN も watchtower も要らない（接続は Mac→Pi の LAN 内のみ・inbound を一切開けない）。
+  - **DB アプリなのでデプロイに `alembic upgrade head` と事前バックアップが死活的**。スクリプトなら手順に組み込めるが、watchtower 等の自動更新では migration が抜ける。
+  - 単一ユーザーの個人プロジェクトで、デプロイは低頻度・手動トリガで足りる。GHA の常時 CI はオーバーキル。
+- **代替案**:
+  - **GHA でクラウドビルド→ghcr→ラズパイ pull** → QEMU エミュの遅さ・脆さ＋クラウドがラズパイに届かない二重苦で不採用。
+  - **watchtower で自動更新** → migration を打てず DB アプリに不適。制御も弱い。不採用。
+  - **Tailscale 等 VPN でクラウドから push** → 同 LAN の Mac があれば VPN 常設・鍵管理が無駄に増える。不採用。
+  - **`docker save | ssh load` 直送（レジストリなし）** → タグ履歴が無くロールバックが手作業になる。ghcr 経由を採用（private package なのでラズパイで初回 `docker login ghcr.io`＝read:packages PAT が要る）。
+  - **CI（pytest/ruff/biome ゲート）が欲しくなったら**、ビルド/デプロイとは切り離して GHA に後付けできる（本 ADR はそれを禁じない）。
+- **詳細**: `scripts/deploy.sh`（build→push→ssh デプロイ・ロールバック）・`Makefile`（`make deploy`）・`compose.prod.yaml`（ghcr image・`restart: unless-stopped`・`DATABASE_PATH=/data/assetvane.db`・`BATCH_SCHEDULER_ENABLED=true`）・`backend/Dockerfile`（base→dev→prod）・`frontend/Dockerfile`（dev→deps→builder→runner・standalone）・`frontend/next.config.ts`（`output:"standalone"`）・`backend/app/scripts/backup.py`（VACUUM INTO・prune）・運用手順は [docs/deploy.md](deploy.md)。
