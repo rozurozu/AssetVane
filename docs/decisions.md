@@ -417,3 +417,24 @@
   - **CORS を `*` 許可＋焼き込みは IP 固定**で運用 → 地雷（焼き込みの 3 ホスト一致・DHCP 変動）が残るので不採用。
   - **チャットのストリーミング懸念**: 現状チャットは非ストリーミング fetch（SSE 不使用）なので rewrites 越しで問題なし。将来 SSE 化する場合も Next rewrites はストリーミングを通すが、その時に実機検証する。
 - **詳細**: `frontend/next.config.ts`（`rewrites()`・`BACKEND_ORIGIN`）・`frontend/src/lib/api.ts`（`API_BASE="/api"`）・`frontend/Dockerfile`（build-arg を `BACKEND_ORIGIN` に）・`compose.yaml`／`compose.prod.yaml`（frontend env）・`scripts/deploy.sh`＋`deploy.env.example`（`API_URL` 廃止）・`backend/app/main.py`（CORSMiddleware 撤去）・`backend/app/config.py`（`cors_*` 撤去）・`backend/.env.example`。
+
+## ADR-038: ログ規約——テキスト形式・stdout 集約・docker json-file ローテーション・握り潰し禁止
+
+- **状況**: ラズパイの「画面に『backend 未接続』バッジが出る」障害（[ADR-037](#adr-037-next--fastapi-は同一オリジン化next-rewrites-プロキシcors-と-api_url-焼き込みを廃止) の 3 ホスト一致地雷）を追ったとき、**ログがほぼ無く原因を追えなかった**。frontend は失敗を `.catch` で握り潰し、backend のログ方針も曖昧（標準 `logging` を使うとだけ決め・[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)）で、フォーマット・レベル・出力先・Pi での永続化が未定義だった。無人運用（[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)）の「静かな失敗」を可観測にしたい。
+- **決定**: ログ基盤を以下に固定する。
+  - **標準 `logging` ＋ `logging.config.dictConfig`** で構成し、**人間可読のテキスト形式**（`%(asctime)s %(levelname)s %(name)s: %(message)s`）にする。JSON 構造化ログへの集約は将来 Mac mini 等のログ集約基盤を入れる時に再検討する（単一ユーザー・1 ホストの今は人間が `docker logs` を直に読む方が速い）。
+  - **レベルは `LOG_LEVEL` env で root を可変**（既定 `INFO`・`backend/app/config.py` の `log_level`）。設定の所在は **`backend/app/logging_config.py:setup_logging()`** に一元化し、**`backend/app/main.py` が import 時に呼ぶ**（uvicorn ロガーと整合させ、`/health` の access ログは抑制する）。
+  - **出力は stdout/stderr に寄せる**。**Pi での永続化は docker の json-file ローテーション**（`max-size: 10m` × `max-file: 5`＝1 サービスあたり最大 50MB で頭打ち）を `compose.yaml`／`compose.prod.yaml` の各サービスに設定する。**アプリ側で FileHandler は使わない**——ファイルを持つのは FastAPI のプロセスが扱う DB だけ（[ADR-005](#adr-005-db-に触れるのは-fastapi-のみnext-は-rest-経由)）という規律に揃え、ログファイルの二重管理（ローテーション・退避・パーミッション）を避けるため。
+  - **失敗・警告はコンテキストを最も持つ層で 1 度だけ**出す（log-and-rethrow を各層で重ねない）。**`.catch`／`except` での握り潰しは禁止**（frontend 含む）。今回の `Topbar` が実例で、ヘルスチェック失敗を黙殺せず `console.error` ＋定期再チェックにした（[ADR-037](#adr-037-next--fastapi-は同一オリジン化next-rewrites-プロキシcors-と-api_url-焼き込みを廃止) の罠を二度踏まないため）。
+  - **`/health` の access ログは抑制**する。定期ヘルスチェック（フロントの周期 fetch・compose の healthcheck 等）で本当に見たいログが埋もれるのを防ぐ。
+  - **無人バッチの失敗は Discord 通知**（[ADR-007](#adr-007-通知は-discord-webhookline-notify-は不採用)／[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない) を踏襲）。ログとは**別経路**で、ログを読みに行かなくても気づけるようにする。
+- **理由**:
+  - **テキスト＋stdout が今の規模に最適**: 読み手は自分 1 人・ホストは Pi 1 台で、`docker compose logs -f` を直に読むのが最速。JSON 化や集約 SaaS はオーバーキルで、必要になってから足せる。
+  - **stdout に寄せれば docker がローテーションを担う**: アプリが FileHandler を持つと、ローテーション・サイズ上限・退避を自前で管理することになり [ADR-005](#adr-005-db-に触れるのは-fastapi-のみnext-は-rest-経由)（ファイルを持つのは DB＝FastAPI だけ）と二重管理になる。docker json-file に寄せれば SD カードの I/O・寿命（[ADR-017](#adr-017-sqlite-を定期バックアップする)）も上限 50MB で守れる。
+  - **握り潰し禁止が今回の障害の本質**: ログが無かったのではなく、失敗が握り潰されていた。`.catch`／`except` で握って後続を進めてよいのは夜間バッチのジョブ単位（個別失敗を握って後続を止めない＝[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)）など**意図を明記した箇所だけ**で、それ以外は最もコンテキストを持つ層で 1 度だけ出す。
+- **代替案**:
+  - **JSON 構造化ログ＋集約（Loki/ELK 等）** → 単一ユーザー・1 ホストには過剰。Mac mini 導入時に再検討（本 ADR は禁じない）。
+  - **アプリ側 FileHandler ＋ `RotatingFileHandler`** → [ADR-005](#adr-005-db-に触れるのは-fastapi-のみnext-は-rest-経由) と二重管理になり、docker ローテーションと役割が重複。不採用。
+  - **ログレベルをコード固定** → 障害解析時に DEBUG へ上げられないと不便。`LOG_LEVEL` env で可変にする。
+- **関連**: [ADR-005](#adr-005-db-に触れるのは-fastapi-のみnext-は-rest-経由)（ファイルを持つのは FastAPI だけ）・[ADR-007](#adr-007-通知は-discord-webhookline-notify-は不採用)／[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)（無人失敗は Discord・別経路）・[ADR-017](#adr-017-sqlite-を定期バックアップする)（SD I/O・寿命）・[ADR-037](#adr-037-next--fastapi-は同一オリジン化next-rewrites-プロキシcors-と-api_url-焼き込みを廃止)（今回の障害の発端）。
+- **詳細**: `backend/app/logging_config.py`（`setup_logging()`・`dictConfig`・uvicorn 整合・`/health` 抑制）・`backend/app/main.py`（import 時に `setup_logging()`）・`backend/app/config.py`（`log_level`・env `LOG_LEVEL`）・`compose.yaml`／`compose.prod.yaml`（json-file ローテーション 10m×5）・`frontend/src/components/shell/Topbar.tsx`（握り潰し廃止・定期再チェック）・`frontend/src/lib/api.ts`（失敗時に解決済み URL を載せる・`getHealth` タイムアウト）・運用は [docs/deploy.md](deploy.md) の「ログの見方」。

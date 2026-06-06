@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 読むもの | 内容 |
 |---|---|
 | `README.md` | 全体像・技術スタック・起動手順 |
-| `docs/decisions.md` | **ADR-001〜037。なぜそうしたかの全記録。最重要** |
+| `docs/decisions.md` | **ADR-001〜038。なぜそうしたかの全記録。最重要** |
 | `docs/architecture.md` | システム構成・2 軸 AI・データフロー・通信/障害/運用 |
 | `docs/screens.md` | 画面設計（IA）・ナビ方針・Dashboard 構成・常駐 Advisor チャット・画面コンテキスト |
 | `docs/advisor.md` | AI Advisor の設計（CORE/POLICY プロンプト・Tool・手法の扱い） |

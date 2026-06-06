@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # --- データベース ---
     database_path: str = "./data/assetvane.db"
 
+    # --- ログ（ADR-038） ---
+    # logging の root レベル。env LOG_LEVEL で可変（case-insensitive で読む）。
+    # 形式は人間が読めるテキストで stdout に寄せる（Pi の永続化は docker 側で別レーン担当）。
+    log_level: str = "INFO"
+
     # --- LLM (AI Advisor) --- Phase 3〜
     llm_api_key: str = ""
     llm_base_url: str = "https://openrouter.ai/api/v1"

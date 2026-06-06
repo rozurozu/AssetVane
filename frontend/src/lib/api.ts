@@ -5,7 +5,9 @@
 export const API_BASE = "/api";
 
 /** API エラー。status 付きで throw する（呼び出し側で `e instanceof ApiError` で分岐できる）。
- * メッセージは FastAPI の `{"detail": "..."}` から拾う（router 境界で HTTPException 翻訳）。 */
+ * メッセージは FastAPI の `{"detail": "..."}` から拾う（router 境界で HTTPException 翻訳）。
+ * status=0 は「ネットワーク到達不能」（CORS・接続拒否・タイムアウト等で fetch 自体が失敗し、
+ * HTTP ステータスが取れなかった）を表す約束（ADR-038）。message に解決済み URL を載せる。 */
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -13,6 +15,34 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = "ApiError";
+  }
+}
+
+/** ネットワーク到達不能（status=0）の意味（ADR-038）。CORS・接続拒否・タイムアウトで使う。 */
+const NETWORK_UNREACHABLE = 0;
+
+/** path から解決済みのリクエスト URL を組み立てる（エラーメッセージに載せて追跡可能にする・ADR-038）。
+ * ブラウザは相対 `/api`（ADR-037）を自オリジンへ解決するので、location.origin を前置する。 */
+function resolveUrl(path: string): string {
+  const origin = typeof location !== "undefined" ? location.origin : "";
+  return `${origin}${API_BASE}${path}`;
+}
+
+/** fetch を実行し、ネットワーク到達不能（fetch が TypeError を投げる）を ApiError(status=0) に翻訳する。
+ * CORS・接続拒否・DNS 失敗ではブラウザ fetch は status も URL も持たない TypeError を投げるため、
+ * ここで解決済み URL を載せた ApiError に翻訳して「どこへ繋ごうとして失敗したか」を追えるようにする（ADR-038）。
+ * HTTP 非 2xx（status が取れる）は呼び出し側で toApiError に通す。ここでは投げ直さず Response を返す。 */
+async function fetchOrUnreachable(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${API_BASE}${path}`, init);
+  } catch (e) {
+    // TypeError = ネットワーク到達不能（CORS / 接続拒否 / DNS）。AbortError もここに来る。
+    const url = resolveUrl(path);
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new ApiError(NETWORK_UNREACHABLE, `${url} への接続を中断（タイムアウト等）`);
+    }
+    const reason = e instanceof Error ? e.message : String(e);
+    throw new ApiError(NETWORK_UNREACHABLE, `${url} へ到達不能（${reason}）`);
   }
 }
 
@@ -399,7 +429,7 @@ export type SavedFilterInput = {
 // 失敗は detail を載せた ApiError を throw（呼び出し側で status 分岐可能）。
 // GET は signal を受けて fetch に渡す（AbortController でキャンセル＝useApi 連携）。
 async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const r = await fetch(`${API_BASE}${path}`, {
+  const r = await fetchOrUnreachable(path, {
     headers: { Accept: "application/json" },
     signal,
   });
@@ -410,7 +440,7 @@ async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
 // POST / PUT / DELETE ヘルパ（getJSON と同じエラー処理・ADR-005）。
 // Content-Type: application/json を付与し、レスポンス body を T として返す。
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(`${API_BASE}${path}`, {
+  const r = await fetchOrUnreachable(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
@@ -420,7 +450,7 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function putJSON<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(`${API_BASE}${path}`, {
+  const r = await fetchOrUnreachable(path, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
@@ -430,7 +460,7 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function patchJSON<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(`${API_BASE}${path}`, {
+  const r = await fetchOrUnreachable(path, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
@@ -440,7 +470,7 @@ async function patchJSON<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function del<T>(path: string): Promise<T> {
-  const r = await fetch(`${API_BASE}${path}`, {
+  const r = await fetchOrUnreachable(path, {
     method: "DELETE",
     headers: { Accept: "application/json" },
   });
@@ -801,9 +831,28 @@ export interface HealthResponse {
   [k: string]: unknown;
 }
 
-/** backend への疎通確認（Topbar の健全性バッジ。失敗は ApiError を throw）。 */
+/** /health の疎通確認に掛けるタイムアウト（Pi 冷間起動・無応答で赤に倒すまでの上限・ADR-038）。 */
+const HEALTH_TIMEOUT_MS = 5000;
+
+/** backend への疎通確認（Topbar の健全性バッジ。失敗は ApiError を throw）。
+ * 内部タイムアウト（HEALTH_TIMEOUT_MS）用の AbortController を併用し、呼び出し側の signal とも連動させる
+ * （どちらが abort しても fetch を止める）。タイムアウト発火・到達不能はいずれも getJSON が
+ * ApiError(status=0) に翻訳し、message に「どこへ繋ごうとして失敗したか」を載せる（ADR-038）。 */
 export function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  return getJSON<HealthResponse>("/health", signal);
+  const timeoutCtrl = new AbortController();
+  const timer = setTimeout(() => {
+    // 何秒で諦めたかをメッセージに残す（getJSON 側で URL と結合される）。
+    timeoutCtrl.abort(new DOMException(`${HEALTH_TIMEOUT_MS}ms タイムアウト`, "AbortError"));
+  }, HEALTH_TIMEOUT_MS);
+
+  // 呼び出し側 signal が先に abort したらタイムアウト用 controller も止める（fetch を確実に中断）。
+  const onCallerAbort = () => timeoutCtrl.abort();
+  signal?.addEventListener("abort", onCallerAbort, { once: true });
+
+  return getJSON<HealthResponse>("/health", timeoutCtrl.signal).finally(() => {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onCallerAbort);
+  });
 }
 
 // --- Phase 4 API 関数（phase4-spec.md §5・既存 fetch ヘルパと同じ流儀）---

@@ -36,6 +36,12 @@ services:
       # タイムゾーンを JST に固定（Phase 6・phase6-spec §5）。夜間バッチ cron は
       # CronTrigger(timezone="Asia/Tokyo") で明示するが、ログの時刻表記も JST に揃える。
       - TZ=Asia/Tokyo
+    # ログローテーションは本番（compose.prod.yaml）が主目的だが、dev/prod 差を減らすため整合させる（ADR-017/038）。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     ports:
       - "${BACKEND_PORT:-8000}:8000"
 
@@ -56,6 +62,12 @@ services:
       - BACKEND_ORIGIN=http://backend:8000
       # Docker volume 上での HMR を polling で担保。
       - WATCHPACK_POLLING=true
+    # backend と同じく json-file ローテーション（10m × 5）。dev/prod 差を減らすため整合させる（ADR-017/038）。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:

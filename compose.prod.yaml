@@ -24,6 +24,14 @@ services:
       - ./data:/data
       # Phase 5 の推論モデル（別 PC 産 .pkl・git 管理外・ADR-006）。今は空でよい。
       - ./backend/models:/app/models
+    # ログは stdout/stderr に寄せ、Pi の永続化は docker json-file のローテーションで賄う（ADR-038）。
+    # ラズパイの SD I/O・寿命がボトルネックなので（ADR-017）無制限にログを溜めない。
+    # max-size 10m × max-file 5 ＝ 1 サービスあたり最大 50MB で頭打ち（古いものから破棄）。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     ports:
       - "${BACKEND_PORT:-8000}:8000"
 
@@ -35,6 +43,12 @@ services:
     # Pi の IP/mDNS が何であろうと同じイメージで動く（旧 NEXT_PUBLIC_API_BASE_URL の Pi ごと焼き直しは不要）。
     environment:
       - TZ=Asia/Tokyo
+    # backend と同じく json-file ローテーション（10m × 5）でログ肥大を防ぐ（ADR-017/038）。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:

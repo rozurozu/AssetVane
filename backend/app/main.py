@@ -18,6 +18,7 @@ from app.advisor.mcp_server import mount_mcp, session_manager_lifespan
 from app.batch import run_nightly
 from app.config import settings
 from app.db.engine import healthcheck, init_db
+from app.logging_config import setup_logging
 from app.routers.advisor_state import router as advisor_state_router
 from app.routers.assets import router as assets_router
 from app.routers.batch import router as batch_router
@@ -29,6 +30,10 @@ from app.routers.screening_filters import router as screening_filters_router
 from app.routers.signals import router as signals_router
 from app.routers.stocks import router as stocks_router
 from app.routers.watchlist import router as watchlist_router
+
+# import 時に 1 回だけログ基盤を構成する（ADR-038）。uvicorn は app import 前に自前の
+# LOGGING_CONFIG で dictConfig するため、ここで後勝ちに上書きしてテキスト形式/stdout に揃える。
+setup_logging()
 
 logger = logging.getLogger(__name__)
 

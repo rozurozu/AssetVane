@@ -57,11 +57,17 @@ from __future__ import annotations
 - グローバルに翻訳したい横断例外は `@app.exception_handler(MyError)` でまとめてもよい。router 内の局所的なものは `raise HTTPException(...)` で個別に。
 - **バッチの個別ジョブ失敗**は握って後続を止めない（[[batch-pattern]]）。それ以外で握りつぶさない。
 
-## ログ方針
+## ログ方針（ADR-038）
 
-- 失敗・警告は**コンテキストを最も持つ層で 1 度だけ**出す。二重ログ（log-and-rethrow を各層で）はしない。
-- 無人バッチの失敗は Discord 通知（ADR-007/018）。対話的なチャットの失敗は通知しない（HTTPException で返すだけ）。
 - ログは標準 `logging`（`logger = logging.getLogger(__name__)`）。
+- **フォーマットは人間可読のテキスト**＝`%(asctime)s %(levelname)s %(name)s: %(message)s`（JSON 集約は将来 Mac mini 導入時に再検討）。
+- **レベルは `LOG_LEVEL` env で root を可変**（既定 `INFO`・`config.py` の `log_level`）。障害解析時は `DEBUG` に上げる。
+- **設定の所在は `app/logging_config.py:setup_logging()` に一元化**し、**`app/main.py` が import 時に呼ぶ**（`dictConfig`・uvicorn ロガー整合）。各モジュールで `basicConfig` やハンドラ設定をしない。
+- **出力は stdout/stderr に寄せる**。**アプリ側 FileHandler は使わない**（ファイルを持つのは FastAPI が扱う DB だけ＝ADR-005 と二重管理を避ける）。Pi での永続化は docker json-file ローテーション（`compose*.yaml` の `logging:` 10m × 5）が担う。
+- **`/health` の access ログは抑制**（定期ヘルスチェックで本当に見たいログが埋もれるのを防ぐ）。`setup_logging()` で uvicorn.access のフィルタとして設定する。
+- 失敗・警告は**コンテキストを最も持つ層で 1 度だけ**出す。二重ログ（log-and-rethrow を各層で）はしない。
+- **`except` での握り潰しは禁止**（frontend の `.catch` も同様）。握って後続を進めてよいのは [[batch-pattern]]（ジョブ単位で握り後続を止めない）など**意図を明記した箇所だけ**。それ以外は最もコンテキストを持つ層で 1 度だけ出す。
+- 無人バッチの失敗は Discord 通知（ADR-007/018）。ログとは**別経路**（ログを読みに行かなくても気づける）。対話的なチャットの失敗は通知しない（HTTPException で返すだけ）。
 
 ## lint / format / 型
 

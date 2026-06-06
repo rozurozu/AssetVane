@@ -4,21 +4,49 @@ import { getHealth } from "@/lib/api";
 import { useEffect, useState } from "react";
 
 // topbar 48px / canvas。検索・データ鮮度バッジ・日付に加えて、backend(/health) への
-// 疎通を 1 回確認して出す（CORS が効いているかの最小チェック。失敗しても画面は壊さない）。
-// 取得は lib/api.ts の getHealth() に集約（生 fetch を散らさない・ADR-005）。
+// 疎通バッジを出す（CORS / 接続可否の最小チェック。失敗しても画面は壊さない）。
+// マウント時に 1 回確認したあと HEALTH_POLL_MS ごとに再チェックし、down→ok へ自己回復する
+// （Pi 冷間起動の偽陽性を防ぐ）。失敗時は解決済み URL 付きで console.error する（ADR-038）。
+// 取得は lib/api.ts の getHealth() に集約（生 fetch を散らさない・ADR-005）。getHealth 側で
+// 5s タイムアウトが効く（無応答でも赤に倒れる）。
 
 type Health = "checking" | "ok" | "down";
+
+/** /health の再チェック間隔（ミリ秒・ADR-038）。down→ok の自己回復はこの周期で起きる。 */
+const HEALTH_POLL_MS = 30000;
 
 export function Topbar() {
   const [health, setHealth] = useState<Health>("checking");
 
   useEffect(() => {
     let alive = true;
-    getHealth()
-      .then(() => alive && setHealth("ok"))
-      .catch(() => alive && setHealth("down"));
+    // 進行中の fetch を保持し、アンマウント時に中断する（getHealth は signal を受ける）。
+    let inflight: AbortController | null = null;
+
+    const check = () => {
+      inflight?.abort(); // 前回が走っていれば中断（重複防止）
+      const ctrl = new AbortController();
+      inflight = ctrl;
+      getHealth(ctrl.signal)
+        .then(() => {
+          if (alive) setHealth("ok");
+        })
+        .catch((error) => {
+          // この呼び出し自身が中断された（アンマウント or 次の check による差し替え）なら握る。
+          if (!alive || ctrl.signal.aborted) return;
+          // error.message に解決済み URL が載っている（lib/api.ts・ADR-038）。
+          console.error("[health] backend 未接続", error);
+          setHealth("down");
+        });
+    };
+
+    check(); // 初回は即時
+    const id = setInterval(check, HEALTH_POLL_MS); // 以降は定期再チェック（自己回復）
+
     return () => {
       alive = false;
+      clearInterval(id);
+      inflight?.abort();
     };
   }, []);
 

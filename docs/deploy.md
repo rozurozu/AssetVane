@@ -183,13 +183,28 @@ IMAGE_TAG=<戻したいタグ> docker compose -f compose.prod.yaml up -d
 
 ---
 
+## ログの見方（ADR-038）
+
+障害の一次情報はコンテナの stdout/stderr に出る（アプリは FileHandler を持たない＝[ADR-038](decisions.md)）。
+
+```bash
+# backend のログを追う（テキスト形式 `時刻 LEVEL ロガー名: メッセージ`）
+docker compose -f compose.prod.yaml logs -f backend
+# frontend も同様
+docker compose -f compose.prod.yaml logs -f frontend
+```
+
+- **詳細を出したい**: `backend/.env` に `LOG_LEVEL=DEBUG` を足して `make reload`（root レベルが DEBUG に上がる。既定は `INFO`）。切り分けが済んだら戻す。
+- **`/health` の access ログは出ない**: 定期ヘルスチェックで埋もれないよう抑制してある（[ADR-038](decisions.md)）。backend が応答しているかは `/health` を直に叩いて確認する（`exec frontend wget -qO- http://backend:8000/health`）。
+- **ログが消える/古い分が無い**: docker の json-file ローテーション（`compose*.yaml` の `logging:` ＝ `max-size: 10m` × `max-file: 5`）で **1 サービスあたり最大 50MB** に頭打ちし、古いものから破棄する（SD カードの I/O・寿命対策＝[ADR-017](decisions.md)）。それ以前のログは残らない。常時残したい失敗は Discord 通知（[ADR-018](decisions.md)）側で拾う。
+
 ## トラブルシュート
 
 - **pull で unauthorized**: ラズパイ/ローカルの `docker login ghcr.io`（PAT 権限・期限）を確認。private package には `read:packages` が要る。
 - **画面に「backend 未接続」バッジが出る**: バッジはブラウザから `/api/health` への fetch が失敗すると出る（`Topbar`）。[ADR-037](decisions.md) の同一オリジン化以降、これは **frontend(Next) → backend の rewrites 転送が通っていない**ことを意味する（CORS/焼き込みの 3 ホスト一致地雷は無くなった）。切り分け（ブラウザ DevTools の Network で `/api/health` の Request URL と Status を見る）:
   - **frontend 自体に繋がらない**（ページが開けない・`/api/health` がそもそも飛ばない）: frontend コンテナが落ちている。`docker compose -f compose.prod.yaml ps` / `logs frontend` を確認。
   - **`/api/health` が 502/504**（frontend は応答するが API が返らない）: rewrites の転送先 backend に届いていない。**backend コンテナの健全性**（`logs backend`・`exec frontend wget -qO- http://backend:8000/health`）と、frontend コンテナから内部 DNS `backend` が引けるか（同一 compose network にいるか）を確認。マイグレーション失敗で backend が起動途中に落ちている場合もここに出る。
-  - **古いイメージが残っている**（旧 `NEXT_PUBLIC_API_BASE_URL` 焼き込み版が動いている）: `make deploy` で作り直し、`make reload`。
+  - **古いイメージが残っている**（旧 `NEXT_PUBLIC_API_BASE_URL` 焼き込み版が動いている）: `make deploy` で作り直し、`make reload`。DevTools の Network で `/api/health` の Request URL を見て、`/api/...` 相対でなく `host:8000` 直なら**古い焼き込みイメージ**が動いている＝`make deploy`（焼き直し）→`make reload`。
 - **arm64 になっているか確認**:
   ```bash
   docker buildx imagetools inspect ghcr.io/rozurozu/assetvane-backend:<タグ>
