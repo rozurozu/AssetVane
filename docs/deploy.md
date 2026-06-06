@@ -188,7 +188,10 @@ IMAGE_TAG=<戻したいタグ> docker compose -f compose.prod.yaml up -d
 障害の一次情報はコンテナの stdout/stderr に出る（アプリは FileHandler を持たない＝[ADR-038](decisions.md)）。
 
 ```bash
-# backend のログを追う（テキスト形式 `時刻 LEVEL ロガー名: メッセージ`）
+# backend のログを追う（夜バッチ含む・dev/Pi 自動判定）。これが手早い
+make logs
+
+# 素で叩くなら（テキスト形式 `時刻 LEVEL ロガー名: メッセージ`）
 docker compose -f compose.prod.yaml logs -f backend
 # frontend も同様
 docker compose -f compose.prod.yaml logs -f frontend

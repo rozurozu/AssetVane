@@ -19,7 +19,7 @@ endif
 IMAGE_TAG ?= $(shell cat .last_good_tag 2>/dev/null)
 export IMAGE_TAG
 
-.PHONY: discord-test jquants-test batch-full restart reload test lint format deploy deploy-build
+.PHONY: discord-test jquants-test batch-full logs restart reload test lint format deploy deploy-build
 
 # ===== 運用（dev / Pi 共通・compose 自動判定）=====
 
@@ -31,6 +31,9 @@ jquants-test: ## J-Quants V2 に認証ピングを 1 発投げる（DB 非依存
 
 batch-full: ## 全銘柄フルバックフィルを 1 回流す（初回投入/復旧・約100〜150分・ADR-036）
 	$(COMPOSE) exec backend uv run python -m app.scripts.backfill --nightly
+
+logs: ## backend のログを追う（夜バッチ含む・dev/Pi 自動判定・Ctrl-C で抜ける・ADR-038）
+	$(COMPOSE) logs -f backend
 
 # restart と reload の違い（front/back 両方が対象）:
 #   restart … `docker compose restart`。既存コンテナを止めて起こすだけ。速い・普段使い。
