@@ -15,7 +15,14 @@
 #   - ラズパイの ~/$PI_DIR に backend/.env と data/ を配置済み。
 set -euo pipefail
 
-# ---- 設定（環境変数で上書き可） ----
+cd "$(dirname "$0")/.."
+
+# ローカルのデプロイ設定（PI_HOST 等）は deploy.env に置く（git 管理外・雛形は deploy.env.example）。
+# あれば読み込む。ここで設定した変数を下の ${VAR:-既定値} が採用する。
+# 優先順位: make deploy VAR=...（実行時の環境変数）＞ deploy.env ＞ 下の既定値。
+[ -f ./deploy.env ] && . ./deploy.env
+
+# ---- 設定（deploy.env または実行時の環境変数で上書き可） ----
 REGISTRY="${REGISTRY:-ghcr.io/rozurozu}"
 PI_HOST="${PI_HOST:-raspberrypi.local}"
 # ラズパイのホームからの相対パス（~ を渡すと remote で展開されない罠を避ける）。
@@ -23,8 +30,6 @@ PI_DIR="${PI_DIR:-assetvane}"
 # frontend に焼き込む本番 API URL（ブラウザから到達できる名前・architecture.md §7.1）。
 API_URL="${API_URL:-http://raspberrypi.local:8000}"
 PLATFORM="${PLATFORM:-linux/arm64}"
-
-cd "$(dirname "$0")/.."
 
 IMAGE_TAG="$(date +%Y%m%d-%H%M%S)"
 JJ_ID="$(jj log -r @ --no-graph -T 'change_id.short()' 2>/dev/null || echo unknown)"

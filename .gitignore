@@ -3,6 +3,9 @@
 **/.env
 !.env.example
 
+# デプロイ設定（ローカル・PI_HOST / API_URL 等。雛形 deploy.env.example は追跡する）
+/deploy.env
+
 # データベース・データ
 data/
 *.db

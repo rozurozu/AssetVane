@@ -70,11 +70,19 @@ make deploy
 ./scripts/deploy.sh
 ```
 
-設定は環境変数で上書きできる:
+設定は **`deploy.env`（git 管理外）** に置くのが基本。雛形をコピーして埋める:
 
 ```bash
-make deploy PI_HOST=pi.local PI_DIR=assetvane API_URL=http://pi.local:8000
+cp deploy.env.example deploy.env   # PI_HOST / API_URL 等を書く
 ```
+
+`deploy.env` は `scripts/deploy.sh` が起動時に読み込む。1 回限りの上書きは実行時の環境変数で:
+
+```bash
+make deploy PI_HOST=pi@192.168.1.50 API_URL=http://192.168.1.50:8000
+```
+
+優先順位は **実行時の環境変数 ＞ `deploy.env` ＞ スクリプト既定値**。
 
 | 変数 | 既定 | 意味 |
 |---|---|---|
