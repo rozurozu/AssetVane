@@ -387,3 +387,18 @@
   - **`docker save | ssh load` 直送（レジストリなし）** → タグ履歴が無くロールバックが手作業になる。ghcr 経由を採用（private package なのでラズパイで初回 `docker login ghcr.io`＝read:packages PAT が要る）。
   - **CI（pytest/ruff/biome ゲート）が欲しくなったら**、ビルド/デプロイとは切り離して GHA に後付けできる（本 ADR はそれを禁じない）。
 - **詳細**: `scripts/deploy.sh`（build→push→ssh デプロイ・ロールバック）・`Makefile`（`make deploy`）・`compose.prod.yaml`（ghcr image・`restart: unless-stopped`・`DATABASE_PATH=/data/assetvane.db`・`BATCH_SCHEDULER_ENABLED=true`）・`backend/Dockerfile`（base→dev→prod）・`frontend/Dockerfile`（dev→deps→builder→runner・standalone）・`frontend/next.config.ts`（`output:"standalone"`）・`backend/app/scripts/backup.py`（VACUUM INTO・prune）・運用手順は [docs/deploy.md](deploy.md)。
+
+## ADR-036: バッチは「停止できる・状態が見える」——実行状態はメモリ singleton・停止は協調キャンセル
+
+- **状況**: 初回デプロイの全銘柄フルバックフィルは約100〜150分かかる（[ADR-008](#adr-008-j-quants-は-v2-を使う) の Free レート制約）。これを**自分の操作で起動**したいが、従来 `POST /batch/run` は `202 {started:true}` を返すだけで、(a) 走っているか・今どのジョブかを **WebUI から知る術が無く**、(b) 誤って起動したフルを**止める術も無かった**（BackgroundTask は強制キャンセルできない）。「動いているのが見える」「止められる」を最小コストで足したい。バッチ実行履歴を DB に持つ案（`batch_runs` テーブル）も検討した。
+- **決定**: 実行状態を **FastAPI プロセス内のメモリ singleton**（`batch/state.py`・`running`/`current_job`/`started_at`/`full_backfill`/`stop_requested`）で持ち、`GET /batch/status` で読む。停止は **協調キャンセル**＝`POST /batch/stop` が `stop_requested` を立て、`run_nightly()` が**各ジョブの境界で**見て break する（**今のジョブを終えてから止まる**・強制 kill はしない）。中断は意図的操作なので「正常終了」扱いとし、**Discord エラー通知は鳴らさない**。差分・フルどちらの走行でも効く。CLI 全銘柄フルは `make batch-full`（既存 `backfill --nightly` を口出し）。あわせて J-Quants 認証ピング（`check_jquants`・DB 非依存）を discord-test と同型の 3 口（CLI/REST/WebUI）で追加。
+- **理由**:
+  - **メモリ singleton で十分・DB スキーマを増やさない**: バッチは BackgroundTask（`/batch/run`）・APScheduler（cron）・CLI（`--nightly`）の**いずれも同一プロセス内**で走る（[ADR-005](#adr-005-db-に触れる-os-プロセスは-fastapi-だけ)）。プロセスが死ねば走行も状態も一緒に消えるので `running` の真偽が常に整合し、永続化が要らない。`batch_runs` テーブルは進捗・履歴が豊かだが、本件の要件（「動いているのが見える・止められる」）には過剰で、スキーマ・書き込み・[ADR-002](#adr-002-sqlite-wal) の書き手規律を増やす。履歴は既に Discord digest と `notifications` が担う。
+  - **状態更新は `run_nightly()`（脳）の中だけ**で行うので、起動口（cron / REST / CLI）に依らず状態が映る（[ADR-011](#adr-011-1-つの脳複数の起動口)「1つの脳」に素直）。
+  - **協調キャンセルが唯一安全な停止**: BackgroundTask は強制終了できない。ジョブ境界で `stop_requested` を見る方式なら、UPSERT の途中で切らず**ジョブの冪等性を壊さない**（[ADR-002](#adr-002-sqlite-wal)）。「今のジョブ完了後に止まる」は初回フル誤起動の保険として実用十分。
+  - **フル起動は WebUI でチェックボックス＋確認ダイアログ**にゲートする（差分が日常の主役・フルは稀で重い）。空 DB では差分も自己修復で full 相当になるが、部分実行からの復旧では明示フルが要る（`fetch_meta` の中途半端な前進で歴史に穴が空くのを埋める）。
+- **代替案**:
+  - **flock ポーリングだけ**（`/batch/status` で try-acquire して boolean を返す）→ スキーマ最小だが「今どのジョブ」「停止」が作れず、結局作り直しになる。不採用。
+  - **`batch_runs` テーブルで履歴永続化** → 進捗・ジョブ別結果・履歴が豊かだが、本件にはオーバー。将来ダッシュボードが要れば足せる（本 ADR は禁じない）。
+  - **強制 kill（スレッド中断）** → UPSERT 途中で切れてジョブ冪等性を壊す危険。不採用。
+- **詳細**: `backend/app/batch/state.py`（メモリ状態）・`batch/runner.py`（境界で `should_stop`・停止は通知なし）・`routers/batch.py`（`/batch/status`・`/batch/stop`）・`services/diagnostics.py`＋`routers/diagnostics.py`＋`scripts/jquants_test.py`（J-Quants 疎通 3 口）・`Makefile`（`make batch-full`/`jquants-test`）・`frontend/src/app/settings/page.tsx`（フルチェックボックス＋確認・進捗ポーリング＋停止・疎通ボタン）。

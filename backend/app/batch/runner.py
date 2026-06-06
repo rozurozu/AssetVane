@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from app.batch import lock, notify
+from app.batch import lock, notify, state
 
 logger = logging.getLogger(__name__)
 
@@ -36,33 +36,52 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
     False（既定）: fetch_meta['daily_quotes'] の翌営業日から today まで差分取得。
     `lock.acquire()` で囲み、ok=False が 1 件でもあれば notify.error() を 1 度だけ呼ぶ。
     ロック競合（BatchAlreadyRunning）はそのまま送出する（cron はログ・/batch/run は 409 に翻訳）。
+
+    実行状態は `state` モジュール（メモリ singleton・ADR-036）に映し、WebUI が `GET /batch/status`
+    で「実行中・今どのジョブ・経過」を見られるようにする。停止は協調キャンセル＝各ジョブの**境界で**
+    `state.should_stop()` を見て break する（今のジョブを終えてから止まる）。停止は意図的操作なので
+    「正常終了」扱いとし、残ジョブは未実行のまま **Discord エラー通知は鳴らさない**（ADR-036）。
     """
     # jobs パッケージは JobResult を runner から import するため、循環回避で関数内 import する。
     from app.batch.jobs import NIGHTLY_JOBS
 
     results: list[JobResult] = []
+    stopped = False
     with lock.acquire():
-        for job in NIGHTLY_JOBS:
-            name = getattr(job, "__module__", job.__name__)
-            try:
-                # full_backfill を受けないジョブもあるため、シグネチャに応じて渡し分ける。
-                result = _invoke(job, full_backfill=full_backfill)
-            except Exception as exc:  # noqa: BLE001 — ジョブ単位で握り、後続ジョブを止めない
-                logger.exception("ジョブ %s が例外で失敗", name)
-                result = JobResult(name=name, ok=False, rows=0, detail=f"未捕捉例外: {exc}")
-            results.append(result)
-            logger.info(
-                "ジョブ完了: %s ok=%s rows=%d detail=%s",
-                result.name,
-                result.ok,
-                result.rows,
-                result.detail,
-            )
+        state.begin(full_backfill=full_backfill)
+        try:
+            for job in NIGHTLY_JOBS:
+                # ジョブ境界で停止要求を確認する（今のジョブを終えてから止まる・ADR-036）。
+                if state.should_stop():
+                    stopped = True
+                    logger.info("バッチ停止要求を検知。残りジョブをスキップして正常終了する。")
+                    break
+                # __module__="app.batch.jobs.fetch_quotes" の末尾だけを表示用の短名にする。
+                name = getattr(job, "__module__", job.__name__).rsplit(".", 1)[-1]
+                state.set_current_job(name)
+                try:
+                    # full_backfill を受けないジョブもあるため、シグネチャに応じて渡し分ける。
+                    result = _invoke(job, full_backfill=full_backfill)
+                except Exception as exc:  # noqa: BLE001 — ジョブ単位で握り、後続ジョブを止めない
+                    logger.exception("ジョブ %s が例外で失敗", name)
+                    result = JobResult(name=name, ok=False, rows=0, detail=f"未捕捉例外: {exc}")
+                results.append(result)
+                logger.info(
+                    "ジョブ完了: %s ok=%s rows=%d detail=%s",
+                    result.name,
+                    result.ok,
+                    result.rows,
+                    result.detail,
+                )
+        finally:
+            state.end()
 
-    failed = [r for r in results if not r.ok]
-    if failed:
-        detail = "\n".join(f"- {r.name}: {r.detail}" for r in failed)
-        notify.error("夜間バッチでジョブが失敗", detail)
+    # 停止（ユーザー操作）は失敗ではないので通知しない。通常完了時のみ失敗を集約通知（ADR-036）。
+    if not stopped:
+        failed = [r for r in results if not r.ok]
+        if failed:
+            detail = "\n".join(f"- {r.name}: {r.detail}" for r in failed)
+            notify.error("夜間バッチでジョブが失敗", detail)
     return results
 
 

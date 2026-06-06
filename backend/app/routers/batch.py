@@ -1,8 +1,12 @@
-"""手動バッチ起動の REST ルータ（Phase 1／docs/api.md・spec §3.8）。
+"""手動バッチ起動・状態・停止の REST ルータ（Phase 1／docs/api.md・spec §3.8・ADR-036）。
 
 POST /batch/run。cron（APScheduler 同居）と同じ `run_nightly()` を別口で叩く
 （ADR-011「1つの脳・2つの起動口」）。初回バックフィルは約100〜150分かかり HTTP を
 ブロックできないため、非同期受付の 202 を返す（裁定 L-2）。
+
+GET /batch/status と POST /batch/stop（ADR-036）。WebUI が「実行中・今どのジョブ・経過」を
+見て（status）、誤起動した初回フル等を止められる（stop＝協調キャンセル）。状態は `batch.state`
+のメモリ singleton（単一プロセス前提＝ADR-005）に持つ。
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
-from app.batch import lock, run_nightly
+from app.batch import lock, run_nightly, state
 
 router = APIRouter(tags=["batch"])
 
@@ -22,6 +26,20 @@ class BatchRunRequest(BaseModel):
 class BatchRunResponse(BaseModel):
     started: bool
     job_id: str | None = None
+
+
+class BatchStatusResponse(BaseModel):
+    """バッチ実行状態（ADR-036・batch.state のスナップショットと 1:1）。"""
+
+    running: bool
+    current_job: str | None = None  # 実行中ジョブの短名（idle / 開始直後は null）
+    started_at: str | None = None  # 走行開始時刻（ISO8601・UTC）
+    full_backfill: bool = False  # full（初回/復旧）か差分か
+    stop_requested: bool = False  # 停止要求済みか（次のジョブ境界で止まる）
+
+
+class BatchStopResponse(BaseModel):
+    stopping: bool  # 停止要求を受理したか（実行中でなければ false）
 
 
 @router.post("/batch/run", response_model=BatchRunResponse, status_code=202)
@@ -44,3 +62,31 @@ def run_batch(req: BatchRunRequest, background: BackgroundTasks) -> BatchRunResp
 
     background.add_task(run_nightly, full_backfill=req.full_backfill)
     return BatchRunResponse(started=True, job_id=None)
+
+
+@router.get("/batch/status", response_model=BatchStatusResponse)
+def batch_status() -> BatchStatusResponse:
+    """現在のバッチ実行状態を返す（ADR-036）。WebUI がポーリングして進捗・停止可否を出す。
+
+    cron 起動・`POST /batch/run` 裏ジョブ・CLI `--nightly` のどの口で走っていても、`run_nightly`
+    が更新する同じメモリ状態を映す（ADR-011「1つの脳」）。idle なら running=false で他は既定値。
+    """
+    s = state.snapshot()
+    return BatchStatusResponse(
+        running=s.running,
+        current_job=s.current_job,
+        started_at=s.started_at,
+        full_backfill=s.full_backfill,
+        stop_requested=s.stop_requested,
+    )
+
+
+@router.post("/batch/stop", response_model=BatchStopResponse)
+def batch_stop() -> BatchStopResponse:
+    """走行中バッチに停止を要求する（協調キャンセル・ADR-036）。
+
+    `state.request_stop()` で `stop_requested` を立てるだけ。実体は `run_nightly` が**次のジョブ
+    境界**で検知して break する（今のジョブを終えてから止まる＝強制 kill はしない）。
+    走行中でなければ受理せず stopping=false を返す（差分・フルどちらの走行でも効く）。
+    """
+    return BatchStopResponse(stopping=state.request_stop())

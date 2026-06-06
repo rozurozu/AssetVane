@@ -11,12 +11,18 @@ else
   COMPOSE := docker compose
 endif
 
-.PHONY: discord-test test lint format deploy deploy-build
+.PHONY: discord-test jquants-test batch-full test lint format deploy deploy-build
 
 # ===== 運用（dev / Pi 共通・compose 自動判定）=====
 
 discord-test: ## Discord に疎通テストを 1 通送る（冪等回避＝毎回飛ぶ）
 	$(COMPOSE) exec backend uv run python -m app.scripts.notify_test
+
+jquants-test: ## J-Quants V2 に認証ピングを 1 発投げる（DB 非依存・ADR-036）
+	$(COMPOSE) exec backend uv run python -m app.scripts.jquants_test
+
+batch-full: ## 全銘柄フルバックフィルを 1 回流す（初回投入/復旧・約100〜150分・ADR-036）
+	$(COMPOSE) exec backend uv run python -m app.scripts.backfill --nightly
 
 # ===== 開発・デプロイ（Mac 専用）=====
 

@@ -1,8 +1,10 @@
-"""診断系の REST ルータ（ADR-007/011/018）。
+"""診断系の REST ルータ（ADR-007/008/011/018/036）。
 
-POST /diagnostics/discord-test。cron/CLI と同じ `send_test_notification()` を別口で叩く
-（ADR-011「1つの脳・複数の起動口」）。Discord への POST は ~10s で完結するため、batch のような
-非同期受付ではなく**同期**で送信結果（enabled/sent）を返し、Web UI が即座に成否を表示できる。
+cron/CLI と同じ脳を別口で叩く（ADR-011「1つの脳・複数の起動口」）。いずれも外部依存への 1 発で
+~10s 以内に完結するため、batch のような非同期受付ではなく**同期**で結果フラグを返し、Web UI が
+即座に成否を表示できる。
+- POST /diagnostics/discord-test … Discord 疎通（send_test_notification・enabled/sent）。
+- POST /diagnostics/jquants-test … J-Quants V2 認証ピング（check_jquants・DB 非依存）。
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.batch.notify import send_test_notification
+from app.services.diagnostics import check_jquants
 
 router = APIRouter(tags=["diagnostics"])
 
@@ -18,6 +21,12 @@ router = APIRouter(tags=["diagnostics"])
 class DiscordTestResponse(BaseModel):
     enabled: bool  # Webhook URL が設定されているか（false なら未設定で送らない）
     sent: bool  # 実際に 2xx で届いたか（enabled=false のときは常に false）
+
+
+class JquantsTestResponse(BaseModel):
+    configured: bool  # API キーが設定されているか（false なら呼ばずに未設定で返す）
+    ok: bool  # 認証が通り 1 銘柄取れたか（configured=false のときは常に false）
+    detail: str  # 人間向けメッセージ（成功＝会社名／失敗＝エラー要旨）
 
 
 @router.post("/diagnostics/discord-test", response_model=DiscordTestResponse)
@@ -29,3 +38,14 @@ def discord_test() -> DiscordTestResponse:
     """
     result = send_test_notification()
     return DiscordTestResponse(enabled=result.enabled, sent=result.sent)
+
+
+@router.post("/diagnostics/jquants-test", response_model=JquantsTestResponse)
+def jquants_test() -> JquantsTestResponse:
+    """J-Quants V2 に認証ピングを 1 発投げ、結果を返す（DB 非依存・ADR-008/011/036）。
+
+    未設定（configured=false）も疎通失敗（ok=false）も例外にせず 200 で結果フラグとして返す
+    （Web UI が両者を区別して表示するため）。実体・判定は services/diagnostics.py が持つ。
+    """
+    result = check_jquants()
+    return JquantsTestResponse(configured=result.configured, ok=result.ok, detail=result.detail)

@@ -167,13 +167,15 @@ CODEX_MODEL=gpt-5.5            # codex 側の強モデル
 | コマンド | 内容 | 実行場所 |
 |---|---|---|
 | `make discord-test` | Discord に疎通テストを 1 通送る（冪等回避＝毎回飛ぶ。digest を待たず通知を確認） | dev / Pi 共通 |
+| `make jquants-test` | J-Quants V2 に認証ピングを 1 発投げる（DB 非依存。初回デプロイ前の確認・ADR-036） | dev / Pi 共通 |
+| `make batch-full` | 全銘柄フルバックフィルを 1 回流す（初回投入/復旧・約100〜150分・ADR-036） | dev / Pi 共通 |
 | `make test` | backend テスト（`uv run pytest -q`・一時 SQLite） | Mac（開発）|
 | `make lint` | backend lint（Ruff・ADR-023） | Mac（開発）|
 | `make format` | backend format（Ruff・ADR-023） | Mac（開発）|
 | `make deploy` | Mac で arm64 ビルド → ghcr.io → ラズパイへデプロイ | Mac 専用 |
 | `make deploy-build` | ビルド→push のみ（ラズパイは触らない） | Mac 専用 |
 
-`discord-test` の実体は `app.scripts.notify_test`（CLI 口）。同じ脳を REST（`POST /diagnostics/discord-test`）と `/settings` 画面のボタンからも叩ける（ADR-011「1つの脳・複数の起動口」）。`make deploy`/`deploy-build` は Pi で誤実行すると 1 行ガードで止まる（Mac から実行する）。
+`discord-test`/`jquants-test` の実体は `app.scripts.notify_test`/`app.scripts.jquants_test`（CLI 口）。同じ脳を REST（`POST /diagnostics/discord-test`・`/diagnostics/jquants-test`）と `/settings` 画面のボタンからも叩ける（ADR-011「1つの脳・複数の起動口」）。バッチは `/settings` でフル取得（確認ダイアログ付き）・進捗・停止まで操作でき、`GET /batch/status`・`POST /batch/stop` が裏側（ADR-036）。`make deploy`/`deploy-build` は Pi で誤実行すると 1 行ガードで止まる（Mac から実行する）。
 
 ---
 

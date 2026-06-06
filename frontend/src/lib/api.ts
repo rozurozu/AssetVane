@@ -558,6 +558,32 @@ export function runBatch(fullBackfill = false): Promise<BatchRunResponse> {
   return postJSON<BatchRunResponse>("/batch/run", { full_backfill: fullBackfill });
 }
 
+/** バッチ実行状態（GET /batch/status・batch.py・ADR-036）。batch.state と 1:1。 */
+export interface BatchStatusResponse {
+  running: boolean;
+  current_job: string | null; // 実行中ジョブの短名（idle / 開始直後は null）
+  started_at: string | null; // 走行開始時刻（ISO8601・UTC）
+  full_backfill: boolean; // full（初回/復旧）か差分か
+  stop_requested: boolean; // 停止要求済みか（次のジョブ境界で止まる）
+}
+
+/** バッチ停止レスポンス（POST /batch/stop・ADR-036）。 */
+export interface BatchStopResponse {
+  stopping: boolean; // 停止要求を受理したか（実行中でなければ false）
+}
+
+/** 現在のバッチ実行状態を取得（ADR-036・WebUI がポーリングして進捗・停止可否を出す）。
+ * cron・/batch/run・CLI --nightly のどの口で走っていても同じ状態を映す（ADR-011）。 */
+export function getBatchStatus(signal?: AbortSignal): Promise<BatchStatusResponse> {
+  return getJSON<BatchStatusResponse>("/batch/status", signal);
+}
+
+/** 走行中バッチに停止を要求（協調キャンセル・ADR-036）。今のジョブを終えてから止まる。
+ * 差分・フルどちらの走行でも効く。実行中でなければ stopping=false。 */
+export function stopBatch(): Promise<BatchStopResponse> {
+  return postJSON<BatchStopResponse>("/batch/stop", {});
+}
+
 /** Discord 疎通テストのレスポンス（POST /diagnostics/discord-test・diagnostics.py）。 */
 export interface DiscordTestResponse {
   enabled: boolean; // Webhook URL が設定されているか（false なら未設定で送らない）
@@ -568,6 +594,19 @@ export interface DiscordTestResponse {
  * enabled=false は未設定、sent=false は送信失敗。両者を呼び出し側で区別して表示する。 */
 export function sendDiscordTest(): Promise<DiscordTestResponse> {
   return postJSON<DiscordTestResponse>("/diagnostics/discord-test", {});
+}
+
+/** J-Quants 疎通テストのレスポンス（POST /diagnostics/jquants-test・ADR-008/036）。 */
+export interface JquantsTestResponse {
+  configured: boolean; // API キーが設定されているか（false なら未設定）
+  ok: boolean; // 認証が通り 1 銘柄取れたか（configured=false のときは常に false）
+  detail: string; // 人間向けメッセージ（成功＝会社名／失敗＝エラー要旨）
+}
+
+/** J-Quants V2 に認証ピングを 1 発投げる（DB 非依存・ADR-011「複数の起動口」）。
+ * configured=false は未設定、ok=false は疎通失敗。detail を呼び出し側で表示する。 */
+export function sendJquantsTest(): Promise<JquantsTestResponse> {
+  return postJSON<JquantsTestResponse>("/diagnostics/jquants-test", {});
 }
 
 // --- Phase 2 API 関数（phase2-spec.md §5）---

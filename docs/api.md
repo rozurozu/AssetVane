@@ -74,7 +74,11 @@
 | メソッド | パス | 用途 |
 |---|---|---|
 | GET | `/health` | 死活監視・必須環境変数の充足チェック |
-| POST | `/batch/run` | 夜間バッチの手動起動（cron と共用）|
+| POST | `/batch/run` | 夜間バッチの手動起動（cron と共用。body `{full_backfill?}`・202／実行中は 409）|
+| GET | `/batch/status` | バッチ実行状態（`running`/`current_job`/`started_at`/`full_backfill`/`stop_requested`・[ADR-036](decisions.md)）|
+| POST | `/batch/stop` | 走行中バッチに停止を要求（協調キャンセル＝今のジョブ完了後に止まる・`{stopping}`・[ADR-036](decisions.md)）|
+| POST | `/diagnostics/discord-test` | Discord 疎通テスト（冪等回避＝毎回飛ぶ・`{enabled,sent}`・[ADR-011](decisions.md)）|
+| POST | `/diagnostics/jquants-test` | J-Quants V2 認証ピング（DB 非依存・`{configured,ok,detail}`・[ADR-036](decisions.md)）|
 
 ---
 

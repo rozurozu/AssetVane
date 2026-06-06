@@ -1,6 +1,6 @@
 ---
 name: batch-pattern
-description: 夜間バッチ（batch/ 配下の runner・jobs・lock・notify・calendar）を新規作成・修正するときに必ず使う。1つの脳・2つの起動口(cron と POST /batch/run が同一関数を呼ぶ・ADR-011)・ロックで多重起動を防ぐ・各ジョブは独立/冪等/部分失敗から再開可能・個別ジョブ失敗は握って後続を止めず Discord 通知(ADR-007/018)・JobResult で結果集約、を規定する。
+description: 夜間バッチ（batch/ 配下の runner・jobs・lock・notify・calendar・state）を新規作成・修正するときに必ず使う。1つの脳・2つの起動口(cron と POST /batch/run が同一関数を呼ぶ・ADR-011)・ロックで多重起動を防ぐ・各ジョブは独立/冪等/部分失敗から再開可能・個別ジョブ失敗は握って後続を止めず Discord 通知(ADR-007/018)・JobResult で結果集約・実行状態はメモリ singleton で持ち停止は協調キャンセル(ADR-036)、を規定する。
 ---
 
 # 夜間バッチ規約
@@ -58,6 +58,32 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
     return results
 ```
 
+## 実行状態と停止（メモリ singleton・協調キャンセル・ADR-036）
+
+WebUI に「動いているか・今どのジョブか・止めたいか」を見せるための実行状態は、**DB ではなく FastAPI プロセス内のメモリ singleton**（`batch/state.py`）に持つ。バッチは BackgroundTask（`/batch/run`）・APScheduler（cron）・CLI（`--nightly`）の**いずれも同一プロセス内**で走る（[[backend-foundations]]・ADR-005）ため、プロセスが死ねば走行も状態も一緒に消えて `running` の真偽が常に整合する＝永続化が要らない。
+
+- **状態更新は `run_nightly()`（脳）の中だけ**で行う（`state.begin()` → 各ジョブ前に `state.set_current_job(name)` → `finally: state.end()`）。起動口で分岐させない（ADR-011「1つの脳」）。
+- **停止は協調キャンセル**: `POST /batch/stop` は `state.request_stop()` で `stop_requested` を立てるだけ。`run_nightly` が**各ジョブの境界で** `state.should_stop()` を見て break する（**今のジョブを終えてから止まる**＝強制 kill しない＝UPSERT 途中で切らずジョブ冪等性を壊さない）。
+- **中断は「正常終了」扱い**: 停止で残ジョブを飛ばしたときは `notify.error` を**鳴らさない**（ユーザー操作は失敗ではない）。失敗通知は通常完了時のみ。
+- `begin()` は `stop_requested` を必ず初期化する（前回の停止要求を次の走行へ持ち越さない）。状態は新エンドポイント `GET /batch/status` がそのまま返す（[[backend-router-pattern]]）。
+
+```python
+stopped = False
+with lock.acquire():
+    state.begin(full_backfill=full_backfill)
+    try:
+        for job in NIGHTLY_JOBS:
+            if state.should_stop():          # ジョブ境界で停止を確認（今のジョブ完了後に止まる）
+                stopped = True
+                break
+            state.set_current_job(name)
+            ...
+    finally:
+        state.end()
+if not stopped:                              # 停止は失敗ではないので通知しない
+    ... notify.error(...) ...
+```
+
 ## 通知は Discord（無人バッチのみ）
 
 - 失敗があれば **Discord Webhook** で 1 度だけ通知する（ADR-007: LINE Notify は終了済みなので使わない）。
@@ -74,6 +100,7 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
 - [ ] バッチ全体を `lock.acquire()` で囲み、多重起動は専用例外で弾く
 - [ ] 各ジョブは独立・冪等（UPSERT）・`fetch_meta`/`full_backfill` で再開可能
 - [ ] 個別ジョブ失敗を握って後続を止めず `JobResult(ok=False)` に集約。`except Exception` に統一記法の理由コメント付き noqa（`# noqa: BLE001 — ジョブ境界で握り runner に返す`）を添えた
-- [ ] 失敗時のみ Discord 通知（無人バッチに限る・対話チャットは通知しない）
+- [ ] 失敗時のみ Discord 通知（無人バッチに限る・対話チャットは通知しない）。停止（協調キャンセル）での中断は「正常終了」扱いで通知しない（ADR-036）
+- [ ] 実行状態が要るならメモリ singleton（`batch/state.py`）に持ち、更新は `run_nightly` の中だけ（DB スキーマを増やさない・ADR-005/036）。停止はジョブ境界で `should_stop` を見て break（強制 kill しない）
 - [ ] 夜のジョブは軽め（無人で使えない外部依存に頼らない）
 - [ ] docstring 冒頭に ADR-002/007/011/018・spec 参照
