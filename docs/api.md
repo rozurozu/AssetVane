@@ -8,7 +8,7 @@
 
 ## 0. 共通方針
 
-- **ベース URL**: `http://<host>:8000`（FastAPI）。Next.js からは環境変数 `NEXT_PUBLIC_API_BASE_URL` で指定（[architecture.md 7](architecture.md)）。
+- **ベース URL**: backend は `http://<host>:8000`（FastAPI）。ブラウザからは frontend の相対パス **`/api`** を叩き、Next の rewrites が裏で backend へ転送する（同一オリジン化＝[ADR-037](decisions.md)。例: ブラウザの `/api/stocks` → backend `/stocks`）。CORS は不要（[architecture.md 7](architecture.md)）。
 - **形式**: JSON。日付は `YYYY-MM-DD`。
 - **認証**: 単一ユーザーのため認証なし（[ADR-001](decisions.md)）。**家庭内 LAN 限定で公開しない**前提。外部公開する場合は別途要設計。
 - **エラー**: FastAPI 標準の `{"detail": ...}` ＋適切な HTTP ステータス。

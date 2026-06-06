@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 読むもの | 内容 |
 |---|---|
 | `README.md` | 全体像・技術スタック・起動手順 |
-| `docs/decisions.md` | **ADR-001〜036。なぜそうしたかの全記録。最重要** |
+| `docs/decisions.md` | **ADR-001〜037。なぜそうしたかの全記録。最重要** |
 | `docs/architecture.md` | システム構成・2 軸 AI・データフロー・通信/障害/運用 |
 | `docs/screens.md` | 画面設計（IA）・ナビ方針・Dashboard 構成・常駐 Advisor チャット・画面コンテキスト |
 | `docs/advisor.md` | AI Advisor の設計（CORE/POLICY プロンプト・Tool・手法の扱い） |
@@ -65,7 +65,7 @@ cd backend && uv sync && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 
 cd frontend && npm install && npm run dev
 ```
 
-- 接続先は frontend の `NEXT_PUBLIC_API_BASE_URL`、CORS は backend の `.env` の `CORS_ALLOW_ORIGINS`。
+- frontend は API を相対パス `/api` で叩き、Next の rewrites（`next.config.ts`・転送先 `BACKEND_ORIGIN`）が裏で backend へ素通しする（同一オリジン化＝ADR-037）。CORS と API_URL 焼き込みは廃止。
 - 秘密情報（J-Quants / LLM のキー）は **backend の `.env` のみ**。frontend には渡さない。
 - 開発は J-Quants **Free プラン**（株価 12 週間遅延）で進む。評価額・P/L も遅延値になる点に注意。
 

@@ -402,3 +402,18 @@
   - **`batch_runs` テーブルで履歴永続化** → 進捗・ジョブ別結果・履歴が豊かだが、本件にはオーバー。将来ダッシュボードが要れば足せる（本 ADR は禁じない）。
   - **強制 kill（スレッド中断）** → UPSERT 途中で切れてジョブ冪等性を壊す危険。不採用。
 - **詳細**: `backend/app/batch/state.py`（メモリ状態）・`batch/runner.py`（境界で `should_stop`・停止は通知なし）・`routers/batch.py`（`/batch/status`・`/batch/stop`）・`services/diagnostics.py`＋`routers/diagnostics.py`＋`scripts/jquants_test.py`（J-Quants 疎通 3 口）・`Makefile`（`make batch-full`/`jquants-test`）・`frontend/src/app/settings/page.tsx`（フルチェックボックス＋確認・進捗ポーリング＋停止・疎通ボタン）。
+
+## ADR-037: Next ↔ FastAPI は同一オリジン化（Next rewrites プロキシ）——CORS と API_URL 焼き込みを廃止
+
+- **状況**: 旧構成はブラウザが backend(:8000) を**直接** cross-origin で叩いていた。代償として (a) backend に **CORS 許可オリジン**（`CORS_ALLOW_ORIGINS`）が要り、(b) frontend に **backend のホストを `NEXT_PUBLIC_API_BASE_URL` でビルド時焼き込み**する必要があった。ラズパイ運用では「ブラウザで開く URL のホスト」「焼き込んだ API_URL のホスト」「backend の CORS のホスト」の**3 つが一致**しないと画面に「backend 未接続」が出る地雷があり（IP/mDNS の取り違え・DHCP で IP 変動で再発）、実際に踏んだ。「CORS と焼き込みの設定自体を無くしたい」が動機。
+- **決定**: frontend が API を**相対パス `/api`** で叩き（`lib/api.ts` の `API_BASE = "/api"`）、**Next の rewrites**（`next.config.ts` の `/api/:path*` → `${BACKEND_ORIGIN}/:path*`）が裏で backend へ素通しする**同一オリジン化**にする。ブラウザの相手は常に frontend(:3000) だけになるので、**backend の CORSMiddleware・`CORS_ALLOW_ORIGINS`・`cors_origins` を全廃**し、**`NEXT_PUBLIC_API_BASE_URL` の焼き込み（deploy の `API_URL` build-arg）も全廃**する。rewrites の転送先は環境変数 `BACKEND_ORIGIN`（既定 `http://backend:8000`・ホスト直 dev のみ `http://localhost:8000`）。
+- **理由**:
+  - **3 ホスト一致地雷を根本から消す**: ブラウザが backend のホストを知らなくなる。転送先は **Docker 内部 DNS の固定名 `backend:8000`**＝ホスト非依存なので、Pi の IP/mDNS が何であろうと**同じイメージ・無設定**で動く。DHCP で IP が変わっても再発しない。
+  - **設定が純減する**: CORS 設定（backend `.env`）と API_URL 焼き込み（`deploy.env`/build-arg）という**2 つの env が丸ごと消える**。デプロイは `make deploy` に Pi ごとの URL を渡す必要が無くなった。
+  - **[ADR-005](#adr-005-db-に触れる-os-プロセスは-fastapi-だけ) を侵さない**: rewrites は**透過 HTTP プロキシ**で、Next は DB を触らず REST を素通しするだけ。「DB に触れるのは FastAPI だけ・Next は UI 専用でデータは REST 経由」を保つ。
+  - **既存イメージ構成と相性が良い**: frontend は既に standalone の Node サーバ（`server.js`）が常駐しており（[ADR-021](#adr-021)）、rewrites はその上で動く。追加コンテナ（別建てリバースプロキシ）は不要。
+- **代替案**:
+  - **Caddy 等の前段リバースプロキシ**を 1 コンテナ足して frontend と `/api` を同一ポート配信 → 同一オリジン化は達成できるが構成が増える。既存 Next サーバで足りるので不採用。
+  - **CORS を `*` 許可＋焼き込みは IP 固定**で運用 → 地雷（焼き込みの 3 ホスト一致・DHCP 変動）が残るので不採用。
+  - **チャットのストリーミング懸念**: 現状チャットは非ストリーミング fetch（SSE 不使用）なので rewrites 越しで問題なし。将来 SSE 化する場合も Next rewrites はストリーミングを通すが、その時に実機検証する。
+- **詳細**: `frontend/next.config.ts`（`rewrites()`・`BACKEND_ORIGIN`）・`frontend/src/lib/api.ts`（`API_BASE="/api"`）・`frontend/Dockerfile`（build-arg を `BACKEND_ORIGIN` に）・`compose.yaml`／`compose.prod.yaml`（frontend env）・`scripts/deploy.sh`＋`deploy.env.example`（`API_URL` 廃止）・`backend/app/main.py`（CORSMiddleware 撤去）・`backend/app/config.py`（`cors_*` 撤去）・`backend/.env.example`。

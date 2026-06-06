@@ -30,8 +30,9 @@ services:
   frontend:
     image: ghcr.io/rozurozu/assetvane-frontend:${IMAGE_TAG:?IMAGE_TAG required（例 20260606-120000）}
     restart: unless-stopped
-    # NEXT_PUBLIC_API_BASE_URL はビルド時に bundle へ焼き込み済み（scripts/deploy.sh の build-arg）。
-    # 実行時 env は不要。ブラウザから到達できる URL を build 時に渡すこと（architecture.md §7.1）。
+    # 同一オリジン化（ADR-037）: ブラウザは /api だけを叩き、Next の rewrites（routes-manifest に
+    # build 時焼き込み済み）が裏で内部 DNS `backend:8000` へ転送する。値はホスト非依存の固定名なので
+    # Pi の IP/mDNS が何であろうと同じイメージで動く（旧 NEXT_PUBLIC_API_BASE_URL の Pi ごと焼き直しは不要）。
     environment:
       - TZ=Asia/Tokyo
     ports:

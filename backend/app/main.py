@@ -12,7 +12,6 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 from app.advisor import router as advisor_router
 from app.advisor.mcp_server import mount_mcp, session_manager_lifespan
@@ -88,14 +87,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 別端末（PC・スマホ）のブラウザから見るため CORS でフロントのオリジンを許可する。
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS は不要（ADR-037）。ブラウザは Next の同一オリジン `/api` だけを叩き、Next の rewrites が
+# 裏で backend へ素通しするため、backend に届く時点で cross-origin ではない。別端末（PC・スマホ）
+# から見る場合もブラウザの相手は frontend(:3000) だけなので CORSMiddleware は載せない。
 
 # 銘柄・株価（Phase 0／docs/api.md §1）。GET /stocks・/quotes（routers/stocks.py）。
 app.include_router(stocks_router)

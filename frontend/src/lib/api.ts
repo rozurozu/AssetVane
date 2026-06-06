@@ -1,7 +1,8 @@
 // FastAPI（唯一のデータ所有者・ADR-005）への薄いクライアント。
 // Next は UI 専用で DB に触らず、すべてこの REST 経由（docs/api.md）。
-// NEXT_PUBLIC_* はブラウザに焼き込まれるため、ブラウザから到達できる名前を使う（architecture.md §7.1）。
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+// 同一オリジン化（ADR-037）: ブラウザは相対パス `/api` を叩き、Next の rewrites（next.config.ts）が
+// 裏で backend へ素通しする。ブラウザは backend のホストを知らないので CORS も URL 焼き込みも不要。
+export const API_BASE = "/api";
 
 /** API エラー。status 付きで throw する（呼び出し側で `e instanceof ApiError` で分岐できる）。
  * メッセージは FastAPI の `{"detail": "..."}` から拾う（router 境界で HTTPException 翻訳）。 */

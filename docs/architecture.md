@@ -190,9 +190,9 @@ AssetVane/
 ### 7.1 Next ↔ FastAPI の通信
 
 - **API 契約**は [api.md](api.md) に定義。正本は FastAPI 自動生成の OpenAPI（`/docs`・`/openapi.json`）。
-- FastAPI は別端末（PC・スマホ）のブラウザから見られるよう **`0.0.0.0:8000` で待ち受け**、**CORS** でフロントのオリジンを許可する（`CORS_ALLOW_ORIGINS`）。
-- Next.js は接続先を `NEXT_PUBLIC_API_BASE_URL`（例 `http://raspberrypi.local:8000`）で指定。秘密情報（J-Quants/LLM キー）は**バックエンドの `.env` のみ**に置き、フロントには渡さない。
-- ⚠️ **落とし穴**: `NEXT_PUBLIC_*` は**ビルド時にブラウザ JS へ焼き込まれる**ため、Compose 内部 DNS 名（`http://backend:8000`）を入れても**ブラウザからは解決できない**。ブラウザから到達できる名前を使う（開発 `http://localhost:8000` / ラズパイ `http://raspberrypi.local:8000`）。内部 DNS 名はサーバー間通信専用で、今回 Next は UI 専用＝大半がブラウザ fetch のため使わない。
+- **同一オリジン化**（[ADR-037](decisions.md)）: ブラウザは frontend の**相対パス `/api`** だけを叩き、**Next の rewrites**（`next.config.ts`）が裏で backend へ素通しする。ブラウザの相手は常に frontend(:3000) なので **CORS は不要**、backend のホストを知る必要も無いので **API_URL の焼き込みも不要**。秘密情報（J-Quants/LLM キー）は従来どおり**バックエンドの `.env` のみ**に置き、フロントには渡さない。
+- rewrites の転送先は **Next サーバ（frontend コンテナ）から見た backend** なので、Compose 内部 DNS の固定名 `http://backend:8000` を使う（環境変数 `BACKEND_ORIGIN`・既定 `http://backend:8000`、compose 無しのホスト直 dev だけ `http://localhost:8000`）。**ホスト非依存の固定名**なので、ラズパイの IP/mDNS が何であろうと同じイメージ・無設定で動く（これが旧構成の「3 ホスト一致」地雷を根本から消した点）。透過 HTTP プロキシなので Next は DB を触らず REST を素通しするだけ＝[ADR-005](decisions.md) を侵さない。
+- FastAPI は backend コンテナ内で **`0.0.0.0:8000` で待ち受け**る（Next サーバから到達するため。:8000 のポート公開は `/docs` を別端末から見るデバッグ用途で残す）。
 - 起動は **2 サービス（コンテナ）**: backend（`uvicorn` で FastAPI）＋ frontend（dev は `next dev --turbopack` / 本番は standalone の `node server.js`）。Compose で両方を立ち上げる（[ADR-021](decisions.md)）。起動手順は [README](../README.md) に記載。
 
 ### 7.2 障害時の方針（無人運用の前提）

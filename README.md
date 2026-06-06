@@ -101,7 +101,7 @@ docker compose up              # backend(:8000) ＋ frontend(:3000) を同時起
 # ポート衝突時: FRONTEND_PORT=3100 BACKEND_PORT=8100 docker compose up
 ```
 
-> 秘密情報（J-Quants / LLM のキー）は **backend/.env のみ**に置く（frontend には渡さない＝[ADR-005](docs/decisions.md)）。frontend が叩く API の場所は Compose 内で `NEXT_PUBLIC_API_BASE_URL` を渡している。LLM キーが無くても Phase 0（J-Quants のみ）は起動する。
+> 秘密情報（J-Quants / LLM のキー）は **backend/.env のみ**に置く（frontend には渡さない＝[ADR-005](docs/decisions.md)）。frontend は API を相対パス `/api` で叩き、Next の rewrites が裏で backend へ転送する（同一オリジン化＝[ADR-037](docs/decisions.md)。CORS も API_URL 焼き込みも不要）。LLM キーが無くても Phase 0（J-Quants のみ）は起動する。
 
 **データ投入（Phase 0）**: 起動しただけでは DB が空。数銘柄の日足を取得して SQLite に入れる（CLI バックフィル）。Compose の DB はリポジトリ直下 `data/assetvane.db`（named volume）なので、**コンテナ内で**実行する。
 
@@ -133,11 +133,10 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 # Frontend (Next.js) — 別端末で
 cd frontend
 npm install
-echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:8000" > .env.local  # FastAPI の場所
 npm run dev
 ```
 
-> CORS 許可オリジンは backend の `.env` の `CORS_ALLOW_ORIGINS` で指定。ラズパイで運用する場合は `NEXT_PUBLIC_API_BASE_URL` を `http://raspberrypi.local:8000` 等に。API 契約は [docs/api.md](docs/api.md) を参照。
+> ホスト直 dev では Next の rewrites 転送先が `BACKEND_ORIGIN` 未設定で `http://localhost:8000` に落ちるので、backend を同じホストの :8000 で動かしていれば**設定不要**（同一オリジン化＝[ADR-037](docs/decisions.md)）。backend が別ホスト/別ポートなら `BACKEND_ORIGIN=http://host:port npm run dev`。CORS の指定は不要になった。API 契約は [docs/api.md](docs/api.md) を参照。
 
 > ℹ️ 開発は J-Quants **Free プラン**（株価12週間遅延・約2年分）で進められる。ロジックはプラン非依存なので、実運用時に Light 以上へ切り替えれば同じコードが最新データで動く。**Free 期間は評価額・P/L も遅延値**になる点に注意。
 

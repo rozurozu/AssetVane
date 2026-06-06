@@ -62,9 +62,10 @@ class Settings(BaseSettings):
     codex_max_retries: int = 2  # 一過性失敗（serverOverloaded 等）の指数バックオフ再試行回数
 
     # --- API サーバ ---
+    # CORS 設定は廃止（ADR-037）。ブラウザは Next 同一オリジンの /api だけを叩き、Next の
+    # rewrites が裏で backend へ素通しするため、許可オリジンを backend に持たせる必要が無くなった。
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    cors_allow_origins: str = "http://localhost:3000"
 
     # --- 通知 (Discord) --- Phase 6〜
     discord_webhook_url: str = ""
@@ -116,11 +117,6 @@ class Settings(BaseSettings):
     # watchlist の interval_days で各銘柄の調査間隔を持ち、夜あたりの処理本数は天井で抑える。
     # 固定 N=3 を廃し、暴走防止の上限として残す（投資 dossier 巡回ジョブが消費する）。
     dossier_nightly_max: int = 3  # 夜あたり巡回上限の天井（暴走防止）
-
-    @property
-    def cors_origins(self) -> list[str]:
-        """カンマ区切りの CORS オリジンをリストにする。"""
-        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
     def provider_for(self, source: str) -> str:
         """source（chat/nightly/dossier）から LLM provider を返す（既定 openai）。

@@ -50,9 +50,10 @@ services:
       - ./frontend:/app
       - /app/node_modules # ← anonymous volume。ホストに node_modules を作らない（ADR-021）
     environment:
-      # NEXT_PUBLIC_* はブラウザに焼き込まれるため、ブラウザから到達できる名前を使う
-      # （内部 DNS backend:8000 はブラウザから解決不可＝architecture.md §7.1 の落とし穴）。
-      - NEXT_PUBLIC_API_BASE_URL=http://localhost:${BACKEND_PORT:-8000}
+      # 同一オリジン化（ADR-037）: ブラウザは /api を叩き、Next の rewrites が裏で backend へ転送する。
+      # 転送先は Next サーバ（コンテナ内）から見た backend なので内部 DNS の固定名でよい。dev は
+      # next.config が runtime に読むのでここで渡す（host 直 dev は未設定で localhost:8000 に落ちる）。
+      - BACKEND_ORIGIN=http://backend:8000
       # Docker volume 上での HMR を polling で担保。
       - WATCHPACK_POLLING=true
     ports:

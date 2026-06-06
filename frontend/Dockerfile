@@ -22,13 +22,16 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# ---- builder: standalone をビルド（NEXT_PUBLIC_API_BASE_URL を焼き込む） ----
+# ---- builder: standalone をビルド ----
 FROM node:24-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ARG NEXT_PUBLIC_API_BASE_URL
-ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+# 同一オリジン化（ADR-037）: rewrites の転送先は build 時に routes-manifest へ焼かれるが、値は
+# Docker 内部 DNS の固定名 `backend:8000`＝ホスト非依存なので、どの Pi でも同じイメージで動く
+# （旧 NEXT_PUBLIC_API_BASE_URL のような Pi ごとの値・焼き直しは不要）。
+ARG BACKEND_ORIGIN=http://backend:8000
+ENV BACKEND_ORIGIN=$BACKEND_ORIGIN
 # public/ が無くても standalone の COPY が落ちないよう空で用意してからビルドする。
 # build は webpack（dev のみ Turbopack・ADR-022）。next.config の output:"standalone" 前提。
 RUN mkdir -p public && npm run build

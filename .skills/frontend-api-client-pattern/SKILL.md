@@ -17,11 +17,11 @@ description: frontend から backend を呼ぶ処理（lib/api.ts）を追加・
 
 ## 接続先と秘密情報
 
-- 接続先は **`process.env.NEXT_PUBLIC_API_BASE_URL`**（既定 `http://localhost:8000`）。`NEXT_PUBLIC_*` はブラウザに焼き込まれるので、**ブラウザから到達できる名前**を使う。
+- 接続先は**相対パス `/api`**（同一オリジン化＝ADR-037）。ブラウザは自分のオリジンの `/api/*` だけを叩き、Next の rewrites（`next.config.ts`）が裏で backend へ素通しする。**ブラウザは backend のホストを知らない**ので CORS も API_URL 焼き込みも不要。rewrites の転送先だけ `BACKEND_ORIGIN`（既定 `http://backend:8000`・ホスト直 dev は `http://localhost:8000`）で決まるが、これは Next サーバ側の話で `lib/api.ts` は触らない。
 - **秘密情報（J-Quants / LLM キー等）を frontend に置かない**。それらは backend の `.env` のみ。
 
 ```ts
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+export const API_BASE = "/api";
 ```
 
 ## fetch ラッパと ApiError
@@ -94,7 +94,7 @@ export function postTransaction(input: TransactionInput): Promise<TransactionRes
 ## チェックリスト
 
 - [ ] 取得・送信は `lib/api.ts` 経由のブラウザ fetch のみ（Server 取得 / Server Action / Route Handler / DB アクセスを足していない）
-- [ ] 接続先は `NEXT_PUBLIC_API_BASE_URL`。秘密情報を frontend に置いていない
+- [ ] 接続先は相対パス `/api`（同一オリジン化＝ADR-037）。秘密情報を frontend に置いていない
 - [ ] 共通 `request` ラッパ経由で、エラーは `ApiError` を throw（`{ok,error}` を返していない）
 - [ ] GET 関数は `signal` を受けて fetch に渡す（キャンセル対応）
 - [ ] エラーメッセージは FastAPI の `detail` を拾っている

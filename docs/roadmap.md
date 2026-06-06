@@ -13,7 +13,7 @@
 - `JQuantsAdapter`（V2 / `x-api-key`）で**数銘柄**の日足を取得。
 - SQLite（WAL）に `stocks` / `daily_quotes` を保存。**再取得しても重複しないよう UPSERT（`INSERT OR REPLACE` 等）で冪等にする**（Phase 1 の再取得で壊れないように最初から）。
 - FastAPI が「指定銘柄の日足を返す」REST エンドポイントを公開（[api.md](api.md)）。
-- Next.js が API を叩いて**株価チャート**を表示（接続先は `NEXT_PUBLIC_API_BASE_URL`）。
+- Next.js が API を叩いて**株価チャート**を表示（相対パス `/api` を叩き Next の rewrites が backend へ転送＝[ADR-037](decisions.md)）。
 
 **完了条件**: ブラウザで「3 銘柄の株価チャート」が表示され、データが SQLite 経由で FastAPI から来ている。**同じ銘柄を再取得しても重複行が出ない**。
 

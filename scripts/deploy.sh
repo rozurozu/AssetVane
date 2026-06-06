@@ -28,8 +28,6 @@ PI_HOST="${PI_HOST:-raspberrypi.local}"
 # ラズパイ上のデプロイ先（絶対パス）。/opt は add-on アプリの定番で、ユーザーのホームから
 # 切り離す（アカウント削除/改名に巻き込まれない・FHS）。初回作成＋chown は docs/deploy.md 参照。
 PI_DIR="${PI_DIR:-/opt/assetvane}"
-# frontend に焼き込む本番 API URL（ブラウザから到達できる名前・architecture.md §7.1）。
-API_URL="${API_URL:-http://raspberrypi.local:8000}"
 PLATFORM="${PLATFORM:-linux/arm64}"
 
 IMAGE_TAG="$(date +%Y%m%d-%H%M%S)"
@@ -45,9 +43,9 @@ docker buildx build --platform "$PLATFORM" --target prod \
   --label "org.opencontainers.image.revision=$JJ_ID" \
   --push ./backend
 
-# frontend（runner ステージ）。NEXT_PUBLIC_API_BASE_URL はビルド時に焼き込む（地雷回避）。
+# frontend（runner ステージ）。同一オリジン化（ADR-037）で API_URL の焼き込みは廃止。rewrites の
+# 転送先はホスト非依存の固定名 backend:8000（Dockerfile の ARG 既定値）なので Pi ごとの指定は不要。
 docker buildx build --platform "$PLATFORM" --target runner \
-  --build-arg "NEXT_PUBLIC_API_BASE_URL=$API_URL" \
   -t "$FRONTEND_IMG:$IMAGE_TAG" -t "$FRONTEND_IMG:latest" \
   --label "org.opencontainers.image.revision=$JJ_ID" \
   --push ./frontend

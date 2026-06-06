@@ -170,7 +170,7 @@ export default function SettingsPage() {
           <StatusBlock
             loading={loading}
             error={error}
-            errorHint="backend が起動しているか、NEXT_PUBLIC_API_BASE_URL を確認するのだ。"
+            errorHint="backend が起動しているか、Next の rewrites 転送先（BACKEND_ORIGIN）を確認するのだ。"
           >
             {data && (
               <ul className="grid gap-1.5">
