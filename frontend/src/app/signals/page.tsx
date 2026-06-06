@@ -11,16 +11,20 @@ import { useState } from "react";
 // 夜間バッチが事前計算した signals を /signals 経由で読むだけ（AI に計算させない＝ADR-014）。
 // 行クリックで銘柄詳細へ。スタイルは Stocks 一覧・Dashboard signals と同じ DESIGN.md トークン。
 
-// type 切替タブ（全 / momentum / volume_spike）。値 undefined は全 type。
+// type 切替タブ（全 / momentum / volume_spike / ai_alpha）。値 undefined は全 type。
+// ai_alpha は Phase 5 の AI 決算スコア（学習済み LightGBM の推論・phase5-spec.md §7）。
 const TYPE_TABS: { key: string; label: string; value: SignalType | undefined }[] = [
   { key: "all", label: "全", value: undefined },
   { key: "momentum", label: "momentum", value: "momentum" },
   { key: "volume_spike", label: "volume_spike", value: "volume_spike" },
+  { key: "ai_alpha", label: "ai_alpha", value: "ai_alpha" },
 ];
 
 export default function SignalsPage() {
   // 選択中の type フィルタ（undefined = 全 type）。
   const [type, setType] = useState<SignalType | undefined>(undefined);
+  // ai_alpha タブのみ「予測 60 日超過リターン」列を出す（他は「5日」騰落率）。
+  const isAiAlpha = type === "ai_alpha";
 
   const { data, error, loading } = useApi(
     (signal) => getSignals(type ? { type } : undefined, signal),
@@ -72,12 +76,13 @@ export default function SignalsPage() {
               columns={[
                 { label: "コード / 銘柄" },
                 { label: "スコア", right: true },
-                { label: "5日", right: true },
+                { label: isAiAlpha ? "予測超過(60日)" : "5日", right: true },
                 { label: "シグナル" },
               ]}
             >
               {data.signals.map((s) => {
-                const d5 = s.payload.change_5d;
+                // ai_alpha は予測超過リターン、それ以外は 5 日騰落率（どちらも符号付き小数）。
+                const d5 = isAiAlpha ? s.payload.predicted_excess_return_60d : s.payload.change_5d;
                 return (
                   <tr key={`${s.code}-${s.signal_type}`} className="hover:[&>td]:bg-surface-2">
                     <Td>

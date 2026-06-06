@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     google_news_lang: str = "ja"  # クエリの hl（言語）
     google_news_country: str = "JP"  # クエリの gl/ceid（国）
 
+    # --- AI Alpha Scorer（Phase 5・phase5-spec.md §4・ADR-006） ---
+    # 学習済み .pkl（別 PC 産・ADR-006）とメタ JSON の置き場。git 管理外・compose で bind mount。
+    # model_store.load_active が <kind>-latest.json → .pkl を引く。既定 "./models"（dev=backend/
+    # 直下・prod コンテナ=/app/models）。本番（compose.prod.yaml）は ./backend/models を mount。
+    ml_model_dir: str = "./models"
+
     # --- 銘柄別調査 cadence（夜の巡回・ADR-033） ---
     # watchlist の interval_days で各銘柄の調査間隔を持ち、夜あたりの処理本数は天井で抑える。
     # 固定 N=3 を廃し、暴走防止の上限として残す（投資 dossier 巡回ジョブが消費する）。

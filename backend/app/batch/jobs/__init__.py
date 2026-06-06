@@ -21,6 +21,7 @@ from app.batch.jobs import (
     investigate_dossier,
     notify_digest,
     run_advisor,
+    score_ai_alpha,
     snapshot_assets,
     sync_master,
 )
@@ -32,6 +33,9 @@ NIGHTLY_JOBS = [
     fetch_financials.run,
     calc_valuation.run,  # ADR-031: 財務取得後に全銘柄のバリュエーションを焼く（screen の土台）
     calc_signals.run,
+    # Phase 5: 学習済みモデルで ai_alpha を焼く。calc_signals の後・run_advisor の前に置き、
+    # 夜の分析AI が当日の ai_alpha を読めるようにする（phase5-spec.md §4.4）。
+    score_ai_alpha.run,
     snapshot_assets.run,  # Phase 2: 今日の株価確定後に評価額を焼く（phase2-spec.md §3.3）
     # ADR-034: 夜の分析AI の市況文脈材料として run_advisor の直前で一般ニュースを取得・保存。
     fetch_general_news.run,

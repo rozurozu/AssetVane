@@ -16,6 +16,8 @@ dependencies = [
     "apscheduler>=3.10",  # cron 方式 C・APScheduler 同居（Phase 1・spec §3.7）
     "scipy>=1.13",      # 相関・統計・SLSQP（Phase 2・spec §7）
     "pyportfolioopt>=1.5",  # 平均分散最適化（内部 cvxpy・Phase 2・spec §7・ARM ゲート）
+    "lightgbm>=4.5",    # AI Alpha Scorer の学習(別PC)・推論(ラズパイ)（Phase 5・phase5-spec.md §8・ARM ゲート）
+    "joblib>=1.3",      # .pkl の保存/読込（Phase 5・model_store／train.py・phase5-spec.md §4.1）
     "mcp>=1.27.2",
     "trafilatura>=2.0.0",
 ]

@@ -543,6 +543,7 @@ export type SignalType = "momentum" | "volume_spike" | "ai_alpha" | "lead_lag";
 export interface SignalPayload {
   label?: string; // 一覧の「シグナル」列の短文（quant が格納）
   change_5d?: number | null; // 5日騰落率（符号付き小数・quant が格納）
+  predicted_excess_return_60d?: number | null; // ai_alpha: 予測 60 営業日 対TOPIX 超過リターン（Phase 5）
   [k: string]: unknown; // momentum/volume_spike の type 固有指標（quant 確定）
 }
 
