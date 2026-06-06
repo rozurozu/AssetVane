@@ -20,8 +20,8 @@ export function pathnameToContext(pathname: string): ChatContext {
 
   if (pathname === "/") return { page: "dashboard" };
   if (pathname === "/stocks" || pathname.startsWith("/stocks/")) return { page: "stocks" };
+  // 取引入力は Portfolio 内タブ（?tab=input）に集約したため独立 page は持たない（OPEN-D）。
   if (pathname.startsWith("/portfolio")) return { page: "portfolio" };
-  if (pathname.startsWith("/transactions")) return { page: "transactions" };
   if (pathname.startsWith("/signals")) return { page: "signals" };
   if (pathname.startsWith("/policy")) return { page: "policy" };
   if (pathname.startsWith("/proposals")) return { page: "proposals" };
@@ -39,7 +39,6 @@ export function contextLabel(ctx: ChatContext): string {
     stocks: "銘柄一覧",
     stock_detail: "銘柄詳細",
     portfolio: "Portfolio",
-    transactions: "取引入力",
     signals: "Signals",
     policy: "Policy",
     proposals: "Proposals",

@@ -16,7 +16,7 @@ AssetVane の画面構成（情報設計）、ナビゲーション、Dashboard 
 | 3 | **銘柄詳細** | 株価チャート・テクニカル指標・財務・**ドシエ**・watchlist 追加を**集約するハブ** | `/quotes/{code}` `/stocks/{code}` `/dossiers/{code}` | 0（チャート）→4 |
 | 4 | **Signals（Trend Vane）** | momentum / volume_spike の一覧スクリーニング | `/signals?type=` | 1 |
 | 5 | **Portfolio** | 保有・相関ヒートマップ・最適比率・バックテスト・資産推移 | `/holdings` `/portfolio/{id}/metrics` `/portfolio/{id}/optimize` `/asset-overview` | 2 |
-| 6 | **Transactions / 入力** | 取引（買い/売り）記録・現金・投信入力 | `/transactions` `/cash` `/external-assets` | 2 |
+| 6 | **入力（Portfolio 内タブ）** | 取引（買い/売り）記録・現金・投信入力。**独立ページではなく Portfolio の「入力」タブ**（OPEN-D・§2）。`/portfolio?tab=input` で直接着地 | `/transactions` `/cash` `/external-assets` | 2 |
 | 7 | **Advisor（チャット）** | 軸2。方針を対話調整・銘柄/比率提案。**実体は全ページ常駐のフローティング**（§4） | `/chat` | 3 |
 | 8 | **Policy（投資方針）** | 現在の方針を表示・編集（構造化コア＋rationale） | `/policy` | 3 |
 | 9 | **Journal（投資日記）** | 夜の分析AI の日記＋方針スナップショット履歴 | `/journal` | 3 |

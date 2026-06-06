@@ -238,8 +238,8 @@ export default function Dashboard() {
       {!overviewErr && overview && !hasOverview && (
         <div className="mb-3 rounded-lg border border-hairline bg-surface-1 p-3 text-[13px] text-ink-muted">
           資産データが未投入のだ。
-          <Link href="/transactions" className="ml-1 text-accent hover:underline">
-            取引入力
+          <Link href="/portfolio?tab=input" className="ml-1 text-accent hover:underline">
+            Portfolio の入力タブ
           </Link>{" "}
           から取引・現金・外部資産を登録するのだ。
         </div>

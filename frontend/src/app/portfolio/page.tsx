@@ -4,12 +4,13 @@
 // タブ「保有 / 入力」を上部に配置（OPEN-D 推奨タブ方式）。
 // 保有タブ: 保有テーブル＋評価額カード（遅延注記）＋相関ヒートマップ＋メトリクスカード
 //           ＋最適化ボタン→OptimizeTable＋資産推移スパークライン。
-// 入力タブ: /transactions ページへ Link（TransactionForm・現金・外部資産は /transactions に）。
+// 入力タブ: AssetInputPanel（取引フォーム＋現金＋外部資産を 1 つに集約。OPEN-D＝独立 nav を作らず
+//           Portfolio 内タブに収める＝screens.md §2）。?tab=input で入力タブに直接着地できる。
 // DB には触れない。データ取得はすべて lib/api.ts 経由（ADR-005）。
 
+import { AssetInputPanel } from "@/components/portfolio/AssetInputPanel";
 import { CorrelationHeatmap } from "@/components/portfolio/CorrelationHeatmap";
 import { OptimizeTable } from "@/components/portfolio/OptimizeTable";
-import { TransactionForm } from "@/components/portfolio/TransactionForm";
 import { Card } from "@/components/ui/Card";
 import { DataTable, Td } from "@/components/ui/DataTable";
 import { StatusBlock } from "@/components/ui/StatusBlock";
@@ -27,12 +28,25 @@ import {
   optimizePortfolio,
 } from "@/lib/api";
 import { fmtJpy, pct } from "@/lib/format";
-import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
 type Tab = "holdings" | "input";
 
+// useSearchParams は Suspense 境界を要求する（Next App Router）。default export は薄い
+// ラッパにして本体を境界内に置く。
 export default function PortfolioPage() {
-  const [tab, setTab] = useState<Tab>("holdings");
+  return (
+    <Suspense>
+      <PortfolioPageInner />
+    </Suspense>
+  );
+}
+
+function PortfolioPageInner() {
+  // ?tab=input なら入力タブに着地（Dashboard の「資産未投入」案内からの遷移先）。
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "input" ? "input" : "holdings");
 
   // ポートフォリオ ID（先頭＝既定・裁定 L-9）
   const [portfolioId, setPortfolioId] = useState<number | null>(null);
@@ -406,23 +420,17 @@ export default function PortfolioPage() {
         </div>
       )}
 
-      {/* ===== 入力タブ ===== */}
-      {tab === "input" && (
-        <div className="space-y-3">
-          <Card title="取引を記録するのだ">
-            {portfolioId != null && (
-              <TransactionForm
-                portfolioId={portfolioId}
-                stocks={stocks}
-                onDone={handleTransactionDone}
-              />
-            )}
-            {portfolioId == null && (
-              <div className="text-[13px] text-ink-subtle">ポートフォリオを読み込み中…</div>
-            )}
-          </Card>
-        </div>
-      )}
+      {/* ===== 入力タブ（取引＋現金＋外部資産）===== */}
+      {tab === "input" &&
+        (portfolioId != null ? (
+          <AssetInputPanel
+            portfolioId={portfolioId}
+            stocks={stocks}
+            onDone={handleTransactionDone}
+          />
+        ) : (
+          <div className="text-[13px] text-ink-subtle">ポートフォリオを読み込み中…</div>
+        ))}
     </>
   );
 }
