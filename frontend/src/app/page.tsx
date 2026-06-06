@@ -8,17 +8,20 @@
 // watchlist は getWatchlist() の実データに配線（Phase 4・screens.md §3「watchlist 再調査」）。
 // backend 未起動でも壊れないよう fetch 失敗は握って空表示＋注記にする（spec §9.6）。
 
+import { GeneralNewsWidget } from "@/components/general-news/GeneralNewsWidget";
 import { Card } from "@/components/ui/Card";
 import { DataTable, Td } from "@/components/ui/DataTable";
 import {
   type AssetOverview,
   type Deviation,
+  type GeneralNewsResponse,
   type JournalEntry,
   type Policy,
   type Proposal,
   type Signal,
   type WatchlistItem,
   getAssetOverview,
+  getGeneralNews,
   getJournal,
   getPolicy,
   getProposals,
@@ -42,6 +45,8 @@ export default function Dashboard() {
   const [signalsDelayed, setSignalsDelayed] = useState(false);
   // Phase 4 watchlist（実配線・上位 5 件のみ表示・古い順は気にせず一覧の先頭）。
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  // ADR-034 一般ニュース（カテゴリ別・fetch 失敗は握って空表示）。
+  const [generalNews, setGeneralNews] = useState<GeneralNewsResponse | null>(null);
   // 「バッチを今すぐ実行」ボタンの状態（202 受付・進捗は Discord/fetch_meta で追う）。
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchNote, setBatchNote] = useState<string | null>(null);
@@ -68,6 +73,9 @@ export default function Dashboard() {
       .catch(() => {});
     getWatchlist()
       .then((r) => setWatchlist(r.items))
+      .catch(() => {});
+    getGeneralNews()
+      .then(setGeneralNews)
       .catch(() => {});
   }, []);
 
@@ -605,6 +613,11 @@ export default function Dashboard() {
             </DataTable>
           )}
         </Card>
+      </div>
+
+      {/* 一般ニュース（ADR-034・市況/マクロ/世界情勢をカテゴリ別に眺める）*/}
+      <div className="mb-3">
+        <GeneralNewsWidget data={generalNews} />
       </div>
 
       {/* 投資日記（Phase 3 実配線・最新 1 件）*/}

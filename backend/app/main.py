@@ -23,6 +23,7 @@ from app.routers.advisor_state import router as advisor_state_router
 from app.routers.assets import router as assets_router
 from app.routers.batch import router as batch_router
 from app.routers.dossier import router as dossier_router
+from app.routers.general_news import router as general_news_router
 from app.routers.portfolio import router as portfolio_router
 from app.routers.screening_filters import router as screening_filters_router
 from app.routers.signals import router as signals_router
@@ -115,6 +116,8 @@ app.include_router(screening_filters_router)
 app.include_router(watchlist_router)
 # ドシエ（Phase 4／spec §5.2）。GET /dossiers/{code}・POST .../investigate（routers/dossier.py）。
 app.include_router(dossier_router)
+# 一般ニュース（ADR-034）。GET /general-news（routers/general_news.py）。
+app.include_router(general_news_router)
 
 # codex 接続用 MCP（plans / ADR-012）。FastAPI 内に streamable HTTP の自前 Tool を立てる。
 # DB に触れるのは FastAPI だけ（ADR-005）を保ちつつ codex に Tool を渡す。

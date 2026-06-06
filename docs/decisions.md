@@ -354,13 +354,15 @@
 - **代替案**: 一律 stale=21／先頭 N=3 固定を維持 → 銘柄ごとの頻度差を表現できず利用者要求を満たせないため不採用。間隔を持たせず「毎日全 watchlist を調べる」→ watchlist が増えるとコスト暴走、関心の薄い銘柄まで毎晩叩くため不採用（だから per-row 間隔＋天井）。
 - **詳細**: `db/schema.py`（`watchlist.interval_days`）・`db/repo.py`（`add_watchlist`/`list_watchlist`/`set_watchlist_interval`）・`batch/jobs/investigate_dossier.py`（`_select_targets` の per-stock 間隔判定＋`DOSSIER_NIGHTLY_MAX` キャップ）・`routers/watchlist.py`（`interval_days` 出力・更新 endpoint・`stale` を per-row 基準に）・`config.py`（`DOSSIER_NIGHTLY_MAX`）。
 
-## ADR-034: 一般ニュースダイジェスト構想（銘柄に紐づかないニュースを別系統で持つ・P3・記録のみ・未実装）
+## ADR-034: 一般ニュースダイジェスト（銘柄に紐づかないニュースを別系統で持つ・実装済み）
 
-- **状況**: ドシエのニュース取得（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）は**個別銘柄に紐づく**ニュースが対象で、台帳 `dossier_sources` は **銘柄 FK（`code`）必須**を前提に設計されている。だが利用者は別途、**銘柄に紐づかない一般ニュース**（その日のホットニュース数件＋世界情勢／マクロ等のカテゴリ）も眺めたい、という要求を持つ。これを `dossier_sources` に無理に載せると「code が無いニュース」が混ざり、銘柄 FK・URL UNIQUE・「この銘柄のソース一覧」という台帳の住所が崩れる。**利用者から「必ず ADR に残して」と明示された**項目なので、実装は次フェーズだが構想を記録する。
-- **決定（構想・今回は未実装）**:
-  - **一般ニュースは `dossier_sources` とは別の住所に持つ**。`dossier_sources`（code FK 必須）は個別銘柄ドシエ専用のまま据え置き、一般ニュースは**新テーブル＋新ジョブ**で別系統にする（code FK を持たない／カテゴリ列を持つ等、スキーマは実装フェーズで確定）。
-  - **内容**: 1 日数件の**ホットニュース**＋「**世界情勢／マクロ**」等の**カテゴリ**でダイジェスト化する。取得・要約は [ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける) と同じ httpx＋AI 要約の流儀を流用しうる（源・実装は次フェーズで決める）。
-  - **消費先**: **dashboard のウィジェット**で眺める／または **軸1（夜の分析 AI・[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットai-で実装する製品の核心)）の briefing** に食わせて当日の市況文脈にする、のいずれか（または両方）。消費先の確定は実装フェーズ。
-- **理由**: 個別銘柄ドシエ（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）と一般ニュースは**住所（紐づく対象）が根本的に違う**ため、同じ台帳に混ぜず別系統で持つのが正しい。今回スコープ（P1 銘柄ニュース実取得＋P2 銘柄別 cadence）からは外れるが、**構想を ADR に明記して取りこぼさない**（利用者の明示要求）。
-- **代替案**: `dossier_sources` を code FK 任意に緩めて一般ニュースも載せる → 銘柄 FK・「この銘柄のソース一覧」という台帳の住所が崩れるため不採用。構想を記録せず後で思い出す → 取りこぼすため不採用（利用者が ADR 記録を明示要求）。
-- **段階**: **実装は次フェーズ**（P3 相当）。今回は記録のみ。スキーマ（新テーブル）・新ジョブ・消費先（ウィジェット or 軸1 briefing）は実装フェーズで詰める。
+- **状況**: ドシエのニュース取得（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）は**個別銘柄に紐づく**ニュースが対象で、台帳 `dossier_sources` は **銘柄 FK（`code`）必須**を前提に設計されている。だが利用者は別途、**銘柄に紐づかない一般ニュース**（その日のホットニュース数件＋世界情勢／マクロ等のカテゴリ）も眺めたい、という要求を持つ。これを `dossier_sources` に無理に載せると「code が無いニュース」が混ざり、銘柄 FK・URL UNIQUE・「この銘柄のソース一覧」という台帳の住所が崩れる。**利用者から「必ず ADR に残して」と明示された**項目で、当初は構想のみ記録していたが、grill-me（`3-adr-034-floofy-hoare`）で設計を確定し実装した。
+- **決定（実装済み・確定事項）**:
+  - **別テーブル `general_news`**（`0011_general_news`）に持つ。`dossier_sources`（code FK 必須）は個別銘柄ドシエ専用のまま据え置き、`general_news` は **`code` FK を持たず `category` 列を持つ**。`url` UNIQUE ＋ `on_conflict_do_nothing` で再取得の二重取り込みを防ぐ（本文は保存せず summary と url のみ＝ADR-020 の流儀）。
+  - **取得**: `NewsAdapter` に新メソッド `fetch_general_news()` を追加し、既存の内部パイプライン（`_fetch_rss_items` / `_process_item` の 3 段フォールバック要約）を再利用する（`fetch_news`〔銘柄専用〕は不変更）。Google News キーワード検索 RSS。**カテゴリ定義（ラベル＋検索クエリ）・件数上限・lookback は定数モジュール `app/adapters/general_news_config.py` に置く**（env / config.py には足さない＝構造データは安定資産でありコードと共に育てる。ADR-010 が禁じるのは接続情報のハードコードであって検索キーワードは別物）。
+  - **タイミング**: 夜間バッチに新ジョブ `fetch_general_news.run` を追加し、`NIGHTLY_JOBS` の `run_advisor.run` の**直前**に置く（軸1 が当日の市況文脈を briefing 材料にできるよう先に台帳へ入れる）。冪等・無人 cron 前提（httpx 一本＝ADR-020 改訂）。
+  - **消費先（両方）**: ① **Dashboard ウィジェット**（`GET /general-news` → `GeneralNewsWidget` がカテゴリ別に表示）。② **軸1（夜の分析 AI・[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットai-で実装する製品の核心)）の briefing**＝新 Tool `get_general_news`（`min_phase=4`）を足し、`_NIGHTLY_INSTRUCTION` で取得を促す。Tool なので**軸2 チャットでも再利用**できる。Discord 通知には含めない（Phase 6 の領域）。
+  - **副件（上げ忘れ修正）**: 本実装で `CURRENT_PHASE` を 3→4 に上げた。Phase 4 完了時に上げ忘れており、`min_phase=4` の既存 Tool（`get_dossier` / `investigate_stock` / `fetch_news`）がチャット・夜AI に露出していなかった（夜間 `investigate_dossier` ジョブは handler 直呼びで動いていたため気づきにくかった）。これにより Phase 4 Tool 群と新 `get_general_news` が両軸に露出する。
+- **理由**: 個別銘柄ドシエ（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）と一般ニュースは**住所（紐づく対象）が根本的に違う**ため、同じ台帳に混ぜず別系統で持つのが正しい。
+- **代替案**: `dossier_sources` を code FK 任意に緩めて一般ニュースも載せる → 台帳の住所が崩れるため不採用。`fetch_news` を汎用化して共用 → 銘柄専用シグネチャがぶれるため不採用（新メソッド追加に留めた）。日次総括 markdown を別テーブルに焼く 2 テーブル構成 → 消費先が「眺める＋文脈材料」だけなので YAGNI（必要になれば後付け）。カテゴリ定義を env 化 → 構造データの JSON 文字列化・`.env.example` 同期が煩雑なだけで益が無いため定数モジュールに。
+- **段階**: **実装済み（2026-06-06）**。pytest green（adapter / repo / API / job の単体＋migration 回帰）。frontend は Dashboard widget まで配線（専用ページは作らない）。

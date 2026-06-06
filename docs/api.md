@@ -67,6 +67,7 @@
 | GET/POST/DELETE | `/watchlist` | 監視銘柄の管理（一覧は最終調査日つき）|
 | GET | `/dossiers/{code}` | 銘柄の調査レポート（markdown）と要約ソース一覧 |
 | POST | `/dossiers/{code}/investigate` | その銘柄を調査（`investigate_stock` を起動。チャットの「この銘柄調査して」と共用）|
+| GET | `/general-news` | 銘柄に紐づかない直近の一般ニュース（市況・マクロ・世界情勢）をカテゴリ別に返す（[ADR-034](decisions.md)）|
 
 ## 6. システム
 

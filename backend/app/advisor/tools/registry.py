@@ -20,6 +20,7 @@ from app.advisor.tools.schemas import (
     FetchNewsArgs,
     GetDossierArgs,
     GetFinancialsArgs,
+    GetGeneralNewsArgs,
     GetIndicatorsArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
@@ -30,7 +31,10 @@ from app.advisor.tools.schemas import (
 )
 
 # 現在の投入フェーズ（段2 の dispatch が openai_tools(phase) に渡す）。
-CURRENT_PHASE: int = 3
+# Phase 4（Stock Dossier）＋ADR-034（一般ニュース）まで実装済み。これを 4 にすることで
+# min_phase=4 の Tool（get_dossier / investigate_stock / fetch_news / get_general_news）が
+# チャット・夜の分析AI に露出する（Phase 4 完了時の上げ忘れ修正＝ADR-034 確定事項）。
+CURRENT_PHASE: int = 4
 
 
 @dataclass(frozen=True)
@@ -176,6 +180,17 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(FetchNewsArgs),
         handler=handlers.handle_fetch_news,
+        min_phase=4,
+    ),
+    "get_general_news": ToolDef(
+        name="get_general_news",
+        description=(
+            "銘柄に紐づかない直近の一般ニュース（市況・マクロ経済・世界情勢）を"
+            "カテゴリ別の見出し＋要約＋URL で取得する（ADR-034）。"
+            "当日の市況・マクロ文脈を踏まえて全体観を語るときに呼ぶ（個別銘柄は fetch_news）。"
+        ),
+        parameters=_schema(GetGeneralNewsArgs),
+        handler=handlers.handle_get_general_news,
         min_phase=4,
     ),
 }

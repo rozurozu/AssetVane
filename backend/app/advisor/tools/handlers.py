@@ -28,6 +28,7 @@ from app.advisor.tools.schemas import (
     GetAssetOverviewArgs,
     GetDossierArgs,
     GetFinancialsArgs,
+    GetGeneralNewsArgs,
     GetIndicatorsArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
@@ -502,4 +503,41 @@ async def handle_fetch_news(args: dict[str, object]) -> dict[str, Any]:
         return {"code": parsed.code, "articles": articles}
     except Exception as exc:
         logger.exception("handle_fetch_news 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_general_news(args: dict[str, object]) -> dict[str, Any]:
+    """get_general_news（ADR-034）。銘柄に紐づかない一般ニュースの直近台帳を返す。
+
+    夜間ジョブ fetch_general_news が貯めた general_news を読むだけ（再取得はしない＝消費先は
+    「貯めた台帳を読む」設計）。lookback はカテゴリ取得と同じ定数で揃え、直近分のみカテゴリ別に
+    まとめて返す。本 handler は橋渡しのみ（ADR-010/014）。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.adapters.general_news_config import GENERAL_NEWS_LOOKBACK_DAYS
+
+    try:
+        GetGeneralNewsArgs.model_validate(args)
+        since = (datetime.now(UTC) - timedelta(days=GENERAL_NEWS_LOOKBACK_DAYS)).strftime(
+            "%Y-%m-%d"
+        )
+        with get_engine().connect() as conn:
+            rows = repo.list_general_news(conn, since=since)
+
+        categories: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            categories.setdefault(r["category"], []).append(
+                {
+                    "url": r["url"],
+                    "title": r.get("title"),
+                    "summary": r.get("summary"),
+                    "published_at": r.get("published_at"),
+                }
+            )
+        return {
+            "categories": [{"label": label, "items": items} for label, items in categories.items()]
+        }
+    except Exception as exc:
+        logger.exception("handle_get_general_news 失敗")
         return {"error": str(exc)}

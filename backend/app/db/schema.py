@@ -391,3 +391,26 @@ notifications = Table(
     Column("channel", String, primary_key=True),  # 'discord'
     Column("sent_at", String),  # 送信時刻 ISO8601 UTC
 )
+
+# ===== ADR-034: 一般ニュース台帳（銘柄に紐づかない別系統・0011_general_news） =====
+
+# 個別銘柄ドシエ（dossier_sources・code FK 必須）とは住所が違うため別テーブルで持つ（ADR-034）。
+# code FK は持たず category 列を持つ。本文は保存せず summary と url のみ（ADR-020 の流儀）。
+# UNIQUE(url) で再取得の二重取り込みを防ぐ（冪等 UPSERT のキー）。category 索引で
+# GET /general-news のカテゴリ別グルーピングを速くする。
+general_news = Table(
+    "general_news",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("category", String, nullable=False),  # 表示ラベル（市況/マクロ/世界情勢 等）
+    Column("url", String, nullable=False),  # 取り込み元 URL（本文は保存しない）
+    Column("title", String),
+    Column("summary", String),  # 短い要約（記事全文は捨てる＝ADR-020）
+    Column("published_at", String),  # 発行日 'YYYY-MM-DD'
+    Column("fetched_at", String),  # 取り込み時刻 ISO8601 UTC
+    Column("source_type", String),  # 'news' 等（将来拡張）
+    # 取得レベル 'summarized'/'description'/'headline'（本文取得の成否・ADR-020）
+    Column("extraction_status", String),
+    UniqueConstraint("url", name="uq_general_news_url"),  # URL 重複排除
+    Index("ix_general_news_category", "category"),
+)

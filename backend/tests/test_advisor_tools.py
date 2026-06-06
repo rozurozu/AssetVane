@@ -40,7 +40,8 @@ def test_openai_tools_phase3_includes_submit_journal() -> None:
 
 
 def test_openai_tools_default_is_current_phase() -> None:
-    """既定引数は CURRENT_PHASE（=3）。"""
+    """既定引数は CURRENT_PHASE（=4・ADR-034 で Phase 4 まで露出）。"""
+    assert CURRENT_PHASE == 4
     assert {t["function"]["name"] for t in openai_tools()} == {  # type: ignore[index]
         t["function"]["name"]  # type: ignore[index]
         for t in openai_tools(CURRENT_PHASE)
@@ -66,10 +67,12 @@ def test_registry_handlers_are_registered() -> None:
         "get_financials",
         "get_asset_overview",
         "submit_journal",
-        # Phase 4（Stock Dossier）。露出は min_phase=4 ゲートで制御（CURRENT_PHASE=3 では非露出）。
+        # Phase 4（Stock Dossier）。露出は min_phase=4 ゲートで制御（CURRENT_PHASE=4 で露出）。
         "get_dossier",
         "investigate_stock",
         "fetch_news",
+        # ADR-034: 一般ニュース（min_phase=4）。
+        "get_general_news",
     }
     assert set(REGISTRY) == expected
 

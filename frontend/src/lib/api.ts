@@ -795,3 +795,29 @@ export function getDossier(code: string, signal?: AbortSignal): Promise<Dossier>
 export function investigateStock(code: string): Promise<InvestigateResult> {
   return postJSON<InvestigateResult>(`/dossiers/${encodeURIComponent(code)}/investigate`, {});
 }
+
+// --- ADR-034 一般ニュース（銘柄に紐づかない別系統）---
+// backend の GET /general-news（routers/general_news.py）と 1:1。本文は持たず要約＋URL のみ。
+
+export interface GeneralNewsItem {
+  url: string;
+  title: string | null;
+  summary: string | null;
+  published_at: string | null;
+  source_type: string | null;
+  category: string;
+}
+
+export interface GeneralNewsCategory {
+  label: string;
+  items: GeneralNewsItem[];
+}
+
+export interface GeneralNewsResponse {
+  categories: GeneralNewsCategory[];
+}
+
+/** 一般ニュースをカテゴリ別に取得（ADR-034）。台帳が空でも 200（categories=[]）。 */
+export function getGeneralNews(signal?: AbortSignal): Promise<GeneralNewsResponse> {
+  return getJSON<GeneralNewsResponse>("/general-news", signal);
+}

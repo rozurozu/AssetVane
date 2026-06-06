@@ -35,8 +35,10 @@ logger = logging.getLogger(__name__)
 _NIGHTLY_INSTRUCTION = (
     "あなたは夜間の自動分析を担っている。利用可能な Tool（get_signals / get_portfolio_metrics / "
     "get_asset_overview 等）で今日の事実を取り直し、昨日までの方針と突き合わせて、見直しが必要なら"
-    "方針変更を提案せよ。最後に必ず submit_journal で所見（observations）・提案（proposal）・"
-    "方針変更案（proposed_policy_change）を提出すること。数値は必ず Tool の戻り値のみを使う。"
+    "方針変更を提案せよ。get_general_news で当日の一般ニュース（市況・マクロ・世界情勢）も取得し、"
+    "市況・マクロ文脈を踏まえて分析せよ（ADR-034）。最後に必ず submit_journal で所見"
+    "（observations）・提案（proposal）・方針変更案（proposed_policy_change）を提出すること。"
+    "数値は必ず Tool の戻り値のみを使う。"
 )
 
 

@@ -128,6 +128,14 @@ class FetchNewsArgs(_ToolArgs):
     since: str | None = None
 
 
+class GetGeneralNewsArgs(_ToolArgs):
+    """get_general_news の引数（ADR-034・引数なし）。
+
+    銘柄に紐づかない一般ニュース（市況・マクロ・世界情勢）の直近台帳を返すだけなので引数は無い
+    （カテゴリ指定もせず全カテゴリを返す＝get_asset_overview と同じ空モデル）。
+    """
+
+
 class ProposedPolicyChange(_ToolArgs):
     """方針変更案（単一フィールド・ADR-013）。
 

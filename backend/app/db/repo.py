@@ -22,6 +22,7 @@ from app.db.schema import (
     external_assets,
     fetch_meta,
     financials,
+    general_news,
     holdings,
     index_quotes,
     llm_usage,
@@ -947,6 +948,53 @@ def list_dossier_sources(conn: Connection, code: str) -> list[dict[str, Any]]:
         .where(dossier_sources.c.code == code)
         .order_by(dossier_sources.c.published_at.desc(), dossier_sources.c.id.desc())
     )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+# ===== ADR-034: 一般ニュース台帳（銘柄に紐づかない別系統・general_news） =====
+
+# 書き込み規約: upsert_general_news は夜間ジョブ fetch_general_news が全カテゴリの記事を
+# 1 トランザクションに束ねて atomic に書くため、conn を受け取り commit はしない（W2・
+# 呼び出し側が `with get_engine().begin() as conn:` で境界を所有＝upsert_dossier_source と同じ）。
+
+
+def upsert_general_news(conn: Connection, rows: list[dict[str, Any]]) -> int:
+    """一般ニュース記事を一括 UPSERT する（url 衝突なら skip・ADR-034/ADR-002）。
+
+    本文は保存せず summary と url のみ（ADR-020 の流儀）。既定は「既存 url なら skip」＝
+    on_conflict_do_nothing（再取得の二重取り込みを防ぐ冪等キー）。fetched_at 未指定行は
+    UTC now を補う。返り値は受理を試みた行数（skip 含む・呼び出し側のログ用）。
+    commit はしない。呼び出し側が `with get_engine().begin() as conn:` で境界を所有する（W2）。
+    """
+    if not rows:
+        return 0
+    now_iso = datetime.now(UTC).isoformat()
+    for row in rows:
+        stmt = sqlite_insert(general_news).values(
+            category=row.get("category"),
+            url=row["url"],
+            title=row.get("title"),
+            summary=row.get("summary"),
+            published_at=row.get("published_at"),
+            fetched_at=row.get("fetched_at") or now_iso,
+            source_type=row.get("source_type"),
+            extraction_status=row.get("extraction_status"),
+        )
+        stmt = stmt.on_conflict_do_nothing(index_elements=["url"])  # 既存 url は無視（skip）
+        conn.execute(stmt)
+    return len(rows)
+
+
+def list_general_news(conn: Connection, *, since: str | None = None) -> list[dict[str, Any]]:
+    """一般ニュースを発行日降順で返す（ADR-034・widget と Tool が消費）。
+
+    since 指定（'YYYY-MM-DD'）で `published_at >= since` に絞る（直近分のみ眺める用途）。
+    published_at が NULL の行は末尾へ寄る。本文は持たない（summary と url のみ＝ADR-020）。
+    """
+    stmt = select(general_news)
+    if since is not None:
+        stmt = stmt.where(general_news.c.published_at >= since)
+    stmt = stmt.order_by(general_news.c.published_at.desc(), general_news.c.id.desc())
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 

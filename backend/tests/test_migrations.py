@@ -48,8 +48,28 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
             "dossier_sources",
             # Phase 6（0010_notifications・phase6-spec §2）
             "notifications",
+            # ADR-034（0011_general_news・一般ニュース台帳）
+            "general_news",
             "alembic_version",
         } <= names
+
+        # general_news は ADR-034（0011）で追加。url UNIQUE・category 索引・code FK を持たない。
+        gn_cols = {c["name"] for c in inspect(conn).get_columns("general_news")}
+        assert gn_cols == {
+            "id",
+            "category",
+            "url",
+            "title",
+            "summary",
+            "published_at",
+            "fetched_at",
+            "source_type",
+            "extraction_status",
+        }, "general_news のカラムが ADR-034 と不一致（0011 が当たっていない）"
+        gn_uniques = {u["name"] for u in inspect(conn).get_unique_constraints("general_news")}
+        assert "uq_general_news_url" in gn_uniques, (
+            "general_news に url UNIQUE が無い（0011 未適用）"
+        )
 
         # notifications は Phase 6（0010_notifications）で追加。(notify_key, channel) 複合 PK。
         notif_pk = {

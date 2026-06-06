@@ -119,6 +119,68 @@ async def fetch_news(
 
 
 # ---------------------------------------------------------------------------
+# 公開境界: fetch_general_news（一般ニュース・銘柄に紐づかない別系統＝ADR-034）
+# ---------------------------------------------------------------------------
+async def fetch_general_news() -> list[dict]:
+    """カテゴリ別の一般ニュースを取得して返す（ADR-034・grill-me 確定）。
+
+    銘柄に紐づかない一般ニュース（市況・マクロ・世界情勢）を Google News キーワード検索で
+    取得する。fetch_news（銘柄専用）とは別入口だが、内部パイプライン（_fetch_rss_items /
+    _process_item / 3 段フォールバック要約）はそのまま再利用する。カテゴリ定義・件数上限・
+    lookback は定数モジュール（general_news_config）から読む（env 化しない＝確定事項5）。
+
+    Returns:
+        記事 dict の list。各 article は fetch_news と同形＋`category` キー:
+        `{url, title, summary, published_at, source_type:"news", extraction_status, category}`。
+        `news_enabled=False` なら即 `[]`。
+
+    Note:
+        1 カテゴリの RSS 取得失敗（NewsAdapterError）は握って次カテゴリを継続する（1 カテゴリの
+        失敗で全体を落とさない＝ADR-018）。記事個別の失敗は _process_item が headline へ握る。
+    """
+    if not settings.news_enabled:
+        logger.debug("fetch_general_news: news_enabled=False のためスキップ")
+        return []
+
+    from datetime import UTC, datetime, timedelta
+
+    from app.adapters.general_news_config import (
+        GENERAL_NEWS_CATEGORIES,
+        GENERAL_NEWS_LOOKBACK_DAYS,
+        GENERAL_NEWS_MAX_PER_CATEGORY,
+    )
+
+    since = (datetime.now(UTC) - timedelta(days=GENERAL_NEWS_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    semaphore = asyncio.Semaphore(_DECODE_CONCURRENCY)
+
+    async def _bounded(item: dict) -> dict:
+        async with semaphore:
+            return await _process_item(item)
+
+    results: list[dict] = []
+    for category in GENERAL_NEWS_CATEGORIES:
+        label = category["label"]
+        try:
+            items = await _fetch_rss_items(category["query"])
+        except NewsAdapterError as exc:
+            # 1 カテゴリの源失敗は握って次へ（他カテゴリを巻き込まない・ADR-018）。
+            logger.warning("fetch_general_news: カテゴリ「%s」の取得に失敗: %s", label, exc)
+            continue
+
+        # 発行日下限フィルタ＋新しい順に上限キャップ（コスト制御・fetch_news と同流儀）。
+        items = [it for it in items if it["published_at"] is None or it["published_at"] >= since]
+        items.sort(key=lambda it: it["published_at"] or "", reverse=True)
+        items = items[:GENERAL_NEWS_MAX_PER_CATEGORY]
+
+        articles = await asyncio.gather(*(_bounded(it) for it in items))
+        for article in articles:
+            article["category"] = label  # 銘柄 code の代わりに category を付与（ADR-034）
+        results.extend(articles)
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Google News フェッチャ
 # ---------------------------------------------------------------------------
 async def _fetch_google_news(company_name: str, *, since: str | None) -> list[dict]:
