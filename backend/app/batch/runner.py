@@ -9,11 +9,23 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 
 from app.batch import lock, notify, state
 
 logger = logging.getLogger(__name__)
+
+
+def _format_elapsed(seconds: float) -> str:
+    """経過秒を「h時間m分s秒」の人間可読文字列にする（終了ログの所要時間表示用）。"""
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}時間{m}分{s}秒"
+    if m:
+        return f"{m}分{s}秒"
+    return f"{s}秒"
 
 
 @dataclass
@@ -49,6 +61,14 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
     stopped = False
     with lock.acquire():
         state.begin(full_backfill=full_backfill)
+        started = time.monotonic()
+        # バッチ全体の開始を 1 行で残す（cron/手動どちらの起動口でも同じ脳から出る・ADR-011）。
+        # 「ここからここまで」を grep で追えるよう、対になる終了ログを後段で出す。
+        logger.info(
+            "夜間バッチ開始: %s・ジョブ %d 件",
+            "フル取得" if full_backfill else "差分取得",
+            len(NIGHTLY_JOBS),
+        )
         try:
             for job in NIGHTLY_JOBS:
                 # ジョブ境界で停止要求を確認する（今のジョブを終えてから止まる・ADR-036）。
@@ -75,6 +95,16 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
                 )
         finally:
             state.end()
+
+    # バッチ全体の終了を 1 行で残す（開始ログと対・経過時間つき）。所要時間がログから直に読める。
+    ok_count = sum(1 for r in results if r.ok)
+    logger.info(
+        "夜間バッチ終了: %s・%d/%d ジョブ成功・経過 %s",
+        "停止により中断" if stopped else "完走",
+        ok_count,
+        len(results),
+        _format_elapsed(time.monotonic() - started),
+    )
 
     # 停止（ユーザー操作）は失敗ではないので通知しない。通常完了時のみ失敗を集約通知（ADR-036）。
     if not stopped:
