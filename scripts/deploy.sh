@@ -36,6 +36,7 @@ BACKEND_IMG="$REGISTRY/assetvane-backend"
 FRONTEND_IMG="$REGISTRY/assetvane-frontend"
 
 echo "▶ build & push   tag=$IMAGE_TAG  jj=$JJ_ID  platform=$PLATFORM"
+echo "▶ 設定           REGISTRY=$REGISTRY  PI_HOST=$PI_HOST  PI_DIR=$PI_DIR"
 
 # backend（prod ステージ）。タグはイミュータブルな時刻＋追従用 latest の 2 本。jj id を label に。
 docker buildx build --platform "$PLATFORM" --target prod \
@@ -65,37 +66,60 @@ ssh "$PI_HOST" "mkdir -p $PI_DIR"
 rsync -az ./compose.prod.yaml "$PI_HOST:$PI_DIR/compose.prod.yaml"
 rsync -az ./Makefile "$PI_HOST:$PI_DIR/Makefile"
 
-# ---- ラズパイ上でデプロイ（backup → pull → up → health → 失敗で自動ロールバック） ----
-echo "▶ deploy on $PI_HOST"
+# ---- ラズパイ上でデプロイ（backup → pull → up → 起動イメージ確認 → health → 失敗で自動ロールバック） ----
+echo "▶ deploy on $PI_HOST  (PI_DIR=$PI_DIR / IMAGE_TAG=$IMAGE_TAG)"
 ssh "$PI_HOST" IMAGE_TAG="$IMAGE_TAG" PI_DIR="$PI_DIR" bash -s <<'REMOTE'
 set -euo pipefail
 cd "$PI_DIR"
 export IMAGE_TAG
+echo "  [remote] $(whoami)@$(hostname):$(pwd)  IMAGE_TAG=$IMAGE_TAG"
 
 # 1) デプロイ前バックアップ（旧コンテナで VACUUM INTO・ADR-017）。初回（未起動）は握りつぶす。
-echo "  · backup (VACUUM INTO)"
-docker compose -f compose.prod.yaml exec -T backend \
-  uv run --no-sync python -m app.scripts.backup "$IMAGE_TAG" \
-  || echo "    （バックアップ skip：初回デプロイか旧コンテナ未起動）"
+#    ※ `docker compose exec -T` はコンテナへ stdin を流すため、この heredoc 本体（後続の
+#      pull/up/health 行）まで食い尽くす既知の罠がある。`</dev/null` で exec の stdin を断ち、
+#      後続が確実に実行されるようにする（食われると remote が backup 直後に EOF で終わり、
+#      pull/up が走らないのに ssh は 0 を返す＝偽の成功になる）。
+echo "  · [1/4] backup (VACUUM INTO)"
+if docker compose -f compose.prod.yaml exec -T backend \
+     uv run --no-sync python -m app.scripts.backup "$IMAGE_TAG" </dev/null; then
+  echo "    ✔ backup OK"
+else
+  echo "    （バックアップ skip：初回デプロイか旧コンテナ未起動 or DB 未作成）"
+fi
 
 # 2) 新イメージ取得 → 起動（FastAPI 起動時に alembic upgrade head が自動実行・ADR-021）。
-echo "  · pull & up   IMAGE_TAG=$IMAGE_TAG"
+echo "  · [2/4] pull & up   IMAGE_TAG=$IMAGE_TAG"
 docker compose -f compose.prod.yaml pull
 docker compose -f compose.prod.yaml up -d
+echo "    ✔ up -d 完了"
 
-# 3) /health を最大 ~30 秒ポーリング。
-echo "  · health check"
+# 3) 起動イメージが想定タグかを検証（heredoc stdin 事故・タグ取り違えで「古いまま」を見逃さない）。
+echo "  · [3/4] 起動イメージ確認（両サービスが :$IMAGE_TAG であること）"
+for svc in backend frontend; do
+  cid="$(docker compose -f compose.prod.yaml ps -q "$svc" || true)"
+  img="$(docker inspect --format '{{.Config.Image}}' "$cid" 2>/dev/null || echo '?')"
+  echo "    · $svc = $img"
+  case "$img" in
+    *":$IMAGE_TAG") ;;
+    *) echo "    ✖ $svc が想定タグ :$IMAGE_TAG で動いていない (実際: $img)"; exit 1 ;;
+  esac
+done
+echo "    ✔ 両サービスとも :$IMAGE_TAG で起動"
+
+# 4) /health を最大 ~30 秒ポーリング。
+echo "  · [4/4] health check（http://localhost:${BACKEND_PORT:-8000}/health）"
 ok=0
-for _ in $(seq 1 15); do
+for i in $(seq 1 15); do
   if curl -fsS "http://localhost:${BACKEND_PORT:-8000}/health" >/dev/null 2>&1; then ok=1; break; fi
+  echo "    · 待機中… ($i/15)"
   sleep 2
 done
 
 if [ "$ok" = "1" ]; then
   echo "$IMAGE_TAG" > .last_good_tag
-  echo "  ✔ healthy（.last_good_tag を更新）"
+  echo "  ✔ healthy（.last_good_tag = $IMAGE_TAG を記録）"
 else
-  echo "  ✖ unhealthy → ロールバック"
+  echo "  ✖ unhealthy（/health が 30 秒以内に応答せず）→ ロールバック"
   if [ -f .last_good_tag ]; then
     prev="$(cat .last_good_tag)"
     echo "    · rollback to $prev"
@@ -105,6 +129,8 @@ else
   fi
   exit 1
 fi
+echo "  ✔ [remote] デプロイ成功: $IMAGE_TAG"
 REMOTE
 
+# ssh が非ゼロを返したら set -e でここに来る前に落ちる（＝偽の「完了」を出さない）。
 echo "✔ デプロイ完了: $IMAGE_TAG"
