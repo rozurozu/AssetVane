@@ -93,10 +93,11 @@ class Settings(BaseSettings):
     batch_tz: str = "Asia/Tokyo"
     # 初回バックフィルで頭から取り直す年数（spec §3.4）。
     backfill_years: int = 2
-    # J-Quants 取得のスロットル間隔（秒）。Free=16.0 / Light=1.0（ADR-008・spec §3.4・L-6）。
-    # Free は 5 req/分。16 秒なら任意の 60 秒窓で最大 4 req に収まり確実に下回る。13 秒は窓境界で
-    # 5 req に達し本番投入の実走で約5分ブロックを誘発した（2026-06-04・jquants.py 参照）。
-    jquants_min_interval_seconds: float = 16.0
+    # J-Quants の契約プラン名。許容値は free / light（ADR-008）。秒数（スロットル間隔）は env で
+    # お守りせず、アダプタ（adapters/jquants.py の _PLAN_INTERVALS）がプラン名から決める＝
+    # free→16s / light→1s。V2 にプランを返す API は無いため env でプラン名だけ指定する。
+    # プラン移行（実運用時に1回・ADR-008）は env のこの1語を変えるだけ（秒数のコード変更は不要）。
+    jquants_plan: str = "free"
 
     # --- IndexAdapter（主要指数・Phase 2〜・phase2-spec.md §3.1・ADR-010） ---
     # Stooq を既定ソースとして使用（裁定 L-10）。シンボルはカンマ区切りで指定。

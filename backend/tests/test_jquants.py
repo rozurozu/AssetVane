@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 import pytest
 
@@ -18,6 +20,7 @@ from app.adapters.jquants import (
     _norm_date,
     _to_jq_code,
 )
+from app.config import settings
 
 
 class _FakeResp:
@@ -292,3 +295,28 @@ def test_get_with_retry_other_400_raises_plain_error(monkeypatch: pytest.MonkeyP
     with pytest.raises(JQuantsError) as exc_info:
         adapter._get_with_retry(client, "/v2/equities/bars/daily", {})  # type: ignore[arg-type]
     assert not isinstance(exc_info.value, JQuantsCoverageError)
+
+
+def test_min_interval_free_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """JQUANTS_PLAN=free でスロットル間隔が 16 秒（5 req/分対策・本番投入の実測根拠・ADR-008）。"""
+    monkeypatch.setattr(settings, "jquants_plan", "free")
+    adapter = JQuantsAdapter(api_key="dummy")
+    assert adapter._min_interval == 16.0
+
+
+def test_min_interval_light_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """JQUANTS_PLAN=light で 1 秒（60 req/分・緩いレート制限・ADR-008）。大文字・前後空白も吸収。"""
+    monkeypatch.setattr(settings, "jquants_plan", " Light ")
+    adapter = JQuantsAdapter(api_key="dummy")
+    assert adapter._min_interval == 1.0
+
+
+def test_min_interval_unknown_plan_falls_back_to_free(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """未知プラン名は free（16 秒・最安全）に倒し warning を出す（ADR-008）。"""
+    monkeypatch.setattr(settings, "jquants_plan", "platinum")
+    with caplog.at_level(logging.WARNING):
+        adapter = JQuantsAdapter(api_key="dummy")
+    assert adapter._min_interval == 16.0
+    assert any("未知の JQUANTS_PLAN" in r.message for r in caplog.records)
