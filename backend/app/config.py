@@ -100,10 +100,11 @@ class Settings(BaseSettings):
     jquants_plan: str = "free"
 
     # --- IndexAdapter（主要指数・Phase 2〜・phase2-spec.md §3.1・ADR-010） ---
-    # Stooq を既定ソースとして使用（裁定 L-10）。シンボルはカンマ区切りで指定。
-    # Stooq シンボル例: ^SPX（S&P500）・^NKX（日経225）・^TPX（TOPIX）。
-    # [OPEN] TOPIX/日経の J-Quants 指数 API 有無は実 API 確認待ち（spec §3.1）。
-    index_source: str = "stooq"
+    # 複数ソースをフォールバック連鎖（CSV・優先順）。落ちたら次ソースを試す（grill 2026-06）。
+    # 例: "stooq" / "yahoo,stooq"。名前は adapters/index.py の _REGISTRY が解決（未知名はスキップ）
+    # シンボルは canonical 表記をカンマ区切りで（^SPX=S&P500・^NKX=日経225・^TPX=TOPIX）。
+    # [OPEN] TOPIX/日経の J-Quants 指数 API 有無は実 API 確認待ち（spec §3.1・実ソース追加は別途）。
+    index_sources: str = "stooq"
     index_symbols: str = "^SPX,^NKX,^TPX"
     # IndexAdapter（Stooq）取得のスロットル間隔（秒）。Stooq は 1.0 で十分（ADR-010）。
     index_min_interval_seconds: float = 1.0
@@ -146,6 +147,11 @@ class Settings(BaseSettings):
     def index_symbol_list(self) -> list[str]:
         """カンマ区切りの指数シンボルをリストにする（phase2-spec.md §3.1）。"""
         return [s.strip() for s in self.index_symbols.split(",") if s.strip()]
+
+    @property
+    def index_source_list(self) -> list[str]:
+        """カンマ区切りの指数ソース名を優先順リストにする（フォールバック連鎖・ADR-010）。"""
+        return [s.strip() for s in self.index_sources.split(",") if s.strip()]
 
     def env_status(self) -> dict[str, dict[str, object]]:
         """各キーの充足状況を「どの Phase で要るか」付きで返す（/health 用）。
