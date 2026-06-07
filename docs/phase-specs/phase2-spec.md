@@ -248,11 +248,11 @@ def compute_deviations(
 
 | kind | current | limit | breached の意味 |
 |---|---|---|---|
-| `position` | 各銘柄の現ウェイト | `max_position_weight` | 1 銘柄が上限超過 |
-| `cash` | 現在の現金比率 | `target_cash_ratio` | 現金が目標を**下回る**（現金は最低ライン） |
-| `sector` | 業種別合計ウェイト | `sector_caps[sector]` | 業種が上限超過 |
+| `max_position` | 各銘柄の現ウェイト | `max_position_weight` | 1 銘柄が上限超過 |
+| `cash_ratio` | 現在の現金比率 | `target_cash_ratio` | 現金が目標を**下回る**（現金は最低ライン） |
+| `sector_cap` | 業種別合計ウェイト | `sector_caps[sector]` | 業種が上限超過 |
 
-> 判定方向は kind ごとに固定。`cash` は「下回ると違反」、`position`/`sector` は「上回ると違反」。
+> 判定方向は kind ごとに固定。`cash_ratio` は「下回ると違反」、`max_position`/`sector_cap` は「上回ると違反」。kind 名は実装・REST・frontend で統一（旧 `position`/`cash`/`sector` 表記は廃止）。
 
 ### 4.3 平均分散最適化（`optimize_portfolio` の実体）— policy 制約の写像
 

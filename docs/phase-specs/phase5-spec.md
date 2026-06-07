@@ -1,5 +1,5 @@
 # Phase 5 着工仕様: AI Alpha Scorer（決算スコアリング）
-> 出所: roadmap.md Phase 5 / ADR-006(学習別PC・推論のみ)/ADR-016(手法はコード)。レビュー・裁定反映済み。コード未実装＝着工仕様。
+> 出所: roadmap.md Phase 5 / ADR-006(学習別PC・推論のみ)/ADR-016(手法はコード)。レビュー・裁定反映済み。**現状＝推論経路はコード実装済み**（`quant/ml/{features,train,infer}.py`・`ml/model_store.py`・夜間ジョブ `score_ai_alpha`・signals `signal_type=ai_alpha`）。残るは学習済み `.pkl` の配置と別 PC での学習実測（[ml-training.md](../ml-training.md) の `【実測】` 欄）。以下は着工時の仕様。
 >
 > 合成元（Phase 5 該当部分の抽出・裁定済み）: `docs/phase-specs/_drafts/_arbitration.md`（正本）・`quant.md` §5・`data-arch.md` §5・`ai-advisor.md` §Tool 一覧・`_current-state.md`・`docs/roadmap.md` Phase 5・`docs/decisions.md` ADR-006/ADR-016/ADR-021・`docs/phase-specs/_open-questions.md` U-4。
 > 単位の約束（_arbitration 決定2・B-3）: 比率・weight・score はすべて **0..1**（UI でのみ ×100）。遅延フラグは `is_delayed: bool`、鮮度日は `as_of: "YYYY-MM-DD"`。

@@ -55,6 +55,8 @@
 
 **完了条件**: 取引を記録すると保有・平均取得単価が導出され、相関マップ・最適比率・過去シミュレーション・資産全体の割合（遅延注記付き）が見える。
 
+> ⚠️ **要確認（実装ドリフト）**: 相関マップ・最適比率・資産全体は実装済みだが、**過去シミュレーション（backtest⑥）は純関数 `quant/backtest.py` が完成・テスト済みなのに REST/frontend/Tool のどこからも呼ばれておらず、画面に出ていない**。この完了条件は未達。実装側を直す（`GET /portfolio/{id}/backtest` を 1 本足してフロントに繋ぐ）か、完了条件から外すかは要判断。
+
 > **当面は単一 portfolio 固定で運用**する（`portfolio_id` は将来の器として持つが、UI/最適化は 1 個前提で進める）。複数 portfolio を全機能に引き回すのは増えてから（[ADR-001](decisions.md)）。
 
 ---
@@ -80,7 +82,7 @@
 
 **目的**: ニュース・財務（将来は適時開示）を読み、個別銘柄の**定性的な調査レポート（ドシエ）**を作って更新し続ける。数理・ML（数字）を補う「物語」担当。
 
-**状況（2026-06-05・実装完了）**: backend＋frontend を縦に通し実装済み（schema `0008_dossier`＋`0009_news_extraction_and_watchlist_interval`・repo・`investigate_stock` パイプライン・3 Tool〔`investigate_stock`/`get_dossier`/`fetch_news`・min_phase=4〕・REST〔`/watchlist`・`/dossiers/{code}`〕・夜間巡回ジョブ〔銘柄別 `interval_days`＋夜あたり天井＝ADR-033・MCP 非依存〕・`/watchlist` ページ・`DossierSection`〔react-markdown+rehype-sanitize〕）。pytest green。**`fetch_news` も実ニュース源を実装済み＝`NewsAdapter`〔Google News RSS → httpx＋trafilatura で本文抽出 → AI 要約〕。昼 MCP／夜 httpx の 2 系統は撤回し httpx 一本にした（ADR-020 改訂）**。MCP は将来 403/JS 必須サイト・Google URL 復元の代替候補として残す。**一般ニュースダイジェスト（銘柄に紐づかない別系統・ADR-034）も実装済み（2026-06-06）**＝`general_news` テーブル〔0011〕／夜間ジョブ `fetch_general_news`〔`run_advisor` 直前〕／Tool `get_general_news`〔min_phase=4・軸1/軸2 共用〕／`GET /general-news`／Dashboard `GeneralNewsWidget`。あわせて `CURRENT_PHASE` を 3→4 に修正（Phase 4 Tool 群の露出上げ忘れを是正）。
+**状況（2026-06-05・実装完了）**: backend＋frontend を縦に通し実装済み（schema `0008_dossier`＋`0009_news_extraction_and_watchlist_interval`・repo・`investigate_stock` パイプライン・3 Tool〔`investigate_stock`/`get_dossier`/`fetch_news`・min_phase=4〕・REST〔`/watchlist`・`/dossiers/{code}`〕・夜間巡回ジョブ〔銘柄別 `interval_days`＋夜あたり天井＝ADR-033・MCP 非依存〕・`/watchlist` ページ・`DossierSection`〔react-markdown+rehype-sanitize〕）。pytest green。**`fetch_news` も実ニュース源を実装済み＝`NewsAdapter`〔Google News RSS → httpx＋trafilatura で本文抽出 → AI 要約〕。昼 MCP／夜 httpx の 2 系統は撤回し httpx 一本にした（ADR-020 改訂）**。MCP は将来 403/JS 必須サイト・Google URL 復元の代替候補として残す。**一般ニュースダイジェスト（銘柄に紐づかない別系統・ADR-034）も実装済み（2026-06-06）**＝`general_news` テーブル〔0011〕／夜間ジョブ `fetch_general_news`〔`run_advisor` 直前〕／Tool `get_general_news`〔min_phase=4・軸1/軸2 共用〕／`GET /general-news`／Dashboard `GeneralNewsWidget`。あわせて `CURRENT_PHASE` を 3→4 に修正（Phase 4 Tool 群の露出上げ忘れを是正。**その後 Phase 7(A) 着工で 4→7 に更新済み＝現在の値は 7**）。
 
 - **`investigate_stock(code)` の調査パイプラインを 1 本実装**し、**夜間バッチ（watchlist 巡回・軽め）とチャット Tool（「この銘柄調査して」・リッチ）の両方から呼ぶ**（[ADR-020](decisions.md)）。
 - `watchlist`（監視銘柄）＋ `stock_dossiers`（1 銘柄 1 レポート・markdown 要約・`last_investigated_at`）＋ `dossier_sources`（URL＋要約＋日付の台帳・**本文は保存しない**・`source_type` で将来 Twitter 等も）を実装。**`watchlist` はこの Phase 4 で追加**（ドシエと同時・管轄=ai-advisor・`0008_dossier`＝先行の `0007_screening`〔ADR-031〕と revision 衝突を避けて繰り下げ）。Phase 2 では追加しない（`_arbitration.md` 決定1・[DOC-12]）。
@@ -103,6 +105,8 @@
 - スコアを `signals`（`signal_type=ai_alpha`）に保存。ランキング画面。
 
 **完了条件**: 学習済みモデルでスコアが算出・ランキング表示され、AI Advisor がスコアを根拠に使える。学習の再現手順がドキュメント化されている。
+
+**状況（推論経路まで実装済み）**: 特徴量・学習・推論の純関数（`quant/ml/{features,train,infer}.py`）・`.pkl` 配置/読込（`ml/model_store.py`）・推論ジョブ `score_ai_alpha`（NIGHTLY_JOBS 登録済み）・signals `signal_type=ai_alpha`・frontend の ai_alpha タブまで実装済み（pytest green）。**残**: 学習済み `.pkl` 未配置（モデル無時は `ok=True` で静かに skip＝ADR-006）・別 PC で学習を一度回して `ml-training.md` の `【実測】`（ハイパラ確定値・CV 評価）を埋めること（完了条件の「学習の再現手順ドキュメント化」が未達）。
 
 ---
 
@@ -127,7 +131,7 @@
 
 **分割（[ADR-039](decisions.md)）**: Phase 7 は性質の違う 2 成果物（軽い提示シグナルと重い米株基盤拡張）を束ねていたため、**(A) Sector Lead-Lag を先行**・**(B) 米国株拡張（米株スクリーナー＋通貨/FX＋個別株 OHLCV）を別サブフェーズに分離**した。
 
-### Phase 7(A): Sector Lead-Lag（日米業種リードラグ）— 着工
+### Phase 7(A): Sector Lead-Lag（日米業種リードラグ）— 実装済み
 
 **背景**: 「部分空間正則化付き主成分分析を用いた日米業種リードラグ投資戦略」（中川慧ほか, 人工知能学会 SIG-FIN-036, 2026）。米国業種ショックが翌営業日の日本市場に波及する効果を、事前部分空間へ正則化した PCA で低ランク予測器として捉える。日足のみ・軽量計算でラズパイ夜間バッチに適合。論文要約は [docs/methods/lead-lag.md](methods/lead-lag.md)。
 
@@ -139,6 +143,8 @@
 - **検証（軽量）**: 履歴で Spearman IC ＋ 3 分位ロングショート（q=0.3）の R/R・方向的中率を算出し `meta` に同梱。FF/Carhart 回帰・フル backtest 基盤は対象外。
 
 **完了条件（A）**: 「翌日強含む日本業種ランキング」が夜間バッチで算出・提示され（`GET /lead-lag`・`signals?type=lead_lag`）、Dashboard で描画され、AI Advisor が `get_lead_lag` で材料に使う。
+
+**状況（実装済み）**: 純関数 `quant/lead_lag.py`（部分空間正則化 PCA・確定パラメータ L=60/K0=3/K=3/λ=0.9/q=0.3）・サービス `services/lead_lag.py`・夜間ジョブ `calc_lead_lag`（NIGHTLY_JOBS 登録済み）・`GET /lead-lag`・AI Tool `get_lead_lag`（min_phase=7）・Dashboard `LeadLagWidget`・`IndexAdapter` への `YahooIndexSource`（米国業種 ETF・ADR-039）／`JQuantsIndexSource`（^TPX・ADR-040）まで end-to-end 実装済み（テスト green）。残は別 PC での実データ初回検証指標の穴埋め程度で、完了条件（A）は満たしている。
 
 **留意点（A）**: 論文は取引コスト控除後の超過収益の有無を明示していない。提示用途では軽視できるが、将来の実弾運用では検証必須。
 

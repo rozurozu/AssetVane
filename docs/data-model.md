@@ -146,6 +146,7 @@ J-Quants V2 `/v2/fins/summary` 由来。
 | `id` | INTEGER PK | |
 | `code` | TEXT | FK→stocks |
 | `note` | TEXT | メモ |
+| `interval_days` | INTEGER | 銘柄ごとの調査間隔（既定 21・stale 起点・夜間巡回の cadence＝[decisions.md ADR-033](decisions.md)）|
 | `added_at` | TEXT | 追加日時 |
 
 ### `cash` — 現金残高
