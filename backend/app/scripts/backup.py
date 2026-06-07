@@ -20,9 +20,6 @@ from pathlib import Path
 
 from app.config import settings
 
-# 残すバックアップ世代数（これより古いものはバックアップのたびに prune する）。
-KEEP = 10
-
 
 def backup(tag: str | None = None) -> Path:
     """現在の DB を `backups/<db名>-<tag>.db` へ VACUUM INTO で退避し、古い世代を prune する。
@@ -51,13 +48,13 @@ def backup(tag: str | None = None) -> Path:
 
 
 def _prune(backups_dir: Path, stem: str) -> None:
-    """直近 KEEP 個を残して古いバックアップ（更新時刻が古い順）を削除する。"""
+    """直近 settings.backup_keep 個を残して古いバックアップ（更新時刻が古い順）を削除する。"""
     backups = sorted(
         backups_dir.glob(f"{stem}-*.db"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
-    for old in backups[KEEP:]:
+    for old in backups[settings.backup_keep :]:
         old.unlink(missing_ok=True)
 
 

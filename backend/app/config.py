@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     # --- データベース ---
     database_path: str = "./data/assetvane.db"
+    # デプロイ前バックアップ（VACUUM INTO・ADR-017）で残す世代数。これより古いものは prune する。
+    # 全量バックアップ 1 個 ≒ 数百 MB なので少なめが既定。Pi の容量に応じ env BACKUP_KEEP で可変。
+    backup_keep: int = 3
 
     # --- ログ（ADR-038） ---
     # logging の root レベル。env LOG_LEVEL で可変（case-insensitive で読む）。
