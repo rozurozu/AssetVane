@@ -48,7 +48,7 @@
 
 - **前提（Phase 1/2 の Tool）**: signals/indicators 系は Phase 1（quant）で、metrics/optimize/financials/asset-overview 系は Phase 2 で実装済み。Phase 3 はそれらを **registry の `min_phase` ゲート**で LLM に露出し、handler で薄く呼ぶだけ。
 - **LLM アダプタ**: OpenRouter 既定・`.env` 差替（ADR-012）。`complete()` を tools 対応に拡張。
-- **障害時**: LLM 失敗→リトライ→ダメなら日記スキップ＋Discord 通知（ADR-018）。
+- **障害時**: LLM 失敗（例外）・無応答（observations 空）→リトライ→ダメなら journal スキップ＋`run_advisor` が ok=False → runner 集約通知（ADR-018・§7）。
 
 ---
 
@@ -362,7 +362,8 @@ async def run_nightly_advisor(conn: Connection) -> None:
     6. if proposed_policy_change:
            repo.insert_proposal(conn, kind="policy_change", body=…, rationale=…,
                status="pending", journal_id=journal_id)
-    7. 失敗時（LLM タイムアウト等）はリトライ→ダメなら日記スキップして記録し Discord 通知（§7）
+    7. 失敗（LLM 例外）or 無応答（observations 空）はリトライ→ダメなら journal スキップ＝
+       例外は伝播 / 縮退は理由 return。ジョブ自身は通知せず ok=False で返し runner 集約通知に乗る（§7）
     """
 ```
 
@@ -469,8 +470,11 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
 - **インフラ（ADR-012）**: `.env` の `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` で OpenRouter（既定）↔ Ollama 差替（`config.py:28-31` 既設）。本 Phase で `llm_timeout_seconds=60.0`/`llm_max_retries=3`/`llm_retry_base_seconds=2.0` を `config.py` に追記（data-arch §3.3）。
 - **リトライ**: LLM 呼び出しは指数バックオフ・上限あり（`AsyncOpenAI` の `max_retries`/`timeout`）。
-- **失敗時（ADR-018）**: ダメなら**その日の journal をスキップ**して「失敗を記録」し、`DISCORD_WEBHOOK_URL` へエラー通知。signals は前日分が残る（夜の分析失敗が data 取得を壊さない）。
-- **[確定]** Discord 通知ユーティリティ（DiscordAdapter / `backend/app/batch/notify.py`・data-arch §1.12/§6.1 管轄）を使い、**夜の分析失敗のエラー通知だけ Phase 3 で最小実装**（本格通知は Phase 6）。`DISCORD_WEBHOOK_URL` 未設定なら no-op（ログのみ）。
+- **失敗時（ADR-018）**: リトライ → ダメなら **journal をスキップ**して `run_advisor` ジョブが `ok=False` で返す。スキップは 2 経路を同じ結末に揃える：
+  - **②ハード失敗（LLM 例外/タイムアウト）**: `run_nightly_advisor` は例外を握らず**上位へ伝播**し、`run_advisor.run` が握って `JobResult.ok=False`。
+  - **③無応答＝縮退（observations 空・例外なし）**: スキップ理由を返し `run_advisor.run` が `ok=False` にマップ。journal は「**observations が非空のときだけ書く**」を不変条件とし、空なら書かない。
+  - signals は前日分が残る（夜の分析失敗が data 取得を壊さない）。
+- **[確定・通知一本化]** **夜AI ジョブ自身は `notify.error` を呼ばない**。ハード失敗・縮退とも `JobResult.ok=False` として **runner の既存集約通知**が 1 通 Discord に出す（DiscordAdapter / `backend/app/batch/notify.py`・data-arch §1.12/§6.1 管轄／ADR-036 の `JobResult` 集約に揃える）。`DISCORD_WEBHOOK_URL` 未設定なら no-op（ログのみ）。
 
 ### 7.1 LLM コストガードレール（U-5・ADR-028）
 

@@ -1,9 +1,12 @@
 """軸1 夜の分析AI のテスト（phase3-spec.md §5・§10・ADR-018）。
 
-LLM（complete）・Discord（notify.error）は必ずモック、DB は temp_db。検証対象:
-- LLM 失敗時に journal をスキップして notify.error が呼ばれること。
+LLM（run_turn）・Discord（notify.error）は必ずモック、DB は temp_db。検証対象:
 - submit_journal 経由で observations/proposal が記録され、proposed_policy_change があれば
   proposal が起票されること。
+- ②ハード失敗（LLM 例外）は握らず伝播し journal をスキップすること（nightly は通知しない）。
+- ③縮退（observations 空）は journal を書かず理由 str を返すこと。
+- submit_journal 未呼び出しでも reply 非空なら journal を書く（フォールバック健全）こと。
+- run_advisor ジョブが上記を JobResult(ok) に畳み、失敗/縮退は runner 集約通知に乗ること。
 - collect_situation_briefing が監査用 dict を返すこと（handler はモック）。
 """
 
@@ -195,10 +198,14 @@ def test_nightly_multi_field_patch_keeps_journal_no_proposal(
         assert repo.list_proposals(conn) == []
 
 
-def test_nightly_llm_failure_skips_journal_and_notifies(
+def test_nightly_llm_failure_propagates_and_skips_journal(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:
-    """LLM 失敗時は journal をスキップし notify.error を呼ぶ（ADR-018）。"""
+    """LLM 失敗（例外）は握らず伝播し、journal は書かない（②ハード失敗・ADR-018）。
+
+    新契約: nightly 自身は notify せず、例外をそのまま上位（run_advisor ジョブ）へ伝播する。
+    通知は runner 集約が担う（旧挙動「nightly が notify.error を呼ぶ」からの更新）。
+    """
     _stub_briefing(monkeypatch)
 
     async def _failing_loop(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
@@ -206,26 +213,76 @@ def test_nightly_llm_failure_skips_journal_and_notifies(
 
     monkeypatch.setattr(nightly, "run_turn", _failing_loop)
 
-    notified: dict[str, Any] = {}
-
-    def _fake_error(title: str, detail: str) -> None:
-        notified["title"] = title
-        notified["detail"] = detail
-
-    monkeypatch.setattr(nightly.notify, "error", _fake_error)
-
-    with get_engine().begin() as conn:
-        _run(nightly.run_nightly_advisor(conn))
+    # 例外は握られず伝播する（nightly 内 try/except は撤去済み）。
+    with pytest.raises(RuntimeError, match="LLM タイムアウト"):
+        with get_engine().begin() as conn:
+            _run(nightly.run_nightly_advisor(conn))
 
     with get_engine().connect() as conn:
         # journal は欠かす（スキップ）。
         assert repo.list_journal(conn) == []
-    assert notified["title"] == "夜の分析AI 失敗"
-    assert "LLM タイムアウト" in notified["detail"]
+
+    # nightly 自身は通知経路（notify）を持たない（runner 集約に一本化・ADR-018）。
+    assert not hasattr(nightly, "notify")
+
+
+def test_nightly_empty_response_skips_journal_and_returns_reason(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """縮退した晩（例外なし・observations 空）は journal を書かず理由 str を返す（ADR-018）。
+
+    新契約の本丸: 空応答（reply=""・tool_runs=[]）は「実質何もしなかった晩」として失敗扱い。
+    journal を書かず、切り分け材料（submit_journal 有無・reply 長・tool_runs 数）を含む理由を返す。
+    """
+    _stub_briefing(monkeypatch)
+
+    async def _empty_loop(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
+        return "", []
+
+    monkeypatch.setattr(nightly, "run_turn", _empty_loop)
+
+    with get_engine().begin() as conn:
+        reason = _run(nightly.run_nightly_advisor(conn))
+
+    assert isinstance(reason, str)
+    assert "無応答" in reason  # 縮退の切り分け材料を含む
+
+    with get_engine().connect() as conn:
+        # observations 空なので journal は書かない。
+        assert repo.list_journal(conn) == []
+        assert repo.list_proposals(conn) == []
+
+
+def test_nightly_reply_without_tool_records_journal(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """submit_journal 未呼び出しでも reply 非空なら journal を書く（縮退でない・ADR-018）。
+
+    今回の肝: フォールバックの健全性。Tool を呼ばずとも観察テキストを返したなら正常運用として
+    扱い、observations=reply で journal を 1 件残す（proposal は無し）。None を返す＝成功。
+    """
+    _stub_briefing(monkeypatch)
+
+    async def _reply_only(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
+        return "Tool は呼ばなかったが、市況を踏まえた分析テキストを返す。", []
+
+    monkeypatch.setattr(nightly, "run_turn", _reply_only)
+
+    with get_engine().begin() as conn:
+        result = _run(nightly.run_nightly_advisor(conn))
+
+    assert result is None  # 縮退でない＝成功
+
+    with get_engine().connect() as conn:
+        journals = repo.list_journal(conn)
+        assert len(journals) == 1
+        assert journals[0]["observations"].startswith("Tool は呼ばなかったが")
+        # submit_journal 不呼び出しなので proposal は起票しない。
+        assert repo.list_proposals(conn) == []
 
 
 def test_run_advisor_job_returns_jobresult(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
-    """run_advisor.run は同期で JobResult(ok=True) を返す（async を asyncio.run で駆動）。"""
+    """run_advisor.run は成功時 JobResult(ok=True, rows=1) を返す（asyncio.run で駆動）。"""
     from app.batch.jobs import run_advisor
 
     async def _noop(conn: Any) -> None:
@@ -235,3 +292,71 @@ def test_run_advisor_job_returns_jobresult(monkeypatch: pytest.MonkeyPatch, temp
     result = run_advisor.run()
     assert result.name == "run_advisor"
     assert result.ok is True
+    assert result.rows == 1
+
+
+def test_run_advisor_job_hard_failure_returns_ok_false(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """run_nightly_advisor が例外を投げると ok=False・detail に「夜AI 実行失敗」（②ハード失敗）。"""
+    from app.batch.jobs import run_advisor
+
+    async def _boom(conn: Any) -> None:
+        raise RuntimeError("LLM 500")
+
+    monkeypatch.setattr(run_advisor, "run_nightly_advisor", _boom)
+    result = run_advisor.run()
+    assert result.ok is False
+    assert result.rows == 0
+    assert "夜AI 実行失敗" in result.detail
+    assert "LLM 500" in result.detail
+
+
+def test_run_advisor_job_degraded_returns_ok_false(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """run_nightly_advisor が縮退理由 str を返すと ok=False・detail に理由（③縮退）。"""
+    from app.batch.jobs import run_advisor
+
+    async def _degraded(conn: Any) -> str:
+        return "夜AI が無応答（observations 空）: ..."
+
+    monkeypatch.setattr(run_advisor, "run_nightly_advisor", _degraded)
+    result = run_advisor.run()
+    assert result.ok is False
+    assert result.rows == 0
+    assert "無応答" in result.detail
+
+
+def test_run_advisor_failure_triggers_runner_aggregate_notify(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """ok=False の run_advisor を含む通常完了で runner 集約通知が 1 回鳴る（一本化・ADR-018）。
+
+    nightly→run_advisor→runner の経路を通し、縮退/失敗の通知が runner.notify.error に集約され
+    1 度だけ呼ばれることを担保する（ジョブ自身は notify しない＝通知の単一経路）。
+    """
+    from app.batch import notify, runner, state
+    from app.batch.jobs import run_advisor
+
+    state.end()
+
+    # 夜AI を縮退（無応答）させ、run_advisor を ok=False で返させる。
+    async def _empty_loop(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
+        return "", []
+
+    _stub_briefing(monkeypatch)
+    monkeypatch.setattr(nightly, "run_turn", _empty_loop)
+
+    error_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(notify, "error", lambda t, d: error_calls.append((t, d)))
+    monkeypatch.setattr("app.batch.jobs.NIGHTLY_JOBS", [run_advisor.run])
+
+    try:
+        runner.run_nightly()
+    finally:
+        state.end()
+
+    # 集約通知は 1 度だけ。detail に run_advisor の縮退理由が載る。
+    assert len(error_calls) == 1
+    assert "run_advisor" in error_calls[0][1]

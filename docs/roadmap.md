@@ -68,7 +68,7 @@
 - **Tool Calling 原則**: AI は計算しない。Python の事実だけを解釈（[decisions.md ADR-014](decisions.md)）。
 - **LLM アダプタ**: OpenRouter 既定、`.env` で差替可（[ADR-012](decisions.md)）。
 - `policy`（単一・チャットで育てる）／`advisor_journal`（スナップショット履歴）／`proposals`（承認状態）を実装。
-- **エラー処理**: LLM 呼び出しはリトライし、失敗時は日記をスキップして記録、`DISCORD_WEBHOOK_URL` へエラー通知（[ADR-018](decisions.md)）。
+- **エラー処理**: LLM 失敗（例外）・無応答（observations 空＝縮退）ともリトライ→ダメなら journal をスキップし、`run_advisor` ジョブが `ok=False` で返す。通知は **runner 集約に一本化**（nightly ジョブ自身は `notify.error` しない）。journal は「observations 非空のときだけ書く」が不変条件（[ADR-018](decisions.md)）。
 
 **完了条件**: チャットで「資産が小さいので短期はリスク取りたい、でもマイナスは避けたい、ゼロカットは許容」と相談すると、AI がトレードオフを整理して `policy` を更新し、夜の分析AI が翌朝それに沿った提案と日記を出す。
 
