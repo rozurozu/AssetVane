@@ -1,10 +1,12 @@
-"""fetch_general_news（一般ニュース・ADR-034）の単体テスト（ネット非依存）。
+"""fetch_general_news（一般ニュース・市況層・ADR-034 → ADR-044）の単体テスト（ネット非依存）。
 
 testing-strategy: 外部 API は叩かず、NewsAdapter の内部関数（_fetch_rss_items / _decode_google_url
 / _fetch_html / _summarize_article）と config 定数（カテゴリ・lookback・件数上限）を monkeypatch
-する。担保すること（ADR-034 確定事項）:
-  - 各記事に正しい category（ラベル）が付く・カテゴリ数ぶんループする
+する。担保すること（ADR-034 / ADR-044 確定事項）:
+  - 各記事に正しい category（ラベル）＋統合タグ（level='market'・source='news'）が付く
+  - カテゴリ数ぶんループする
   - lookback（since）フィルタ・カテゴリあたり件数キャップ
+  - known_urls に含む url は要約スキップ＋出力除外（ADR-044 要約前 dedup の逆輸入）
   - 1 カテゴリの RSS 取得失敗（NewsAdapterError）でも他カテゴリは継続（ADR-018）
   - news_enabled=False で空配列
 """
@@ -99,13 +101,55 @@ def test_disabled_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_category_assigned_and_looped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """各記事に category が付き、カテゴリ数ぶんループする（2 カテゴリ × 1 件＝2 件）。"""
+    """各記事に category＋統合タグが付き、カテゴリ数ぶんループする（2 カテゴリ × 1 件＝2 件）。"""
     _patch_pipeline(monkeypatch)
     result = _run(news.fetch_general_news())
     assert len(result) == 2
     assert {a["category"] for a in result} == {"市況", "マクロ"}
+    # ADR-044: 統合コーパスの市況層タグ。source は旧 source_type 相当の "news"。
+    assert all(a["level"] == "market" for a in result)
+    assert all(a["source"] == "news" for a in result)
     assert all(a["source_type"] == "news" for a in result)
     assert all(a["extraction_status"] == "summarized" for a in result)
+
+
+def test_known_urls_skipped_and_excluded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """known_urls に含む url（Google link）は要約スキップ＋出力から除外（ADR-044 dedup）。"""
+    summarize_calls: list[str] = []
+
+    items = {
+        "市況クエリ": [
+            {
+                "title": "既存",
+                "link": "https://news.google.com/rss/articles/KNOWN?oc=5",
+                "published_at": None,
+                "source": None,
+            },
+            {
+                "title": "新規",
+                "link": "https://news.google.com/rss/articles/FRESH?oc=5",
+                "published_at": None,
+                "source": None,
+            },
+        ],
+        "マクロクエリ": [],
+    }
+    _patch_pipeline(monkeypatch, items_by_query=items)
+
+    # 要約が呼ばれた回数を数える（既存分は要約されない＝コスト削減を担保）。
+    async def _summarize_counting(text: str) -> str:
+        summarize_calls.append(text)
+        return "要約された 2 行。"
+
+    monkeypatch.setattr(news, "_summarize_article", _summarize_counting)
+
+    known = {"https://news.google.com/rss/articles/KNOWN?oc=5"}
+    result = _run(news.fetch_general_news(known))
+
+    # 既存 1 件は除外され、新規 1 件のみ。要約も新規 1 件ぶんだけ走る。
+    assert len(result) == 1
+    assert result[0]["title"] == "新規"
+    assert len(summarize_calls) == 1
 
 
 def test_per_category_cap(monkeypatch: pytest.MonkeyPatch) -> None:

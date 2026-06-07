@@ -23,6 +23,7 @@ from app.advisor.tools.schemas import (
     GetGeneralNewsArgs,
     GetIndicatorsArgs,
     GetLeadLagArgs,
+    GetNewsContextArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     GetValuationArgs,
@@ -202,11 +203,26 @@ REGISTRY: dict[str, ToolDef] = {
         handler=handlers.handle_investigate_stock,
         min_phase=4,
     ),
+    "get_news_context": ToolDef(
+        name="get_news_context",
+        description=(
+            "指定銘柄の3層ニュース文脈（①銘柄自身 ②そのセクター ③市況/マクロ）を"
+            "貯めた台帳から一括取得する（要約＋URL・読み取り専用・ADR-044）。"
+            "『この銘柄どう？』のように銘柄を語る前に、まずこれで 3 層の文脈をまとめて取る"
+            "（市況層が必ず添うので、銘柄ニュースだけでは見えないマクロ要因を取りこぼさない）。"
+            "新規にネット取得はしない＝最新を取り込みたいときは fetch_news を使う。"
+        ),
+        parameters=_schema(GetNewsContextArgs),
+        handler=handlers.handle_get_news_context,
+        min_phase=4,
+    ),
     "fetch_news": ToolDef(
         name="fetch_news",
         description=(
-            "指定銘柄の直近ニュース記事（要約＋URL）を取得する。since で発行下限日を絞れる。"
-            "ドシエ更新の素材や直近の話題を確認したいときに呼ぶ（本文は返さず要約のみ）。"
+            "指定銘柄のニュースを**今すぐ新規にネット取得**して要約＋URL を返す"
+            "（取り込みも伴う・since で発行下限日を絞れる）。"
+            "貯めた文脈で足りず最新の話題を能動的に取りに行きたいとき・ドシエ更新の素材集めに呼ぶ。"
+            "既存の文脈で足りるなら get_news_context（読み取り専用）を先に。本文は返さず要約のみ。"
         ),
         parameters=_schema(FetchNewsArgs),
         handler=handlers.handle_fetch_news,
@@ -215,9 +231,10 @@ REGISTRY: dict[str, ToolDef] = {
     "get_general_news": ToolDef(
         name="get_general_news",
         description=(
-            "銘柄に紐づかない直近の一般ニュース（市況・マクロ経済・世界情勢）を"
-            "カテゴリ別の見出し＋要約＋URL で取得する（ADR-034）。"
-            "当日の市況・マクロ文脈を踏まえて全体観を語るときに呼ぶ（個別銘柄は fetch_news）。"
+            "**市況だけ**（特定銘柄に紐づかない一般ニュース＝市況・マクロ経済・世界情勢）を"
+            "カテゴリ別の見出し＋要約＋URL で取得する（code 不要・ADR-034/044）。"
+            "個別銘柄を絡めず全体観・マクロ文脈だけを語るときに呼ぶ。"
+            "銘柄に紐づく文脈が要るなら get_news_context（市況層も含めて 3 層返す）を使う。"
         ),
         parameters=_schema(GetGeneralNewsArgs),
         handler=handlers.handle_get_general_news,

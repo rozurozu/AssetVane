@@ -18,14 +18,13 @@ from app.db.schema import (
     asset_snapshots,
     cash,
     daily_quotes,
-    dossier_sources,
     external_assets,
     fetch_meta,
     financials,
-    general_news,
     holdings,
     index_quotes,
     llm_usage,
+    news,
     notifications,
     policy,
     portfolios,
@@ -1009,45 +1008,85 @@ def upsert_dossier(
     conn.execute(stmt)
 
 
-def upsert_dossier_source(
-    conn: Connection,
-    *,
-    code: str,
-    url: str,
-    title: str | None = None,
-    summary: str | None = None,
-    published_at: str | None = None,
-    source_type: str | None = None,
-    processed_at: str | None = None,
-    extraction_status: str | None = None,
-) -> None:
-    """dossier_sources に 1 ソースを取り込む（url 衝突なら skip・ADR-020/ADR-002・spec §2.3）。
+# ===== ADR-044: ニュース統合コーパス（旧 general_news ＋ dossier_sources を統合した 1 本） =====
 
-    本文は保存せず summary と url のみ（ADR-020）。既定は「既存 url なら skip」＝
-    on_conflict_do_nothing（spec §2.3 の「実装は『既存なら skip』を既定」に従う）。
-    processed_at 未指定なら UTC now を入れる。
-    extraction_status は取得レベル（'summarized'/'description'/'headline'）＝本文取得の成否を
-    記録する（NewsAdapter の 3 段フォールバックのどの段まで届いたか・計画/ADR-020）。
+# 旧 5 関数（upsert_general_news/list_general_news/upsert_dossier_source/dossier_source_exists/
+# list_dossier_sources）を以下 3 関数に統合した（ADR-044）。記事ごとに level（stock/sector/market/
+# user）・code・sector17_code・category・source の階層タグを持たせ、3 層（銘柄/セクター/市況）を
+# タグフィルタで取り出す（get_news_context）。本文は持たず summary と url のみ（ADR-020 堅持）。
+# 書き込み規約: upsert_news は夜間ジョブ等が複数記事を 1 トランザクションに束ねて atomic に書く。
+# conn を受け取り commit はしない（W2・呼び出し側が `with get_engine().begin() as conn:` で所有）。
+
+
+def upsert_news(conn: Connection, rows: list[dict[str, Any]]) -> int:
+    """ニュース記事を一括 UPSERT する（url 衝突なら skip・ADR-044/ADR-002）。
+
+    各 row のキー = level/code/sector17_code/category/source/url/title/summary/published_at/
+    fetched_at/extraction_status。本文は保存せず summary と url のみ（ADR-020 の流儀）。既定は
+    「既存 url なら skip」＝on_conflict_do_nothing（再取得の二重取り込みを防ぐ冪等キー）。
+    fetched_at 未指定行は UTC now を補う。返り値は受理を試みた行数（skip 含む・ログ用）。
     commit はしない。呼び出し側が `with get_engine().begin() as conn:` で境界を所有する（W2）。
     """
-    stmt = sqlite_insert(dossier_sources).values(
-        code=code,
-        source_type=source_type,
-        url=url,
-        title=title,
-        summary=summary,
-        published_at=published_at,
-        processed_at=processed_at or datetime.now(UTC).isoformat(),
-        extraction_status=extraction_status,
-    )
-    stmt = stmt.on_conflict_do_nothing(index_elements=["url"])  # 既存 url は無視（skip）
-    conn.execute(stmt)
+    if not rows:
+        return 0
+    now_iso = datetime.now(UTC).isoformat()
+    for row in rows:
+        stmt = sqlite_insert(news).values(
+            level=row["level"],
+            code=row.get("code"),
+            sector17_code=row.get("sector17_code"),
+            category=row.get("category"),
+            source=row.get("source"),
+            url=row["url"],
+            title=row.get("title"),
+            summary=row.get("summary"),
+            published_at=row.get("published_at"),
+            fetched_at=row.get("fetched_at") or now_iso,
+            extraction_status=row.get("extraction_status"),
+        )
+        stmt = stmt.on_conflict_do_nothing(index_elements=["url"])  # 既存 url は無視（skip）
+        conn.execute(stmt)
+    return len(rows)
 
 
-def dossier_source_exists(conn: Connection, url: str) -> bool:
-    """url が dossier_sources に既存か返す（URL 重複排除の存在確認・spec §3）。"""
-    stmt = select(dossier_sources.c.id).where(dossier_sources.c.url == url).limit(1)
+def news_exists(conn: Connection, url: str) -> bool:
+    """url が news に既存か返す（要約前の dedup・URL 重複排除の存在確認・ADR-044）。"""
+    stmt = select(news.c.id).where(news.c.url == url).limit(1)
     return conn.execute(stmt).first() is not None
+
+
+def list_news(
+    conn: Connection,
+    *,
+    level: str | None = None,
+    code: str | None = None,
+    sector17_code: str | None = None,
+    since: str | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """ニュースを発行日降順で返す（統合コーパスの構造的取り出し・ADR-044）。
+
+    与えられたフィルタ（level/code/sector17_code/since）で AND 絞り込みする。since 指定
+    （'YYYY-MM-DD'）は `published_at >= since`。published_at 降順・同値は id 降順で並べ、
+    published_at が NULL の行は末尾へ寄る。limit 指定時は件数を絞る。本文は持たない
+    （summary と url のみ＝ADR-020）。
+    """
+    conds = []
+    if level is not None:
+        conds.append(news.c.level == level)
+    if code is not None:
+        conds.append(news.c.code == code)
+    if sector17_code is not None:
+        conds.append(news.c.sector17_code == sector17_code)
+    if since is not None:
+        conds.append(news.c.published_at >= since)
+    stmt = select(news)
+    if conds:
+        stmt = stmt.where(and_(*conds))
+    stmt = stmt.order_by(news.c.published_at.desc(), news.c.id.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
 def get_dossier(conn: Connection, code: str) -> dict[str, Any] | None:
@@ -1060,66 +1099,6 @@ def get_dossier(conn: Connection, code: str) -> dict[str, Any] | None:
         conn.execute(select(stock_dossiers).where(stock_dossiers.c.code == code)).mappings().first()
     )
     return dict(row) if row else None
-
-
-def list_dossier_sources(conn: Connection, code: str) -> list[dict[str, Any]]:
-    """指定銘柄の dossier_sources を published_at 降順で返す（ソース台帳・spec §5.2）。
-
-    本文は持たない（summary と url のみ＝ADR-020）。published_at が NULL の行は末尾に寄る。
-    """
-    stmt = (
-        select(dossier_sources)
-        .where(dossier_sources.c.code == code)
-        .order_by(dossier_sources.c.published_at.desc(), dossier_sources.c.id.desc())
-    )
-    return [dict(r) for r in conn.execute(stmt).mappings().all()]
-
-
-# ===== ADR-034: 一般ニュース台帳（銘柄に紐づかない別系統・general_news） =====
-
-# 書き込み規約: upsert_general_news は夜間ジョブ fetch_general_news が全カテゴリの記事を
-# 1 トランザクションに束ねて atomic に書くため、conn を受け取り commit はしない（W2・
-# 呼び出し側が `with get_engine().begin() as conn:` で境界を所有＝upsert_dossier_source と同じ）。
-
-
-def upsert_general_news(conn: Connection, rows: list[dict[str, Any]]) -> int:
-    """一般ニュース記事を一括 UPSERT する（url 衝突なら skip・ADR-034/ADR-002）。
-
-    本文は保存せず summary と url のみ（ADR-020 の流儀）。既定は「既存 url なら skip」＝
-    on_conflict_do_nothing（再取得の二重取り込みを防ぐ冪等キー）。fetched_at 未指定行は
-    UTC now を補う。返り値は受理を試みた行数（skip 含む・呼び出し側のログ用）。
-    commit はしない。呼び出し側が `with get_engine().begin() as conn:` で境界を所有する（W2）。
-    """
-    if not rows:
-        return 0
-    now_iso = datetime.now(UTC).isoformat()
-    for row in rows:
-        stmt = sqlite_insert(general_news).values(
-            category=row.get("category"),
-            url=row["url"],
-            title=row.get("title"),
-            summary=row.get("summary"),
-            published_at=row.get("published_at"),
-            fetched_at=row.get("fetched_at") or now_iso,
-            source_type=row.get("source_type"),
-            extraction_status=row.get("extraction_status"),
-        )
-        stmt = stmt.on_conflict_do_nothing(index_elements=["url"])  # 既存 url は無視（skip）
-        conn.execute(stmt)
-    return len(rows)
-
-
-def list_general_news(conn: Connection, *, since: str | None = None) -> list[dict[str, Any]]:
-    """一般ニュースを発行日降順で返す（ADR-034・widget と Tool が消費）。
-
-    since 指定（'YYYY-MM-DD'）で `published_at >= since` に絞る（直近分のみ眺める用途）。
-    published_at が NULL の行は末尾へ寄る。本文は持たない（summary と url のみ＝ADR-020）。
-    """
-    stmt = select(general_news)
-    if since is not None:
-        stmt = stmt.where(general_news.c.published_at >= since)
-    stmt = stmt.order_by(general_news.c.published_at.desc(), general_news.c.id.desc())
-    return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
 def list_watchlist(conn: Connection) -> list[dict[str, Any]]:

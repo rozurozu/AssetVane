@@ -119,20 +119,84 @@ async def fetch_news(
 
 
 # ---------------------------------------------------------------------------
-# 公開境界: fetch_general_news（一般ニュース・銘柄に紐づかない別系統＝ADR-034）
+# 共通: キーワード検索 → 要約前 dedup → 3 段フォールバック要約（一般/セクター共用）
 # ---------------------------------------------------------------------------
-async def fetch_general_news() -> list[dict]:
-    """カテゴリ別の一般ニュースを取得して返す（ADR-034・grill-me 確定）。
+async def _fetch_keyword_news(
+    query: str,
+    *,
+    since: str,
+    max_n: int,
+    known_urls: set[str],
+) -> list[dict]:
+    """1 クエリのキーワードニュースを取得し、要約済み article dict の list を返す（ADR-044）。
 
-    銘柄に紐づかない一般ニュース（市況・マクロ・世界情勢）を Google News キーワード検索で
-    取得する。fetch_news（銘柄専用）とは別入口だが、内部パイプライン（_fetch_rss_items /
-    _process_item / 3 段フォールバック要約）はそのまま再利用する。カテゴリ定義・件数上限・
-    lookback は定数モジュール（general_news_config）から読む（env 化しない＝確定事項5）。
+    fetch_general_news / fetch_sector_news が共用するヘルパ。流れは _fetch_google_news と同型
+    （RSS 取得 → since フィルタ → 新しい順 → max_n キャップ）だが、**要約前 dedup の逆輸入**を持つ:
+    Google URL ベースで known_urls（呼び出し側が DB から渡す直近既存 url 集合）に含まれる記事は
+    本文取得＋要約をスキップして出力から除外する（既存分を再要約しない＝定常コストの削減・ADR-044）。
+
+    Args:
+        query: Google News 検索クエリ（OR 連結のキーワード）。
+        since: 発行日下限 'YYYY-MM-DD'（published_at >= since のみ拾う）。
+        max_n: 新しい順に拾う上限（コスト天井）。
+        known_urls: 既存とみなす url 集合（要約スキップ＋除外の判定に使う）。
 
     Returns:
-        記事 dict の list。各 article は fetch_news と同形＋`category` キー:
-        `{url, title, summary, published_at, source_type:"news", extraction_status, category}`。
-        `news_enabled=False` なら即 `[]`。
+        要約済み article dict の list（`{url, title, summary, published_at, source_type, ...}`）。
+        level/category/sector17_code/source は呼び出し側が付与する（ヘルパは源別タグを知らない）。
+
+    Note:
+        RSS 取得失敗（NewsAdapterError）は握らず送出する（呼び出し側が源単位で握る・ADR-018）。
+        記事個別の失敗は _process_item が headline へ握る。
+    """
+    items = await _fetch_rss_items(query)
+
+    # 発行日下限フィルタ＋新しい順に上限キャップ（コスト制御・fetch_news と同流儀）。
+    items = [it for it in items if it["published_at"] is None or it["published_at"] >= since]
+    items.sort(key=lambda it: it["published_at"] or "", reverse=True)
+    items = items[:max_n]
+
+    # 要約前 dedup（逆輸入・ADR-044）: 既存 url の記事は本文取得＋要約をせず出力から外す。
+    # RSS の link は Google エンコード URL だが、known_urls には復元後の実 URL も Google URL も
+    # 入りうる（前回の保存値）。ここでは要約コストを払う前に Google URL で安価に弾く。
+    items = [it for it in items if it["link"] not in known_urls]
+
+    # 記事ごとに本文取得 → 要約（控えめな並列・1 記事の失敗で全体を落とさない）。
+    semaphore = asyncio.Semaphore(_DECODE_CONCURRENCY)
+
+    async def _bounded(item: dict) -> dict:
+        async with semaphore:
+            return await _process_item(item)
+
+    articles = list(await asyncio.gather(*(_bounded(it) for it in items)))
+
+    # 復元後の実 URL が known_urls に入っていた場合も除外する（dedup の取りこぼしを塞ぐ）。
+    return [a for a in articles if a["url"] not in known_urls]
+
+
+# ---------------------------------------------------------------------------
+# 公開境界: fetch_general_news（一般ニュース・市況/マクロ層＝ADR-034 → ADR-044 で level='market'）
+# ---------------------------------------------------------------------------
+async def fetch_general_news(known_urls: set[str] | None = None) -> list[dict]:
+    """カテゴリ別の一般ニュース（市況層）を取得して返す（ADR-034 → ADR-044）。
+
+    銘柄に紐づかない一般ニュース（市況・マクロ・世界情勢）を Google News キーワード検索で
+    取得する。fetch_news（銘柄専用）とは別入口だが、内部パイプライン（_fetch_keyword_news /
+    _fetch_rss_items / _process_item / 3 段フォールバック要約）はそのまま再利用する。カテゴリ定義・
+    件数上限・lookback は定数モジュール（general_news_config）から読む（env 化しない＝ADR-034）。
+
+    ADR-044 で統合ニュースコーパスへ集約したため、各記事に統合タグ `level="market"`・
+    `category=<カテゴリ label>`・`source="news"` を付与して返す（旧 source_type 相当は source）。
+    `known_urls` は呼び出し側（夜間ジョブ）が DB から渡す既存 url 集合で、要約前 dedup に使う
+    （アダプタは DB 非依存・ADR-010）。
+
+    Args:
+        known_urls: 既存とみなす url 集合（要約スキップ＋出力除外の判定）。None なら空集合扱い。
+
+    Returns:
+        記事 dict の list。各 article は
+        `{url, title, summary, published_at, source_type:"news", extraction_status,
+          level:"market", category, source:"news"}`。`news_enabled=False` なら即 `[]`。
 
     Note:
         1 カテゴリの RSS 取得失敗（NewsAdapterError）は握って次カテゴリを継続する（1 カテゴリの
@@ -150,31 +214,99 @@ async def fetch_general_news() -> list[dict]:
         GENERAL_NEWS_MAX_PER_CATEGORY,
     )
 
+    known = known_urls or set()
     since = (datetime.now(UTC) - timedelta(days=GENERAL_NEWS_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
-    semaphore = asyncio.Semaphore(_DECODE_CONCURRENCY)
-
-    async def _bounded(item: dict) -> dict:
-        async with semaphore:
-            return await _process_item(item)
 
     results: list[dict] = []
     for category in GENERAL_NEWS_CATEGORIES:
         label = category["label"]
         try:
-            items = await _fetch_rss_items(category["query"])
+            articles = await _fetch_keyword_news(
+                category["query"],
+                since=since,
+                max_n=GENERAL_NEWS_MAX_PER_CATEGORY,
+                known_urls=known,
+            )
         except NewsAdapterError as exc:
             # 1 カテゴリの源失敗は握って次へ（他カテゴリを巻き込まない・ADR-018）。
             logger.warning("fetch_general_news: カテゴリ「%s」の取得に失敗: %s", label, exc)
             continue
 
-        # 発行日下限フィルタ＋新しい順に上限キャップ（コスト制御・fetch_news と同流儀）。
-        items = [it for it in items if it["published_at"] is None or it["published_at"] >= since]
-        items.sort(key=lambda it: it["published_at"] or "", reverse=True)
-        items = items[:GENERAL_NEWS_MAX_PER_CATEGORY]
-
-        articles = await asyncio.gather(*(_bounded(it) for it in items))
         for article in articles:
-            article["category"] = label  # 銘柄 code の代わりに category を付与（ADR-034）
+            # ADR-044: 統合コーパスの市況層タグ。category は銘柄 code の代わりの表示分類。
+            article["level"] = "market"
+            article["category"] = label
+            article["source"] = "news"
+        results.extend(articles)
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# 公開境界: fetch_sector_news（セクターニュース・ADR-044 (ii) セクター層・level='sector'）
+# ---------------------------------------------------------------------------
+async def fetch_sector_news(known_urls: set[str] | None = None) -> list[dict]:
+    """TOPIX-17 業種別のセクターニュースを取得して返す（ADR-044 (ii) セクター層）。
+
+    統合ニュースコーパスの 3 階層（銘柄/セクター/市況）のうち「セクター」層を埋める。業種別の
+    Google News キーワード検索（SECTOR_NEWS_QUERIES）を回し、一般ニュースと同じパイプライン
+    （_fetch_keyword_news）を再利用する。各記事に統合タグ `level="sector"`・
+    `sector17_code=<業種コード>`・`category=<業種 label>`・`source="news"` を付与して返す。
+
+    アダプタは DB 非依存（ADR-010）。`known_urls` は呼び出し側（夜間ジョブ）が DB から渡す既存
+    url 集合で、要約前 dedup（既存分を再要約しない）に使う。
+
+    Args:
+        known_urls: 既存とみなす url 集合（要約スキップ＋出力除外の判定）。None なら空集合扱い。
+
+    Returns:
+        記事 dict の list。各 article は
+        `{url, title, summary, published_at, source_type:"news", extraction_status,
+          level:"sector", sector17_code, category, source:"news"}`。
+        `news_enabled=False` なら即 `[]`。
+
+    Note:
+        1 業種の RSS 取得失敗（NewsAdapterError）は握って次業種を継続する（1 業種の失敗で全体を
+        落とさない＝ADR-018）。記事個別の失敗は _process_item が headline へ握る。
+    """
+    if not settings.news_enabled:
+        logger.debug("fetch_sector_news: news_enabled=False のためスキップ")
+        return []
+
+    from datetime import UTC, datetime, timedelta
+
+    from app.adapters.general_news_config import (
+        SECTOR_NEWS_LOOKBACK_DAYS,
+        SECTOR_NEWS_MAX_PER_SECTOR,
+        SECTOR_NEWS_QUERIES,
+    )
+
+    known = known_urls or set()
+    since = (datetime.now(UTC) - timedelta(days=SECTOR_NEWS_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+
+    results: list[dict] = []
+    for sector17_code, entry in SECTOR_NEWS_QUERIES.items():
+        label = entry["label"]
+        try:
+            articles = await _fetch_keyword_news(
+                entry["query"],
+                since=since,
+                max_n=SECTOR_NEWS_MAX_PER_SECTOR,
+                known_urls=known,
+            )
+        except NewsAdapterError as exc:
+            # 1 業種の源失敗は握って次へ（他業種を巻き込まない・ADR-018）。
+            logger.warning(
+                "fetch_sector_news: 業種「%s」(%s) の取得に失敗: %s", label, sector17_code, exc
+            )
+            continue
+
+        for article in articles:
+            # ADR-044: 統合コーパスのセクター層タグ。sector17_code で (ii) セクター層を引く。
+            article["level"] = "sector"
+            article["sector17_code"] = sector17_code
+            article["category"] = label
+            article["source"] = "news"
         results.extend(articles)
 
     return results

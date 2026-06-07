@@ -364,27 +364,6 @@ stock_dossiers = Table(
     Column("updated_at", String),  # 行更新時刻 ISO8601
 )
 
-# dossier_sources（ソース台帳・本文非保存＝phase4-spec §2.3・ADR-020）。
-# 取得 → 要約 → 本文は捨て、summary と url だけ残す（ストレージ・著作権の両面で全文保持は不採用）。
-# UNIQUE(url) で再調査の二重取り込みを防ぐ（存在確認・冪等 UPSERT のキー）。
-# 銘柄 FK（この銘柄のソース一覧）。code への索引で銘柄詳細の一覧取得を速くする。
-dossier_sources = Table(
-    "dossier_sources",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("code", String, ForeignKey("stocks.code"), nullable=False),
-    Column("source_type", String),  # 'news'/'disclosure'/'twitter' 等（将来拡張）
-    Column("url", String, nullable=False),  # 取り込み元 URL（本文は保存しない）
-    Column("title", String),
-    Column("summary", String),  # 短い要約（記事全文は捨てる＝ADR-020）
-    Column("published_at", String),  # 発行日 'YYYY-MM-DD'（発行 1 週間以内のみ取り込む）
-    Column("processed_at", String),  # 取り込み・要約した時刻 ISO8601
-    # 取得レベル 'summarized'/'description'/'headline'・本文取得の成否を記録（計画/ADR-020）
-    Column("extraction_status", String),
-    UniqueConstraint("url", name="uq_dossier_sources_url"),  # URL 重複排除
-    Index("ix_dossier_sources_code", "code"),
-)
-
 # ===== Phase 6: Signal Beacon（phase6-spec.md §2・ADR-007/018・0010_notifications） =====
 
 # 通知の送信済み記録＝二重送信防止（ADR-002/018）。cron の coalesce 漏れや POST /batch/run の
@@ -400,25 +379,32 @@ notifications = Table(
     Column("sent_at", String),  # 送信時刻 ISO8601 UTC
 )
 
-# ===== ADR-034: 一般ニュース台帳（銘柄に紐づかない別系統・0011_general_news） =====
+# ===== ADR-044: ニュース統合コーパス（旧 general_news ＋ dossier_sources を統合・0013） =====
 
-# 個別銘柄ドシエ（dossier_sources・code FK 必須）とは住所が違うため別テーブルで持つ（ADR-034）。
-# code FK は持たず category 列を持つ。本文は保存せず summary と url のみ（ADR-020 の流儀）。
-# UNIQUE(url) で再取得の二重取り込みを防ぐ（冪等 UPSERT のキー）。category 索引で
-# GET /general-news のカテゴリ別グルーピングを速くする。
-general_news = Table(
-    "general_news",
+# ADR-044（ニュースを統合コーパスと階層タグに集約する）。旧 2 系統＝銘柄ニュース dossier_sources
+# （ADR-020・code FK 必須）と一般ニュース general_news（ADR-034・category 列）を 1 本に統合し、
+# 記事ごとに level（stock/sector/market/user）・code・sector17_code・category・source の階層タグを
+# 持たせる。本文は保存せず summary と url のみ（ADR-020 堅持）。UNIQUE(url) ＋ 冪等 UPSERT で
+# 再取得の二重取り込みを防ぐ。level/code/sector17_code に索引を張り、3 層（銘柄/セクター/市況）の
+# タグフィルタ取り出し（get_news_context）を速くする。旧 source_type 列は source に改名した。
+news = Table(
+    "news",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("category", String, nullable=False),  # 表示ラベル（市況/マクロ/世界情勢 等）
+    Column("level", String, nullable=False),  # 'stock'/'sector'/'market'/'user' の階層タグ
+    Column("code", String, ForeignKey("stocks.code")),  # stock 層の銘柄 FK（他層は NULL）
+    Column("sector17_code", String),  # sector 層の TOPIX-17 業種コード '1617'..'1633'
+    Column("category", String),  # market 層の表示ラベル（市況/マクロ/世界情勢・他層は NULL）
+    Column("source", String),  # 'news'/'user'/'disclosure'/'twitter' 等（旧 source_type を改名）
     Column("url", String, nullable=False),  # 取り込み元 URL（本文は保存しない）
     Column("title", String),
     Column("summary", String),  # 短い要約（記事全文は捨てる＝ADR-020）
     Column("published_at", String),  # 発行日 'YYYY-MM-DD'
     Column("fetched_at", String),  # 取り込み時刻 ISO8601 UTC
-    Column("source_type", String),  # 'news' 等（将来拡張）
     # 取得レベル 'summarized'/'description'/'headline'（本文取得の成否・ADR-020）
     Column("extraction_status", String),
-    UniqueConstraint("url", name="uq_general_news_url"),  # URL 重複排除
-    Index("ix_general_news_category", "category"),
+    UniqueConstraint("url", name="uq_news_url"),  # URL 重複排除（冪等 UPSERT のキー）
+    Index("ix_news_level", "level"),  # 階層タグ別の取り出しを速くする
+    Index("ix_news_code", "code"),  # 銘柄層（get_news_context の (i)）
+    Index("ix_news_sector17", "sector17_code"),  # セクター層（get_news_context の (ii)）
 )

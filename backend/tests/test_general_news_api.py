@@ -1,10 +1,13 @@
-"""一般ニュース REST API テスト（GET /general-news・ADR-034）。
+"""一般ニュース REST API テスト（GET /general-news・ADR-034・ADR-044）。
 
-`client` フィクスチャ（alembic 経路で一時 SQLite＝0011 が当たる）で叩く。
+`client` フィクスチャ（alembic 経路で一時 SQLite）で叩く。
 検証対象:
 - 台帳が空でも 200 で categories=[]（widget が壊れない）。
 - 投入後はカテゴリ別にグルーピングして返す。
+- API レスポンス形は ADR-044 後も不変（GeneralNewsItem.source_type に news.source をマップ）。
 発行日は lookback（既定 2 日）に左右されないよう未来日でシードする（router の since は now 基準）。
+
+データ仕込みは統合コーパス news へ `repo.upsert_news`（level="market"）で行う（ADR-044）。
 """
 
 from __future__ import annotations
@@ -19,8 +22,9 @@ _FUTURE = "2999-12-31"
 
 
 def _seed(rows: list[dict]) -> None:
+    """市況ニュース（level="market"）を統合コーパス news へ投入する（ADR-044）。"""
     with get_engine().begin() as conn:
-        repo.upsert_general_news(conn, rows)
+        repo.upsert_news(conn, [{**r, "level": "market"} for r in rows])
 
 
 def test_general_news_empty_returns_200(client: Any) -> None:
@@ -40,7 +44,7 @@ def test_general_news_grouped_by_category(client: Any) -> None:
                 "title": "日経上昇",
                 "summary": "要約1",
                 "published_at": _FUTURE,
-                "source_type": "news",
+                "source": "news",
                 "extraction_status": "summarized",
             },
             {
@@ -49,7 +53,7 @@ def test_general_news_grouped_by_category(client: Any) -> None:
                 "title": "東証続伸",
                 "summary": "要約2",
                 "published_at": _FUTURE,
-                "source_type": "news",
+                "source": "news",
                 "extraction_status": "summarized",
             },
             {
@@ -58,7 +62,7 @@ def test_general_news_grouped_by_category(client: Any) -> None:
                 "title": "日銀会合",
                 "summary": "要約3",
                 "published_at": _FUTURE,
-                "source_type": "news",
+                "source": "news",
                 "extraction_status": "summarized",
             },
         ]
@@ -73,3 +77,5 @@ def test_general_news_grouped_by_category(client: Any) -> None:
     assert item["url"] == "https://k.example/1"
     assert item["category"] == "マクロ"
     assert item["title"] == "日銀会合"
+    # API 形は不変: news.source が source_type にマップされる（ADR-044）。
+    assert item["source_type"] == "news"

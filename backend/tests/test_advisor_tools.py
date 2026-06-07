@@ -76,6 +76,8 @@ def test_registry_handlers_are_registered() -> None:
         "fetch_news",
         # ADR-034: 一般ニュース（min_phase=4）。
         "get_general_news",
+        # ADR-044: ニュース3層文脈（min_phase=4）。
+        "get_news_context",
         # Phase 7: 日米業種リードラグ（min_phase=7）。
         "get_lead_lag",
     }
@@ -186,19 +188,22 @@ def test_handle_get_dossier_composes(monkeypatch: pytest.MonkeyPatch) -> None:
             "updated_at": "2026-06-01T00:00:00+00:00",
         },
     )
+    # ADR-044: ニュース源は統合コーパス news（level='stock'）を引く。news の source 列を
+    # Tool 返却の source_type にマップする（キー名は不変）。
     monkeypatch.setattr(
         handlers.repo,
-        "list_dossier_sources",
-        lambda conn, code: [
+        "list_news",
+        lambda conn, *, level, code, **_: [
             {
                 "id": 1,
+                "level": "stock",
                 "code": code,
-                "source_type": "news",
+                "source": "news",  # 統合 news の source 列（旧 source_type）
                 "url": "https://example.com/a",
                 "title": "好決算",
                 "summary": "増収増益",
                 "published_at": "2026-06-01",
-                "processed_at": "2026-06-01T00:00:00+00:00",
+                "fetched_at": "2026-06-01T00:00:00+00:00",
             }
         ],
     )
@@ -225,7 +230,7 @@ def test_handle_get_dossier_uninvestigated(monkeypatch: pytest.MonkeyPatch) -> N
         handlers, "get_engine", lambda: type("E", (), {"connect": _FakeConnectConn})()
     )
     monkeypatch.setattr(handlers.repo, "get_dossier", lambda conn, code: None)
-    monkeypatch.setattr(handlers.repo, "list_dossier_sources", lambda conn, code: [])
+    monkeypatch.setattr(handlers.repo, "list_news", lambda conn, **_: [])
     out = _run(handlers.handle_get_dossier({"code": "9999"}))
     assert out["summary_md"] == ""
     assert out["key_facts"] is None
@@ -237,6 +242,103 @@ def test_handle_get_dossier_error_no_code() -> None:
     """code 欠落は {"error": ...}（境界で弾く・ループは落とさない）。"""
     out = _run(handlers.handle_get_dossier({}))
     assert "error" in out
+
+
+# ---------------------------------------------------------------------------
+# ADR-044: get_news_context（3層文脈）・既存ニュース Tool の張り替え回帰
+# ---------------------------------------------------------------------------
+
+
+def test_handle_get_news_context_bridges(monkeypatch: pytest.MonkeyPatch) -> None:
+    """handle_get_news_context: build_news_context を呼び3層 dict を返す（ADR-044）。"""
+    monkeypatch.setattr(
+        handlers, "get_engine", lambda: type("E", (), {"connect": _FakeConnectConn})()
+    )
+    captured: dict[str, Any] = {}
+
+    def _fake_build(conn: Any, code: str) -> dict[str, Any]:
+        captured["code"] = code
+        return {
+            "code": code,
+            "company_name": "トヨタ自動車",
+            "sector17_code": "1622",
+            "sector_label": "自動車・輸送機",
+            "stock": [
+                {
+                    "url": "u1",
+                    "title": "好決算",
+                    "summary": "s",
+                    "published_at": "2026-06-01",
+                    "source": "news",
+                }
+            ],
+            "sector": [],
+            "market": [
+                {
+                    "url": "u2",
+                    "title": "金利",
+                    "summary": "s",
+                    "published_at": "2026-06-01",
+                    "source": "news",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(handlers, "build_news_context", _fake_build)
+    out = _run(handlers.handle_get_news_context({"code": "7203"}))
+    assert captured == {"code": "7203"}
+    # 3 層キーが揃って返る（橋渡しはそのまま通す）。
+    assert {"stock", "sector", "market"} <= set(out)
+    assert out["sector_label"] == "自動車・輸送機"
+
+
+def test_handle_get_news_context_error_no_code() -> None:
+    """code 欠落は {"error": ...}（境界で弾く・ループは落とさない）。"""
+    out = _run(handlers.handle_get_news_context({}))
+    assert "error" in out
+
+
+def test_handle_get_general_news_regression(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_general_news の張り替え後も従来形（categories グルーピング）を返す（ADR-044）。"""
+    monkeypatch.setattr(
+        handlers, "get_engine", lambda: type("E", (), {"connect": _FakeConnectConn})()
+    )
+    captured: dict[str, Any] = {}
+
+    def _fake_list_news(conn: Any, *, level: str, since: str, **_: Any) -> list[dict[str, Any]]:
+        captured["level"] = level  # market 層だけを引く（ADR-044 の張り替え）
+        return [
+            {
+                "category": "市況",
+                "url": "u1",
+                "title": "株高",
+                "summary": "s",
+                "published_at": "2026-06-06",
+            },
+            {
+                "category": "市況",
+                "url": "u2",
+                "title": "続伸",
+                "summary": "s",
+                "published_at": "2026-06-06",
+            },
+            {
+                "category": "マクロ",
+                "url": "u3",
+                "title": "金利",
+                "summary": "s",
+                "published_at": "2026-06-06",
+            },
+        ]
+
+    monkeypatch.setattr(handlers.repo, "list_news", _fake_list_news)
+    out = _run(handlers.handle_get_general_news({}))
+    assert captured["level"] == "market"
+    cats = {c["label"]: c["items"] for c in out["categories"]}
+    assert set(cats) == {"市況", "マクロ"}
+    assert len(cats["市況"]) == 2
+    # 記事は url/title/summary/published_at の subset（従来形・category は items に出さない）。
+    assert set(cats["市況"][0]) == {"url", "title", "summary", "published_at"}
 
 
 def test_handle_fetch_news_bridges(monkeypatch: pytest.MonkeyPatch) -> None:

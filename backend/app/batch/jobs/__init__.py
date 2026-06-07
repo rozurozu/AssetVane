@@ -19,6 +19,7 @@ from app.batch.jobs import (
     fetch_general_news,
     fetch_index,
     fetch_quotes,
+    fetch_sector_news,
     investigate_dossier,
     notify_digest,
     run_advisor,
@@ -43,6 +44,9 @@ NIGHTLY_JOBS = [
     snapshot_assets.run,  # Phase 2: 今日の株価確定後に評価額を焼く（phase2-spec.md §3.3）
     # ADR-034: 夜の分析AI の市況文脈材料として run_advisor の直前で一般ニュースを取得・保存。
     fetch_general_news.run,
+    # ADR-044: 統合コーパスのセクター層を埋める。一般ニュースの直後・run_advisor の前に置き、
+    # 夜の分析AI が当日の (ii) セクター文脈も読めるようにする（fetch_general_news と同型）。
+    fetch_sector_news.run,
     run_advisor.run,  # Phase 3: 事実が揃ってから夜の分析AI を回す（phase3-spec.md §5）
     investigate_dossier.run,  # Phase 4: watchlist を古い順に巡回しドシエ調査（phase4-spec.md §6）
     notify_digest.run,  # Phase 6: ⑦⑧＋夜AI 提案を 1 通の Discord digest に束ねる（phase6-spec §3）

@@ -8,7 +8,10 @@ ADR-020: 「1 つの調査パイプライン・2 つの起動口」。`investiga
         統一したため（ADR-020 改訂）、昼夜で取得を分ける `mode` は廃止した（段取りは同一）。
 ADR-014: AI に数値を計算させない。財務の数値は data レーンの事実（repo.get_financials）から取り、
         LLM は定性要約（物語）だけを担う。生データは丸投げせず、記事は「短い要約」を渡す。
-ADR-020: ソースは「取得 → 要約 → 本文を捨てる」。dossier_sources には summary と url のみ残す。
+ADR-020: ソースは「取得 → 要約 → 本文を捨てる」。統合コーパス news（ADR-044）には summary と
+        url のみ残す（本文は保存しない）。
+ADR-044: 旧 dossier_sources は統合コーパス news に集約済み。銘柄ニュースは level="stock"＋code で
+        記録する（source は旧 source_type を移し替えた値・fetched_at は取り込み時刻を補填）。
 
 トランザクション境界（ADR-005・W2）: `investigate_stock` は spec §3 の正本シグネチャどおり
 `conn` を受け取り、自分では commit しない。複数ソース＋ドシエ本体を 1 トランザクションに
@@ -90,22 +93,28 @@ async def investigate_stock(
     articles = await fetch_news(code, company_name, since=_since_today_minus(_LOOKBACK_DAYS))
 
     # 3. URL 重複排除（既存 url の記事は二重に取り込まない・spec §3）。
-    new_articles = [a for a in articles if not repo.dossier_source_exists(conn, a["url"])]
+    #    統合コーパス news の存在確認（ADR-044・旧 dossier_source_exists を置換）。
+    new_articles = [a for a in articles if not repo.news_exists(conn, a["url"])]
 
-    # 4. 新着のみ台帳に記録（本文は保存しない＝summary と url のみ・ADR-020）。
-    processed_at = _now_iso()
-    for a in new_articles:
-        repo.upsert_dossier_source(
-            conn,
-            code=code,
-            url=a["url"],
-            title=a.get("title"),
-            summary=a.get("summary"),
-            published_at=a.get("published_at"),
-            source_type=a.get("source_type"),
-            processed_at=processed_at,
-            extraction_status=a.get("extraction_status"),
-        )
+    # 4. 新着のみ統合コーパス news に記録（本文は保存しない＝summary と url のみ・ADR-020/044）。
+    #    銘柄ニュースは level="stock"＋code でタグ付けし、旧 source_type は news の source へ移す
+    #    （fetched_at は upsert_news が UTC now を補填する）。
+    news_rows = [
+        {
+            "level": "stock",
+            "code": code,
+            "sector17_code": None,
+            "category": None,
+            "source": a.get("source_type"),
+            "url": a["url"],
+            "title": a.get("title"),
+            "summary": a.get("summary"),
+            "published_at": a.get("published_at"),
+            "extraction_status": a.get("extraction_status"),
+        }
+        for a in new_articles
+    ]
+    repo.upsert_news(conn, news_rows)
 
     # 5. 既存ドシエ（living document）を読む。
     existing = repo.get_dossier(conn, code)

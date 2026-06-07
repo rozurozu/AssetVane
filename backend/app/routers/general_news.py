@@ -1,10 +1,13 @@
 """一般ニュースの REST ルータ（GET /general-news・ADR-034 / docs/api.md）。
 
-設計の真実: docs/decisions.md ADR-034・grill-me 合意（3-adr-034-floofy-hoare）・ADR-005。
+設計の真実: docs/decisions.md ADR-034・ADR-044・grill-me 合意（3-adr-034-floofy-hoare）・ADR-005。
 
-HTTP 入出力のみを担う薄い層。general_news 台帳（夜間ジョブ fetch_general_news が貯める）を
-直近分だけ読み、category 別にグルーピングして返す（Dashboard widget が 1:1 で消費）。
-DB に触れるのは FastAPI だけ（ADR-005）。グルーピングは HTTP 寄りの軽い整形なので router で行う。
+HTTP 入出力のみを担う薄い層。統合コーパス news の市況層（level="market"・夜間ジョブ
+fetch_general_news が貯める）を直近分だけ読み、category 別にグルーピングして返す
+（Dashboard widget が 1:1 で消費）。ADR-044 で台帳を news に統合した後も、frontend が読む
+レスポンス形（categories グルーピング・各フィールド名）は不変＝news の source 列を
+GeneralNewsItem の source_type にマップする。DB に触れるのは FastAPI だけ（ADR-005）。
+グルーピングは HTTP 寄りの軽い整形なので router で行う。
 """
 
 from __future__ import annotations
@@ -64,18 +67,22 @@ def get_general_news(conn: Connection = Depends(get_conn)) -> GeneralNewsRespons
     （widget が壊れない＝dossier の空ドシエ方針に合わせる）。
     """
     since = (datetime.now(UTC) - timedelta(days=GENERAL_NEWS_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
-    rows = repo.list_general_news(conn, since=since)
+    # 統合コーパス news の市況層（level="market"・ADR-044）を直近分だけ読む。
+    rows = repo.list_news(conn, level="market", since=since)
 
     grouped: dict[str, list[GeneralNewsItem]] = {}
     for r in rows:
-        grouped.setdefault(r["category"], []).append(
+        category = r.get("category")
+        if category is None:
+            continue  # 市況層は category を持つ（念のため欠落行は飛ばす）
+        grouped.setdefault(category, []).append(
             GeneralNewsItem(
                 url=r["url"],
                 title=r.get("title"),
                 summary=r.get("summary"),
                 published_at=r.get("published_at"),
-                source_type=r.get("source_type"),
-                category=r["category"],
+                source_type=r.get("source"),  # ADR-044: source 列を source_type へ（API 形不変）
+                category=category,
             )
         )
     categories = [GeneralNewsCategory(label=label, items=items) for label, items in grouped.items()]

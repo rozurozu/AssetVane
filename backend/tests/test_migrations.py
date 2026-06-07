@@ -42,34 +42,39 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
             # スクリーニング（0007_screening）
             "valuation_snapshots",
             "screening_filters",
-            # Phase 4（0008_dossier・phase4-spec §2）
+            # Phase 4（0008_dossier・phase4-spec §2）。dossier_sources は ADR-044（0013）で
+            # news へ統合・drop 済み。stock_dossiers は据え置き。
             "watchlist",
             "stock_dossiers",
-            "dossier_sources",
             # Phase 6（0010_notifications・phase6-spec §2）
             "notifications",
-            # ADR-034（0011_general_news・一般ニュース台帳）
-            "general_news",
+            # ADR-044（0013_news_corpus）。旧 general_news/dossier_sources を統合コーパスへ。
+            "news",
             "alembic_version",
         } <= names
 
-        # general_news は ADR-034（0011）で追加。url UNIQUE・category 索引・code FK を持たない。
-        gn_cols = {c["name"] for c in inspect(conn).get_columns("general_news")}
-        assert gn_cols == {
+        # 旧 general_news / dossier_sources は ADR-044（0013）で news へ統合・drop 済み。
+        assert "general_news" not in names, "general_news は 0013 で drop 済みのはず"
+        assert "dossier_sources" not in names, "dossier_sources は 0013 で drop 済みのはず"
+
+        # news は ADR-044（0013）の統合コーパス。url UNIQUE・level/code/sector17 索引・階層タグ列。
+        news_cols = {c["name"] for c in inspect(conn).get_columns("news")}
+        assert news_cols == {
             "id",
+            "level",
+            "code",
+            "sector17_code",
             "category",
+            "source",
             "url",
             "title",
             "summary",
             "published_at",
             "fetched_at",
-            "source_type",
             "extraction_status",
-        }, "general_news のカラムが ADR-034 と不一致（0011 が当たっていない）"
-        gn_uniques = {u["name"] for u in inspect(conn).get_unique_constraints("general_news")}
-        assert "uq_general_news_url" in gn_uniques, (
-            "general_news に url UNIQUE が無い（0011 未適用）"
-        )
+        }, "news のカラムが ADR-044 と不一致（0013 が当たっていない）"
+        news_uniques = {u["name"] for u in inspect(conn).get_unique_constraints("news")}
+        assert "uq_news_url" in news_uniques, "news に url UNIQUE が無い（0013 未適用）"
 
         # notifications は Phase 6（0010_notifications）で追加。(notify_key, channel) 複合 PK。
         notif_pk = {
@@ -85,12 +90,6 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
         wl_cols = {c["name"] for c in inspect(conn).get_columns("watchlist")}
         assert wl_cols == {"id", "code", "note", "added_at", "interval_days"}, (
             "watchlist のカラムが ADR-033 と不一致（last_investigated_at は持たない）"
-        )
-
-        # dossier_sources は 0009 で extraction_status を追加（取得レベル記録＝計画/ADR-020）。
-        ds_cols = {c["name"] for c in inspect(conn).get_columns("dossier_sources")}
-        assert "extraction_status" in ds_cols, (
-            "dossier_sources に extraction_status が無い（0009 が当たっていない）"
         )
 
         # 0004 マイグレーションで seed した portfolios の初期行（id=1, name='Default'）を確認。

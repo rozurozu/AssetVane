@@ -4,8 +4,11 @@
 モックして「DB に書いた体」にする（LLM/外部 fetch_news は呼ばない＝spec §8 テスト計画）。
 検証対象:
 - 未調査時の挙動（空ドシエ 200・last_investigated_at=None）。
-- 合成（sources が JOIN で乗る・key_facts が obj になる）。
+- 合成（sources が統合コーパス news の銘柄層から乗る・key_facts が obj になる）。
 - POST investigate が同期で最新ドシエを返す（投資後の dossier を返却）。
+- API レスポンス形は ADR-044 後も不変（DossierSource.source_type に news.source をマップ）。
+
+データ仕込みは統合コーパス news へ `repo.upsert_news`（level="stock"＋code）で行う（ADR-044）。
 """
 
 from __future__ import annotations
@@ -18,6 +21,25 @@ from app.db import repo
 from app.db.engine import get_engine
 
 STOCK_A = {"code": "7203", "company_name": "トヨタ自動車"}
+
+
+def _news_row(code: str, url: str, title: str, summary: str, published_at: str) -> dict[str, Any]:
+    """銘柄ソースを統合コーパス news の行（level="stock"＋code）として組む（ADR-044）。
+
+    旧 dossier_sources の source_type 値は news の source 列へ移す（API では source_type に戻る）。
+    """
+    return {
+        "level": "stock",
+        "code": code,
+        "sector17_code": None,
+        "category": None,
+        "source": "news",
+        "url": url,
+        "title": title,
+        "summary": summary,
+        "published_at": published_at,
+        "extraction_status": "summarized",
+    }
 
 
 def test_get_dossier_uninvestigated_returns_empty(client: Any) -> None:
@@ -46,23 +68,12 @@ def test_get_dossier_composes_sources_and_key_facts(client: Any) -> None:
             last_investigated_at=now,
             updated_at=now,
         )
-        repo.upsert_dossier_source(
+        repo.upsert_news(
             conn,
-            code="7203",
-            url="https://example.com/a",
-            title="記事A",
-            summary="要約A",
-            published_at="2026-06-01",
-            source_type="news",
-        )
-        repo.upsert_dossier_source(
-            conn,
-            code="7203",
-            url="https://example.com/b",
-            title="記事B",
-            summary="要約B",
-            published_at="2026-06-03",
-            source_type="news",
+            [
+                _news_row("7203", "https://example.com/a", "記事A", "要約A", "2026-06-01"),
+                _news_row("7203", "https://example.com/b", "記事B", "要約B", "2026-06-03"),
+            ],
         )
 
     body = client.get("/dossiers/7203").json()
@@ -71,8 +82,13 @@ def test_get_dossier_composes_sources_and_key_facts(client: Any) -> None:
     assert body["last_investigated_at"] == now
     urls = [s["url"] for s in body["sources"]]
     assert urls == ["https://example.com/b", "https://example.com/a"]  # published_at 降順
+    # API 形は不変: news.source が source_type にマップされる（ADR-044）。
+    assert body["sources"][0]["source_type"] == "news"
     # 本文列は存在しない（要約＋URL のみ＝ADR-020）。
     assert "body" not in body["sources"][0]
+    # news の余分なタグ（level/code/fetched_at 等）はレスポンスに漏れない（spec §5.2 の契約不変）。
+    assert "level" not in body["sources"][0]
+    assert "fetched_at" not in body["sources"][0]
 
 
 def test_post_investigate_returns_latest_dossier(client: Any, monkeypatch: Any) -> None:
@@ -95,14 +111,9 @@ def test_post_investigate_returns_latest_dossier(client: Any, monkeypatch: Any) 
             last_investigated_at=ts,
             updated_at=ts,
         )
-        repo.upsert_dossier_source(
+        repo.upsert_news(
             conn,
-            code=code,
-            url="https://example.com/new",
-            title="新着",
-            summary="新着要約",
-            published_at="2026-06-04",
-            source_type="news",
+            [_news_row(code, "https://example.com/new", "新着", "新着要約", "2026-06-04")],
         )
         return {"code": code, "n_sources_added": 1}
 

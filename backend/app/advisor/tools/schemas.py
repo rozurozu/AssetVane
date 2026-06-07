@@ -163,6 +163,16 @@ class FetchNewsArgs(_ToolArgs):
     since: str | None = None
 
 
+class GetNewsContextArgs(_ToolArgs):
+    """get_news_context の引数（ADR-044）。
+
+    指定銘柄の3層ニュース文脈（銘柄＋セクター＋市況）をまとめて取る。引数は code のみ
+    （セクター/市況層はコードから解決して構造的に揃える＝ADR-044）。
+    """
+
+    code: str
+
+
 class GetGeneralNewsArgs(_ToolArgs):
     """get_general_news の引数（ADR-034・引数なし）。
 

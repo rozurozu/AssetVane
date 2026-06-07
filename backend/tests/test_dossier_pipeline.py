@@ -2,10 +2,11 @@
 
 担保すること（phase4-spec §3・§8・ADR-020/014）:
 - URL 重複排除: 既存 url の記事は二重取り込みしない（n_sources_added・行数で確認）。
-- 本文非保存: パイプラインが台帳へ渡すのは summary/url 等のみで全文を渡さない（ADR-020）。
+- 本文非保存: パイプラインが news へ渡すのは summary/url 等のみで全文を渡さない（ADR-020/044）。
 - last_investigated_at / updated_at が前進する。
 - 社名解決: repo.get_stock の company_name が fetch_news に渡る（取れなければ code＝ADR-020 改訂）。
-- extraction_status が記事 → dossier_sources まで届く（ADR-020 改訂・3 段フォールバック記録）。
+- extraction_status が記事 → news まで届く（ADR-020 改訂）。
+- 旧 source_type を news.source へ移し level="stock"＋code でタグ付けする（ADR-044）。
 - since（today-7d）が fetch_news に正しく渡る（取得下限）。
 - summarize_dossier に渡るのが「記事の要約と財務事実のみ」で、全文を載せない（ADR-014）。
 
@@ -110,16 +111,21 @@ def test_investigate_records_source_and_advances_timestamp(
 
     with get_engine().connect() as conn:
         saved = repo.get_dossier(conn, "7203")
-        sources = repo.list_dossier_sources(conn, "7203")
+        sources = repo.list_news(conn, level="stock", code="7203")
     assert saved is not None
     assert saved["last_investigated_at"] == result["last_investigated_at"]
     assert json.loads(saved["key_facts"]) == {"per": 12.3}
     assert len(sources) == 1
-    # 本文非保存: 台帳に summary/url はあるが body 列は存在しない（ADR-020）。
+    # 本文非保存: 統合コーパス news に summary/url はあるが body 列は存在しない（ADR-020/044）。
     assert sources[0]["url"] == _ARTICLE["url"]
     assert sources[0]["summary"] == _ARTICLE["summary"]
     assert "body" not in sources[0]
-    # extraction_status が記事 → dossier_sources まで届く（ADR-020 改訂・3 段フォールバック記録）。
+    # 旧 source_type は news の source へ移し替えられる（ADR-044）。
+    assert sources[0]["source"] == _ARTICLE["source_type"]
+    # 銘柄ニュースは level="stock"＋code でタグ付けされる（ADR-044）。
+    assert sources[0]["level"] == "stock"
+    assert sources[0]["code"] == "7203"
+    # extraction_status が記事 → news まで届く（ADR-020 改訂・3 段フォールバック記録）。
     assert sources[0]["extraction_status"] == "summarized"
 
 
@@ -137,7 +143,7 @@ def test_investigate_dedupes_existing_url(monkeypatch: pytest.MonkeyPatch, temp_
     assert first["n_sources_added"] == 1
     assert second["n_sources_added"] == 0
     with get_engine().connect() as conn:
-        sources = repo.list_dossier_sources(conn, "7203")
+        sources = repo.list_news(conn, level="stock", code="7203")
     assert len(sources) == 1  # 同じ url なので 1 行のまま
 
 

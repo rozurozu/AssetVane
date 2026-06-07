@@ -31,6 +31,7 @@ from app.advisor.tools.schemas import (
     GetGeneralNewsArgs,
     GetIndicatorsArgs,
     GetLeadLagArgs,
+    GetNewsContextArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     GetValuationArgs,
@@ -48,6 +49,7 @@ from app.quant import (
     compute_portfolio_metrics,
     optimize_portfolio,
 )
+from app.services.news import build_news_context
 from app.services.policy import get_policy
 from app.services.portfolio import (
     build_price_panel,
@@ -516,9 +518,13 @@ async def handle_investigate_stock(args: dict[str, object]) -> dict[str, Any]:
 async def handle_get_dossier(args: dict[str, object]) -> dict[str, Any]:
     """get_dossier（spec §4・§5.2）。既存ドシエ本体とソース台帳を合成して返す。
 
-    repo.get_dossier（1 行・key_facts は生 TEXT）と repo.list_dossier_sources（published_at 降順）
-    を別々に引いて合成する（get_dossier は sources を JOIN しない＝repo 規約）。key_facts は
-    json.loads でオブジェクト化して返す（spec §5.2 の `Record<string, unknown> | null`）。
+    repo.get_dossier（1 行・key_facts は生 TEXT）と銘柄層ニュース（統合コーパス news の
+    level='stock'・ADR-044）を別々に引いて合成する（get_dossier は JOIN しない＝repo 規約）。
+    key_facts は json.loads でオブジェクト化して返す（spec §5.2 の null 許容オブジェクト）。
+
+    ニュースは旧 list_dossier_sources を repo.list_news(level='stock', code) に張り替えた
+    （ADR-044）。返却 sources の形（url/title/summary/published_at/source_type）は不変。統合 news は
+    旧 source_type 列を source に改名したため、ここで source → source_type にマップする。
 
     未調査（get_dossier が None）時は spec §5.2 の流儀に従い `summary_md: ""`・空 sources で返す
     （404 ではなく空ドシエ＝Tool はループを落とさず「まだ調査されていない」を LLM に伝えられる）。
@@ -527,7 +533,7 @@ async def handle_get_dossier(args: dict[str, object]) -> dict[str, Any]:
         code = GetDossierArgs.model_validate(args).code
         with get_engine().connect() as conn:
             row = repo.get_dossier(conn, code)
-            source_rows = repo.list_dossier_sources(conn, code)
+            source_rows = repo.list_news(conn, level="stock", code=code)
 
         sources = [
             {
@@ -535,7 +541,7 @@ async def handle_get_dossier(args: dict[str, object]) -> dict[str, Any]:
                 "title": s.get("title"),
                 "summary": s.get("summary"),
                 "published_at": s.get("published_at"),
-                "source_type": s.get("source_type"),
+                "source_type": s.get("source"),  # 統合 news では source_type→source（ADR-044）
             }
             for s in source_rows
         ]
@@ -586,9 +592,12 @@ async def handle_fetch_news(args: dict[str, object]) -> dict[str, Any]:
 async def handle_get_general_news(args: dict[str, object]) -> dict[str, Any]:
     """get_general_news（ADR-034）。銘柄に紐づかない一般ニュースの直近台帳を返す。
 
-    夜間ジョブ fetch_general_news が貯めた general_news を読むだけ（再取得はしない＝消費先は
-    「貯めた台帳を読む」設計）。lookback はカテゴリ取得と同じ定数で揃え、直近分のみカテゴリ別に
-    まとめて返す。本 handler は橋渡しのみ（ADR-010/014）。
+    夜間ジョブ fetch_general_news が貯めた市況ニュース（統合コーパス news の level='market'）を
+    読むだけ（再取得はしない＝消費先は「貯めた台帳を読む」設計）。lookback はカテゴリ取得と同じ
+    定数で揃え、直近分のみカテゴリ別にまとめて返す。本 handler は橋渡しのみ（ADR-010/014）。
+
+    旧 list_general_news を repo.list_news(level='market') に張り替えた（ADR-044）。返却の形
+    （categories グルーピング）は不変。市況ラベルは統合 news の category 列に保持される。
     """
     from datetime import UTC, datetime, timedelta
 
@@ -600,7 +609,7 @@ async def handle_get_general_news(args: dict[str, object]) -> dict[str, Any]:
             "%Y-%m-%d"
         )
         with get_engine().connect() as conn:
-            rows = repo.list_general_news(conn, since=since)
+            rows = repo.list_news(conn, level="market", since=since)
 
         categories: dict[str, list[dict[str, Any]]] = {}
         for r in rows:
@@ -617,6 +626,22 @@ async def handle_get_general_news(args: dict[str, object]) -> dict[str, Any]:
         }
     except Exception as exc:
         logger.exception("handle_get_general_news 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_news_context(args: dict[str, object]) -> dict[str, Any]:
+    """get_news_context（ADR-044）。指定銘柄の3層ニュース文脈（銘柄＋セクター＋市況）を返す。
+
+    銘柄を語る前に、銘柄自身・そのセクター・市況の 3 層を構造的に揃えて取る（マクロ層が
+    意味検索で埋もれるのを避ける＝ADR-044）。組み立ては services.news.build_news_context に
+    委ね、本 handler は橋渡しのみ（ADR-010/014）。読み取り接続を開いて事実を返すだけ。
+    """
+    try:
+        code = GetNewsContextArgs.model_validate(args).code
+        with get_engine().connect() as conn:
+            return build_news_context(conn, code)
+    except Exception as exc:
+        logger.exception("handle_get_news_context 失敗")
         return {"error": str(exc)}
 
 
