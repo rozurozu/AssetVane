@@ -468,3 +468,18 @@
 - **(B) への繰り延べ事項（明記）**: 米株スクリーナー `/us-stocks`（[ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離)）・米国個別株（数千・OHLCV・`UsEquityAdapter` 新設）・米国ファンダ源・通貨列・`FxAdapter`・holdings/cash/asset_snapshots の通貨/FX 波及・GICS 分類。これらは (A) のスコープ外で、(B) サブフェーズに送る。
 - **段階**: **着工（2026-06-07）**。設計確定（grill `snappy-cuddling-scott`・論文 PDF `2026_76.pdf` 読了）。実装は `quant/lead_lag.py`（純関数）・`adapters/index.py`（`YahooIndexSource` 追加・yfinance 依存）・`services/lead_lag.py`・`batch/jobs/calc_lead_lag.py`（`NIGHTLY_JOBS` の `calc_signals` 後・`run_advisor` 前）・`GET /lead-lag` ＋ Tool `get_lead_lag`・frontend `LeadLagWidget`。手法カードは [docs/methods/lead-lag.md](methods/lead-lag.md)（参照知識・リポジトリ markdown）。
 - **関連**: [ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し・フォールバック連鎖）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)／[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（手法はテスト済みコード）・[ADR-008](#adr-008-j-quants-は-v2-を使う)（Free 遅延）・[roadmap.md Phase 7](roadmap.md)・[advisor.md §5](advisor.md)・[docs/methods/lead-lag.md](methods/lead-lag.md)。
+
+## ADR-040: ^TPX（TOPIX 指数）は J-Quants `/v2/indices/bars/daily/topix` を一次ソースに（IndexAdapter 連鎖に JQuantsIndexSource を後段追加）
+
+- **状況/問題**: `IndexAdapter`（フォールバック連鎖・[ADR-038](#adr-038-ログ規約テキスト形式stdout-集約docker-json-file-ローテーション握り潰し禁止)／[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)）で ^TPX（TOPIX 指数水準）を取りにいくと、**Yahoo に有効なシンボルが無く、Stooq でも取得できない**ため、毎晩の `fetch_index` が ^TPX だけ失敗し続け、その都度 Discord に警報が鳴っていた。連鎖の全ソースが ^TPX を返せないのが根因で、ログ/通知のレイヤでは解決しない。
+- **検討して却下した案**:
+  - **① allowlist で ^TPX の失敗を警報対象から外す（黙らせる）** → **却下**。通知の目的は「取れていない＝直せ」を知らせることで、それを握り潰すのは本末転倒。取得経路を直さないまま警報だけ消すと、他シンボルの本物の障害も気づけなくなる（[ADR-038](#adr-038-ログ規約テキスト形式stdout-集約docker-json-file-ローテーション握り潰し禁止) の「握り潰し禁止」と同じ規律）。
+  - **② TOPIX 連動 ETF（1306 等）の価格で代用する** → **却下**。ETF 価格は指数とスケールがズレ（運用コスト・基準価額・分配の影響）、欲しいのは**真の指数水準**そのもの。代用すると以後の比較・シグナルが指数水準前提から崩れる。
+- **決定**: 正攻法で**「取れるソースを足す」**。J-Quants 自身の TOPIX 指数 API（`GET /v2/indices/bars/daily/topix`・レスポンス `Date/O/H/L/C`＋`pagination_key`）を `JQuantsIndexSource`（^TPX 専用）として `IndexAdapter` のフォールバック連鎖に**後段追加**する（`yahoo,stooq` の後ろ）。^NKX・米指数は従来どおり連鎖前段の別ソース（Yahoo 等）で取り、^TPX のみ本ソースが拾う。データソースはアダプタ越し（[ADR-010](#adr-010-データソースはアダプタ越しにする)）・認証は V2 の `x-api-key`（[ADR-008](#adr-008-j-quants-は-v2-を使う)）に従う。
+- **制約/現状**: TOPIX 指数 API は **Light 以上**で、**Free では 403**（`{"message":"This API is not available on your subscription. Please consider a subscription upgrade."}`）。当面 Free 据え置きのため、**Free では `JQuantsIndexSource` は弾込めのみ**（403 を返すだけで実データは流れない）で、**Light に上げた瞬間に ^TPX が連鎖から流れ出す**。Free 期間は ^TPX の取得失敗が log/Discord に残るのは**許容**する＝「Light に上げろ」のナッジとして機能させる（① の allowlist で黙らせない判断と一貫）。
+- **理由**:
+  - **根因を直す**: 連鎖の全ソースが返せないなら、返せるソースを足すのが筋。J-Quants は既に日本株で認証・スロットルが通っており（[ADR-008](#adr-008-j-quants-は-v2-を使う)）、^TPX 専用ソースを 1 本足すだけで連鎖が成立する（[ADR-010](#adr-010-データソースはアダプタ越しにする) の連鎖は後付け可能）。
+  - **指数水準が欲しい用途に忠実**: ETF 代用ではなく指数 API を使うことで、以後の比較・提示が「真の TOPIX 水準」前提で一貫する。
+  - **Free でハード無効化しない**: 計算/取得経路は本番（Light）と同じに保ち、Free では 403 が log/Discord に出ることでアップグレードを促す。無効化して経路ごと隠すより、開発・運用の見通しが良い（[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する) の Free 非無効化方針と同じ姿勢）。
+- **段階**: docs 確定（2026-06-07・実 API プローブ＋公式 spec で検証）。コード実装は別タスク（backend 担当）で `adapters/index.py` に `JQuantsIndexSource` を追加・連鎖末尾に組み込む。詳細は [jquants.md §6 項目7](jquants.md) を参照。
+- **関連**: [ADR-008](#adr-008-j-quants-は-v2-を使う)（J-Quants V2 認証・Free/Light）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し）・[ADR-038](#adr-038-ログ規約テキスト形式stdout-集約docker-json-file-ローテーション握り潰し禁止)（握り潰し禁止）・[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（IndexAdapter フォールバック連鎖）・[jquants.md](jquants.md)。

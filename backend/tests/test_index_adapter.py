@@ -20,6 +20,7 @@ from app.adapters.index import (
     IndexAdapter,
     IndexAdapterError,
     IndexSource,
+    JQuantsIndexSource,
     StooqIndexSource,
     YahooIndexSource,
 )
@@ -383,6 +384,65 @@ def test_facade_yahoo_then_stooq_fallback() -> None:
 
     assert len(rows) == 3  # Stooq の結果を採用
     assert all(r["symbol"] == "^SPX" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# JQuantsIndexSource（TOPIX 専用・最後段・ネット非依存・fetch_topix を fake 注入）
+# ---------------------------------------------------------------------------
+def test_jquants_topix_normalizes_to_rows() -> None:
+    """fetch_topix の [{date, close}] を symbol(^TPX)/date/close に正規化（ADR-008/010）。"""
+    captured: dict[str, Any] = {}
+
+    def fake_fetch_topix(from_: str | None, to: str | None) -> list[dict[str, Any]]:
+        captured["from_"] = from_
+        captured["to"] = to
+        return [
+            {"date": "2026-02-03", "close": 2701.99},
+            {"date": "2026-02-04", "close": 2715.5},
+        ]
+
+    source = JQuantsIndexSource(fetch_topix=fake_fetch_topix)
+    rows = source.fetch_index_quotes("^TPX", from_="2026-02-01", to="2026-02-28")
+
+    assert captured == {"from_": "2026-02-01", "to": "2026-02-28"}  # 期間がそのまま渡る
+    assert rows == [
+        {"symbol": "^TPX", "date": "2026-02-03", "close": 2701.99},
+        {"symbol": "^TPX", "date": "2026-02-04", "close": 2715.5},
+    ]
+
+
+def test_jquants_non_topix_symbol_raises() -> None:
+    """^TPX 以外は IndexAdapterError を投げ次ソースへ落とす（J-Quants は海外指数なし）。"""
+    source = JQuantsIndexSource(fetch_topix=lambda f, t: [])
+
+    with pytest.raises(IndexAdapterError, match="専用です"):
+        source.fetch_index_quotes("^SPX")
+
+
+def test_jquants_topix_fetch_error_propagates() -> None:
+    """fetch_topix の例外（Free の 403 等）はそのまま伝播する（ファサードの except が次へ回す）。"""
+
+    def boom(from_: str | None, to: str | None) -> list[dict[str, Any]]:
+        raise RuntimeError("403 not available on your subscription")
+
+    source = JQuantsIndexSource(fetch_topix=boom)
+
+    with pytest.raises(RuntimeError, match="403"):
+        source.fetch_index_quotes("^TPX")
+
+
+def test_facade_yahoo_stooq_then_jquants_for_topix() -> None:
+    """^TPX は yahoo→stooq が失敗し jquants（最後段）が採用される連鎖を確認する。"""
+    yahoo = YahooIndexSource(fetch=lambda s, a, b: pd.DataFrame())  # 0 行で raise
+    stooq = StooqIndexSource(client=_make_client_stub("Exceeded the daily hits limit!\n"))
+    jquants = JQuantsIndexSource(
+        fetch_topix=lambda f, t: [{"date": "2026-02-03", "close": 2701.99}]
+    )
+    adapter = IndexAdapter(sources=[yahoo, stooq, jquants])
+
+    rows = adapter.fetch_index_quotes("^TPX")
+
+    assert rows == [{"symbol": "^TPX", "date": "2026-02-03", "close": 2701.99}]
 
 
 def test_us_sector_etfs_has_11_gics_sectors() -> None:

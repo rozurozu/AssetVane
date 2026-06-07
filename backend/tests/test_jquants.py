@@ -130,6 +130,48 @@ def test_fetch_daily_quotes_by_date() -> None:
     assert rows[0]["close"] == 3393.0  # 正規化（C → close）が効いている
 
 
+def test_fetch_topix_normalizes_and_passes_params() -> None:
+    """TOPIX 取得が /v2/indices/bars/daily/topix を正しく叩き、Date/C を date/close に正規化する。
+
+    ネットは叩かず `_get_paginated` を差し替えて、呼び出し引数と正規化結果だけを検証する
+    （V2 略記 Date/O/H/L/C のサンプル行を date/close に正規化・TOPIX 専用なので code は持たない）。
+    """
+    adapter = JQuantsAdapter(api_key="dummy")  # settings 非依存・ネットも張らない
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get_paginated(path: str, params: dict[str, object]) -> list[dict[str, object]]:
+        calls.append((path, params))
+        return [
+            {"Date": "2026-02-03", "O": 2700.0, "H": 2710.0, "L": 2695.0, "C": 2701.99},
+            {"Date": "20260204", "O": 2702.0, "H": 2720.0, "L": 2700.0, "C": 2715.5},
+        ]
+
+    adapter._get_paginated = fake_get_paginated  # type: ignore[method-assign]
+    rows = adapter.fetch_topix(from_="2026-02-01", to="2026-02-28")
+
+    assert calls == [("/v2/indices/bars/daily/topix", {"from": "2026-02-01", "to": "2026-02-28"})]
+    # Date/C のみ正規化（YYYYMMDD は 'YYYY-MM-DD' に・code/symbol は持たない）
+    assert rows == [
+        {"date": "2026-02-03", "close": 2701.99},
+        {"date": "2026-02-04", "close": 2715.5},
+    ]
+
+
+def test_fetch_topix_omits_empty_params() -> None:
+    """from_/to 省略時はパラメータ無しで叩く（全期間取得）。"""
+    adapter = JQuantsAdapter(api_key="dummy")
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get_paginated(path: str, params: dict[str, object]) -> list[dict[str, object]]:
+        calls.append((path, params))
+        return []
+
+    adapter._get_paginated = fake_get_paginated  # type: ignore[method-assign]
+    adapter.fetch_topix()
+
+    assert calls == [("/v2/indices/bars/daily/topix", {})]
+
+
 def test_normalize_stock() -> None:
     s = JQuantsAdapter._normalize_stock(MASTER_ROW, "2026-06-02T00:00:00+00:00")
     assert s["code"] == "72030"

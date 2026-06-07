@@ -343,3 +343,34 @@ class JQuantsAdapter:
             ),
             "treasury_shares": _to_float(_first(r, ["TrShFY", "NumberOfTreasuryStock"])),
         }
+
+    # --- TOPIX 指数（Phase 7・IndexAdapter 連鎖の最後段） ----------------------
+
+    def fetch_topix(self, from_: str | None = None, to: str | None = None) -> list[dict[str, Any]]:
+        """TOPIX 指数の日次終値を取得し、内部列名に正規化して返す（ADR-008/010）。
+
+        エンドポイントは **/v2/indices/bars/daily/topix**（docs/jquants.md・実 API プローブ＋公式
+        spec で検証済み 2026-06-07）。**Light 以上**で取得でき、Free では 403
+        （`{"message":"This API is not available on your subscription..."}`）→ `_get_with_retry`
+        が JQuantsError として送出する（許容済み・呼び出し側が次ソースへ落とす）。
+
+        params は `from`/`to`（'YYYY-MM-DD' / 'YYYYMMDD'・省略可）。レスポンスの各行は V2 略記
+        **Date / O / H / L / C / pagination_key**（エンベロープは "data" or "topix" 配列＋
+        pagination_key。`_extract_rows` が "topix" キーでも拾う）。TOPIX 専用のため code/symbol は
+        持たせず、終値（close）のみ正規化して返す（外部キー名→内部列名はこの 1 ファイルに閉じる）。
+
+        戻り値: [{"date", "close"}, ...] の list。
+        """
+        params: dict[str, Any] = {}
+        if from_:
+            params["from"] = from_
+        if to:
+            params["to"] = to
+        raw = self._get_paginated("/v2/indices/bars/daily/topix", params)
+        return [
+            {
+                "date": _norm_date(_first(r, ["Date", "date"])),
+                "close": _first(r, ["C", "Close", "close"]),
+            }
+            for r in raw
+        ]

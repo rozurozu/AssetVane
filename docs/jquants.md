@@ -3,6 +3,7 @@
 AssetVane が日本株・ETF・財務データを取得する API。
 
 > 📌 **スコープ**: J-Quants は**日本株・日本 ETF 専用**。米国株・主要指数（S&P500 等）・為替（USD/JPY）は J-Quants の範囲外で、別データソース（`IndexAdapter` / `UsEquityAdapter` / `FxAdapter` / `NewsAdapter`）から取得する。米国対応は後期（[roadmap.md Phase 7](roadmap.md)）で、当面は日本株が主役（[decisions.md ADR-010](decisions.md)）。なお**適時開示（TDnet）は J-Quants の有料アドオン**で、課金後に利用する。
+> ただし **TOPIX 指数だけは例外で V2（`/v2/indices/bars/daily/topix`・Light 以上）から一次取得**する（[decisions.md ADR-040](decisions.md)。下記 §6 項目7）。日経平均・米指数は依然 `IndexAdapter` の別ソース（Yahoo 等）から取る。
 
 > ⚠️ **重要**: J-Quants は **2026 年 6 月 1 日に V1 API が提供終了**し、現在は **V2 のみ**が稼働する。認証は旧来の「トークン 2 段階方式」から **API キー方式（`x-api-key`）** に変更された。ネット上の記事・サンプルの多くは旧 V1（`/v1/...`・トークン 2 段）なので**そのままでは動かない**。本ドキュメントは **V2 基準**で記述する。
 >
@@ -89,7 +90,11 @@ curl -G https://api.jquants.com/v2/equities/bars/daily \
    - ✅ **確認済み（2026-06・ADR-031）**: `fins/summary`（財務）。短縮キー `EPS/BPS/Sales/OP/NP/DiscDate/CurPerType`、配当 `FDivAnn`(予想年間)/`DivAnn`(実績)、株数 `ShOutFY`(発行済)/`TrShFY`(自己株)。値は**文字列**・N/A は**空文字**（`_to_float` で None 化）。**BPS は通期(FY)行のみ・四半期 EPS は累計**。
 5. **`/v2/equities/master` の `code` 無し全件取得可否**: 銘柄マスタを `code` を渡さず叩いて全上場銘柄を一括で取れるか（`bars/daily` の日付一括と同様に成立するか）を実機確認する。不可なら `bars/daily` で得た `code` 集合から不足分を補完する（Phase 1・`_arbitration.md` L-5）。
 6. **V2 の取引日カレンダー API の有無**: 営業日（取引日）の一覧を返す V2 エンドポイントがあるか。無ければ営業日判定は「曜日で土日除外＋祝日は空レスポンスで吸収」で代替する（Phase 1・`_arbitration.md` L-3）。
-7. **V2 の主要指数 API（TOPIX / 日経平均）の有無**: TOPIX・日経平均等の指数水準を返す V2 エンドポイントがあるか。無ければ `IndexAdapter`（Stooq 既定）で取得する（Phase 2・`index_quotes`・`_arbitration.md` L-10）。
+7. ~~**V2 の主要指数 API（TOPIX / 日経平均）の有無**~~ ✅ **解消（2026-06-07・実 API プローブ＋公式 spec で検証・[decisions.md ADR-040](decisions.md)）**:
+   - **TOPIX 指数 OHLC は `GET /v2/indices/bars/daily/topix` で取得可**。レスポンスは `Date/O/H/L/C`（＋`pagination_key`）。
+   - 利用は **Light 以上**。**Free では 403**（`{"message":"This API is not available on your subscription. Please consider a subscription upgrade."}`）。当面 Free 据え置きのため、Free では弾込め（403）のみで実データは流れない（Light に上げた瞬間 ^TPX が流れる＝ADR-040）。
+   - 日経平均（^NKX）相当の指数エンドポイントは**未確認のまま**（必要時に再調査）。^NKX は引き続き `IndexAdapter` の Yahoo（`^N225`）で取得する。
+   - 実装は `IndexAdapter` のフォールバック連鎖（[decisions.md ADR-038・039](decisions.md)）に `JQuantsIndexSource`（^TPX 専用・`yahoo,stooq` の後段）を追加する。
 8. ~~**V2 財務（statements）エンドポイント**~~ ✅ **解消（2026-06・ADR-031）**: 財務は **`/v2/fins/summary`**（`/v2/fins/statements` は **403**）。売上/営業利益/純利益/EPS/BPS・開示日・会計期間に加え、**年間配当（FDivAnn/DivAnn）・発行済株式数（ShOutFY）・自己株式（TrShFY）も summary で揃う**ことを実機確認（→ 時価総額・配当利回りも J-Quants 単独で導出可能）。`fetch_financials` は **by-date 一括**（その日開示の全銘柄）も成立。フィールド対応は `adapters/jquants.py` の `_normalize_financial`。
 
 ---

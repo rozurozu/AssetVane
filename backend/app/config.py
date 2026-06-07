@@ -104,12 +104,13 @@ class Settings(BaseSettings):
 
     # --- IndexAdapter（主要指数・Phase 2〜・phase2-spec.md §3.1・ADR-010） ---
     # 複数ソースをフォールバック連鎖（優先順）。落ちたら次ソースを試す（grill 2026-06）。
-    # 既定 "yahoo,stooq"＝Yahoo（yfinance・配当調整後 close）主・Stooq フォールバック。Stooq が
-    # bot 判定で死んだため Yahoo を主に据えた（ADR-010）。名前は adapters/index.py の _REGISTRY が
-    # 解決（未知名はスキップ）。シンボルは canonical 表記をカンマ区切りで（^SPX=S&P500・
-    # ^NKX=日経225・^TPX=TOPIX・米国業種 ETF=XLK 等の素ティッカー）。
-    # [OPEN] TOPIX/日経の J-Quants 指数 API 有無は実 API 確認待ち（spec §3.1・実ソース追加は別途）。
-    index_sources: str = "yahoo,stooq"
+    # 既定 "yahoo,stooq,jquants"＝Yahoo（yfinance・配当調整後 close）主・Stooq フォールバック・
+    # jquants 最後段。Stooq が bot 判定で死んだため Yahoo を主に据えた（ADR-010）。名前は
+    # adapters/index.py の _REGISTRY が解決（未知名はスキップ）。シンボルは canonical 表記を
+    # カンマ区切りで（^SPX=S&P500・^NKX=日経225・^TPX=TOPIX・米国業種 ETF=XLK 等の素ティッカー）。
+    # jquants は ^TPX 専用・最後段（yahoo が ^SPX/^NKX/米 ETF を成功で返すので非 TOPIX では到達
+    # しない。TOPIX は J-Quants /v2/indices/bars/daily/topix・Light 以上で取得＝Free では 403）。
+    index_sources: str = "yahoo,stooq,jquants"
     index_symbols: str = "^SPX,^NKX,^TPX"
     # IndexAdapter（Stooq）取得のスロットル間隔（秒）。Stooq は 1.0 で十分（ADR-010）。
     index_min_interval_seconds: float = 1.0
