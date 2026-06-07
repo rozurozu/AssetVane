@@ -99,6 +99,7 @@
 - **補足（プライバシー）**: クラウド LLM には保有銘柄・方針が送信される。利用者は当面これを許容。気になれば no-logging プロバイダ、最終的にはローカル LLM へ。
 - **補足（コスト・モデル品質）**: 既定モデルは **Tool Calling に確実に対応する品質帯**を選ぶ（安すぎるモデルは Tool 精度が落ち「数値を作らない」規律が破れる）。夜間バッチ毎晩＋チャットでフルプロンプト（CORE＋POLICY＋カタログ＋Tool 往復＋日記）を投げるため、想定モデルと概算コストは Phase 3 着手時に見積もる。プロンプトのトークン肥大（カタログ全列挙等）にも注意。
 - **補足（弱モデルの割り切り）**: 既定は Tool Calling 確実な強モデル（クラウド）。ローカル弱モデル（例 `qwen3.5:9b`）は **開発時の動作確認用**で、弱モデルが `submit_journal` 等の Tool を確実に呼ばないのは **仕様として割り切る**（弱モデルを動かすための作り込みはしない）。壊れた LLM 出力への防御は [ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)/[ADR-030](#adr-030-proposed_policy_change-は単一-field-to-に構造強制するfield-は-policy-列の-enum) が担い、これはモデル品質と独立。
+- **補足（将来＝多モデル登録の予約）**: 現状は `.env` で 1 モデルを差し替える。将来、複数モデルを登録し**タスク別にルーティング**（相談・Tool Calling は強モデル／ニュース要約・テーマ語彙照合〔[ADR-050](#adr-050-銘柄とニュースにテーマタグを持たせ語彙揺れをプロンプト照合と-embedding-近接で抑える)〕等の軽量タスクは弱モデル）する拡張余地を予約する。**今回は決定にしない**（かなり後段のスコープ）。
 - **代替案**: 単一プロバイダ直結 → 移行が固くなる。
 
 ## ADR-013: 投資方針 `policy` は単一・チャットで育てる（版管理機構は作らない）
@@ -558,6 +559,7 @@
   - **セクターニュース取り込みを新設**。`services/lead_lag.py` の `JP_SECTOR_LABELS`（TOPIX-17 業種和名）を起点に「業種名→Google News 検索クエリ」のマップを定数モジュール（[ADR-034](#adr-034-一般ニュースダイジェスト銘柄に紐づかないニュースを別系統で持つ実装済み)の `general_news_config.py` 流）に置き、既存のキーワード検索パイプライン（`_fetch_rss_items`/`_process_item` の 3 段フォールバック要約）を再利用する。銘柄の `sector17_code`（[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する) で確立・`stocks` 列）でセクターを解決する。
   - **`get_news_context(code)` Tool を新設**（`min_phase=4`）。銘柄の `sector17_code` を解決し、**タグフィルタで (i) 銘柄／(ii) セクター／(iii) マーケットの 3 層を必ず揃えて**構造的に返す。これにより (iii) のマクロ層が意味検索で埋もれる問題を回避する。AI は受け取った事実を解釈するだけ（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)）。
   - **取り出しは 2 系統**にする＝本 ADR の **構造的 `get_news_context`**（3 層保証）と、[ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)の **意味的 `search_news`**（横断検索）。`fetch_news`/`get_general_news` は当面据え置き、移行は実装タスクで判断する。
+- **後続（本 ADR を土台に確定）**: タグ集合に定性 `polarity`（[ADR-049](#adr-049-ニュース-rag-の活用を線引きするai-は事実を解釈するだけで数値スコアは作らない)）と `theme`（[ADR-050](#adr-050-銘柄とニュースにテーマタグを持たせ語彙揺れをプロンプト照合と-embedding-近接で抑える)）を加える／`get_news_context` の活用線引き（[ADR-049](#adr-049-ニュース-rag-の活用を線引きするai-は事実を解釈するだけで数値スコアは作らない)）・能動配信（[ADR-051](#adr-051-ニュースとシグナルと保有を結ぶ能動配信を-notify_digest-に拡張する)）・売買アイデア（[ADR-052](#adr-052-ニュース起点の売買アイデアは-proposals-の-buysell-に承認制で起票する)）。
 - **理由**: 「保存は統合・階層はタグで保持」が、フラット RAG（マクロ層が埋もれる）と 3 系統分裂（統合が利かない）の両方の欠点を回避する。3 層を**構造で**揃えることで、利用者の中核要求（市況文脈を必ず添える）を Tool の設計で担保できる。[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)/[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) の不変条件（要約のみ・AI は計算しない）を一切崩さない。
 - **段階**: docs 確定（本 ADR・grill-me で設計確定）。実装は別タスク＝統合テーブルへの移行 migration（`general_news` 拡張 or 新 `news`）・セクタークエリ定数・`get_news_context` の handler/registry・既存 `general_news` 消費先の張り替え。schema は [data-model.md](data-model.md)、Tool は [advisor.md](advisor.md) に同期する。
 - **関連**: [ADR-034](#adr-034-一般ニュースダイジェスト銘柄に紐づかないニュースを別系統で持つ実装済み)（前身・発展置換）・[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)（要約のみ）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（AI は計算しない・手法はコード）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し）・[ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用）・[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（sector17/lead_lag）・[ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)（意味検索）・[ADR-046](#adr-046-ユーザー入力ニュースはテキスト貼付から要約して統合コーパスに入れる)（ユーザー入力）・[ADR-047](#adr-047-統合ニュースページ-news-を新設する一覧と検索と貼付フォーム)（一覧画面）。
@@ -631,3 +633,61 @@
 - **段階**: **実装済み（2026-06-07）**。pytest green（quant 純関数・services スナップショット・migration 0012 回帰・Tool handler の戻り値形＝market/currency 明示・verdict 不在）。
 - **詳細**: `backend/app/quant/valuation.py`（roe/operating_margin/net_margin/growth_yoy 純関数）・`services/valuation.py`（`_fundamentals`）・`db/repo.py`（`get_prior_annual_financials_by_code`・`get_valuation_snapshot`・`_valuation_inner_subquery`・`screen_stocks` の range/sort 拡張）・`db/schema.py`＋`alembic/versions/0012_valuation_metrics.py`（valuation_snapshots に 7 列追加）・`advisor/tools/{schemas,handlers,registry}.py`（`get_valuation`/`screen_valuation`・min_phase=2）・`advisor/method_cards.py`＋`advisor/cards/{valuation.md,jp-market-context.md}`・`advisor/{router,nightly}.py`（カード常時注入）。数値の出典参考は dexter-jp の `src/tools/finance/screen-companies.ts`（曖昧語→数値の既定値）・`src/skills/dcf/SKILL.md`（PER/PBR/WACC レンジ）・`RULES.md.example`（バリュー投資ルール例）。
 - **関連**: [ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離)（valuation_snapshots・市場分離）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（計算はコード・参照知識は markdown）・[ADR-026](#adr-026-signals-は連続スコアの材料ai-が主消費者で閾値は破壊的ゲートにしない)（破壊的ゲートにしない）・[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心)/[ADR-013](#adr-013-投資方針-policy-は単一チャットで育てる版管理機構は作らない)（1 つの脳・単一 policy）・[ADR-041](#adr-041-ai-advisor-の-core-に反追従規律とペルソナ層を明示するリスク選好は-policy-のまま職業アイデンティティのみ固定)（改訂＝JP 文脈はカードへ）・[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（米株 Phase 7(B)）・[ADR-027](#adr-027-手法パラメータは-phase-1-はコード定数将来-method_settingsai-は助言自動改変しない)（web 設定 UI は将来）。
+
+---
+
+> ADR-049〜052 は、ニュース DB を RAG 化して株分析に活かす活用案（`.tmp/20260607_ai_rag.txt`＝外部 AI の提案 7 ユースケース＋メタデータ案＋プロダクト案）を AssetVane のアーキに当てて選別した相談から確定した 4 件。前提＝ADR-044〜047（統合コーパス・意味検索・ユーザー入力・一覧画面）。スコープは設計判断（本 ADR）まで＝実装は別タスク。grill-me（`rag-grill-me-cheerful-sun`）で線引きを確定した。
+
+## ADR-049: ニュース RAG の活用を線引きする＝AI は事実を解釈するだけで数値スコアは作らない
+
+- **状況/問題**: 外部 AI が「ニュース DB を RAG 化したら何ができるか」を 7 ユースケース（銘柄要約・カタリスト検出・センチメント・銘柄比較・急騰落の理由説明・決算材料整理・仮説検証）＋メタデータ案＋プロダクト案として列挙した（`.tmp/20260607_ai_rag.txt`）。統合コーパス（[ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)）と意味検索（[ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)）の**器**はできたが、「その器で何をやる/やらないか」が未確定。多くの案が暗に **AI による数値スコア付与**（センチメントスコア・確度・重要度・材料ランキング）を求めており、これは AssetVane の不変条件（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)＝AI は数値を計算しない・quant 純関数が事実を出す）と正面衝突する。
+- **検討して却下した案**:
+  - **AI がニュースに 0〜1 の数値スコアを付与し signals/ランキングの数値根拠にする** → **却下**。LLM のスコアは非再現で、同じニュースでも実行ごとにブレ、backtest（[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)）と signals の連続スコア体系（[ADR-026](#adr-026-signals-は連続スコアの材料ai-が主消費者で閾値は破壊的ゲートにしない)）を壊す。「材料ランキングを AI スコアで作る」も同根で却下。
+- **決定**: ニュース RAG の活用を **「AI は事実を解釈するだけ・数値は quant が出す」**で線引きし、採用ユースケースを確定する。
+  - **採用（解釈系・チャット Tool `get_news_context`/`search_news` 経由）**: ① 銘柄別ニュース要約（好/悪/中立は定性分類）／② カタリスト検出（「予測」でなく「来るイベントの列挙」に寄せる＝[ADR-009](#adr-009-自動売買はしない提示に徹する)）／⑤ 株価変動の理由説明（値動きの事実は quant の `momentum`/`volume_spike`、ニュースは理由付け）／⑦ 投資仮説の検証（`search_news` で支持/反証材料を集め AI が秤にかける）。
+  - **採用（定性タグのみ）**: ③ センチメントは定性 `polarity`（例 `短期ポジ`/`長期ネガ` の enum）タグとして持つ。**数値 sentiment_score は持たない**。
+  - **条件付き採用**: ⑥ 決算材料整理は「決算**後**」のみ（`financials.disclosed_date` を起点に直近決算後のニュース＋KPI を定性整理）。「決算**前**チェックリスト」は決算予定カレンダー（J-Quants 無料/Light での取得可否は未確認・TDnet 適時開示は有料アドオン）が前提条件のため**予約**。
+  - **却下**: 確度・重要度・影響スコア・材料ランキングのスコア化（AI が数値を生む案は全部）。ランキングが要るときは quant の既存指標（`volume_spike`/騰落率）で並べ、ニュースはその順位の「理由」として添える。
+  - **分離**: ④ 銘柄比較・テーマ株スクリーニング・競合比較は theme 概念を要するため [ADR-050](#adr-050-銘柄とニュースにテーマタグを持たせ語彙揺れをプロンプト照合と-embedding-近接で抑える)へ。能動配信（保有リスクアラート・急騰落の自動説明）は [ADR-051](#adr-051-ニュースとシグナルと保有を結ぶ能動配信を-notify_digest-に拡張する)、売買アイデア提示は [ADR-052](#adr-052-ニュース起点の売買アイデアは-proposals-の-buysell-に承認制で起票する)へ。
+- **理由**: 器（コーパス・検索）と活用（何を AI にさせるか）を分けて記録することで、将来「便利そう」を理由に AI スコアを混ぜる逸脱を防ぐ。解釈系は AssetVane の中核（AI と相談しながら提示）にそのまま乗り、数値は一貫して quant が持つ。
+- **段階**: docs 確定（線引き）。実装は別タスク＝採用ユースケースは `get_news_context`/`search_news` の活用であり新規 schema を要さない（`polarity` タグは [ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)の統合コーパス移行で追加）。[advisor.md](advisor.md) にユースケースを反映する。
+- **関連**: [ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)（活用の器）・[ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)（意味検索）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（AI は数値を作らない＝活用面で具体化）・[ADR-026](#adr-026-signals-は連続スコアの材料ai-が主消費者で閾値は破壊的ゲートにしない)（signals は連続スコア・AI スコアを混ぜない）・[ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用）・[ADR-050](#adr-050-銘柄とニュースにテーマタグを持たせ語彙揺れをプロンプト照合と-embedding-近接で抑える)/[ADR-051](#adr-051-ニュースとシグナルと保有を結ぶ能動配信を-notify_digest-に拡張する)/[ADR-052](#adr-052-ニュース起点の売買アイデアは-proposals-の-buysell-に承認制で起票する)（派生）。
+
+## ADR-050: 銘柄とニュースにテーマタグを持たせ語彙揺れをプロンプト照合と embedding 近接で抑える
+
+- **状況/問題**: 活用案④（銘柄比較・テーマ株スクリーニング・競合比較）は、業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねたい。だが DB に theme 概念は無く、グルーピングは `sector17_code`/`sector33_code`（[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)）だけ。セクター横断のテーマは拾えない。
+- **検討して却下した案**:
+  - **theme を作らず sector17/33 だけで代用** → 却下。同業種比較はできるが「半導体製造装置とソフトウェアの AI 関連を横串」のようなセクター跨ぎを拾えない。
+  - **テーマ語彙を自由放任（付与のたび新語）** → 却下。"AI需要"/"AI関連"/"生成AI" が乱立しタグが爆発、検索が割れる。
+  - **新規 theme を毎回人手承認制（pending lane）** → 却下。単一ユーザー（[ADR-001](#adr-001-単一ユーザー前提で作る)）に承認の手間を毎調査で課すのは過剰。
+- **決定**:
+  - **銘柄とニュースに定性 `theme` タグ**を持たせる。銘柄テーマは `investigate_stock`（ドシエ生成＝[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）の時に AI が定性付与し、**銘柄×theme 台帳**として持つ。ニュースにも `theme` タグ（[ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)の統合コーパスのタグ集合に追加）。**数値ではない**ので [ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) を侵さない。
+  - **語彙揺れ防止を二段**で持つ＝(1) 付与時に既存テーマ一覧を AI に文脈注入し「該当があれば再用・無ければ新規」と指示（プロンプト照合）＋(2) [ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)の embedding を流用し、候補テーマと既存テーマの類似度が閾値を超えたら**重複候補としてフラグ**（自動マージはせず候補提示に留める）。語彙照合は軽量タスクなので弱モデルでも足り、[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可) の将来ルーティング余地と合う。
+  - テーマ株スクリーニング・競合比較は、この銘柄×theme 台帳＋既存 sector で実現する（競合は同 theme かつ近 sector で近似）。
+- **理由**: theme を「数値でない定性タグ＋語彙 reconcile 付き」で持てば、AI 解釈の柔軟さ（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) の範囲）を保ちつつタグ爆発を抑えられる。付与口を `investigate_stock` に寄せることで既存パイプラインに乗り、新たな常時ジョブを増やさない。
+- **段階**: docs 確定。実装は別タスク＝`theme` タグ（銘柄×theme 台帳・news タグ）・`investigate_stock` への付与ステップ・embedding 近接チェック。[data-model.md](data-model.md)/[advisor.md](advisor.md) に同期。
+- **関連**: [ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)（タグ集合に theme 追加）・[ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)（embedding 流用）・[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（sector17/33）・[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)（ドシエ生成時に付与）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（定性付与・数値でない）・[ADR-049](#adr-049-ニュース-rag-の活用を線引きするai-は事実を解釈するだけで数値スコアは作らない)（④の親）・[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)（語彙照合は弱モデル可）。
+
+## ADR-051: ニュースとシグナルと保有を結ぶ能動配信を notify_digest に拡張する
+
+- **状況/問題**: 活用案の「急騰落理由の自動説明」「保有銘柄リスクアラート」は、聞かれてから答える受動（チャット Tool）でなく**先回りして通知**したい。Phase 6 の `notify_digest`（夜間バッチ末尾・Discord 1 通に signals＋夜AI提案を束ね `notifications`/`send_once` で冪等＝[phase6-spec.md](phase6-spec.md)）は既にあるが、(a) signals に「なぜ動いたか」のニュースが付かない、(b) digest は**保有（`holdings`）と非連動**で全シグナルを社名表示するだけ。
+- **検討して却下した案**:
+  - **モーニングレポート・材料ランキングまでフル能動配信** → 予約。毎晩の LLM コストと通知ノイズが増え、単一ユーザー（[ADR-001](#adr-001-単一ユーザー前提で作る)）の可処分注意を超える。まず価値の高い 2 つに絞る。
+  - **全部チャット受動のみ（能動を入れない）** → 却下。保有銘柄の悪材料は「気づけるか」が価値で、受動だと取りこぼす。
+- **決定**:
+  - **急騰落の自動説明**＝夜間に `volume_spike`/`momentum` の発火シグナルへ該当ニュース（`get_news_context` の銘柄層）を attach し、「なぜ動いたか」を digest に添える（値動きの事実は quant、説明はニュースの引用＝[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)）。
+  - **保有リスクアラート**＝`holdings` に紐づく銘柄の悪材料ニュース（定性 `polarity` が負＝[ADR-049](#adr-049-ニュース-rag-の活用を線引きするai-は事実を解釈するだけで数値スコアは作らない)）を抽出し digest に通知。`notify_digest` に holdings 紐づけを追加する。提示専用（[ADR-009](#adr-009-自動売買はしない提示に徹する)）・冪等は既存 `notifications`/`send_once` を踏襲。
+- **理由**: 能動の価値が最も高い「保有の悪材料」「動いた理由」を、既存の Phase 6 digest 基盤に**最小拡張**で乗せる。新通知チャネルや新ジョブ骨格を作らず、attach と holdings フィルタの追加に留める。
+- **段階**: docs 確定。実装は別タスク＝`notify_digest` への holdings フィルタ＋ニュース attach・負 `polarity` 抽出。[phase6-spec.md](phase6-spec.md) と `batch-pattern` スキルに同期。
+- **関連**: [phase6-spec.md](phase6-spec.md)（Phase 6 拡張）・[ADR-049](#adr-049-ニュース-rag-の活用を線引きするai-は事実を解釈するだけで数値スコアは作らない)（⑤採用・polarity）・[ADR-026](#adr-026-signals-は連続スコアの材料ai-が主消費者で閾値は破壊的ゲートにしない)（signals は材料）・[ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用）・[ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)（get_news_context）・[ADR-001](#adr-001-単一ユーザー前提で作る)（単一ユーザー・ノイズを抑える）。
+
+## ADR-052: ニュース起点の売買アイデアは proposals の buy/sell に承認制で起票する
+
+- **状況/問題**: AssetVane の核は「AI と相談しながら銘柄・配分を提示」（[ADR-009](#adr-009-自動売買はしない提示に徹する)/[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心)）。活用案「ニュース起点の売買アイデア生成」をこの提示専用の枠に乗せたい。`proposals` テーブルは `kind` に `buy/sell/rebalance` を定義済みだが、起票・承認ロジックは `policy_change` のみ実装で buy/sell は未実装（schema 定義のみ）。
+- **検討して却下した案**:
+  - **`submit_journal` の proposal テキストに自由文で書くだけに留める** → 却下。構造化されず、承認/不採用・結果（`outcome`）の追跡ができない。
+  - **スコープ外にする** → 却下。ニュース 3 層文脈（[ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)）が乗ると「なぜ買い/売りか」の根拠が強くなり、提示専用の本筋にむしろ近づく。
+- **決定**: ニュース 3 層文脈（`get_news_context`）を根拠に、Advisor が buy/sell 提案を `proposals`（`kind=buy/sell`）へ起票する。**承認制・約定はしない**（[ADR-009](#adr-009-自動売買はしない提示に徹する)）。既存 `policy_change` lane と同型で、`depends_on` の承認順制御・`/proposals/{id}/approve|reject` を流用する。**数値（株数・金額）を AI に計算させず**、提案は「方向と根拠」に留め、サイズは別途 portfolio 最適化（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) の事実計算）に委ねる。
+- **理由**: 売買アイデアは提示専用の自然な終点で、既存の承認制 proposals 設計に予約済みの lane を起こすだけ。ニュース RAG の出口を「追跡可能な提案」にすることで、journal の自由文より検証可能になる。
+- **段階**: docs 確定。実装は別タスク＝buy/sell の insert/resolve ロジック・Advisor からの起票経路。[phase3-spec.md](phase3-spec.md)/[api.md](api.md) に同期。
+- **関連**: [ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用・承認制）・[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心)/[ADR-013](#adr-013-投資方針-policy-は単一チャットで育てる版管理機構は作らない)（2軸AI・単一policy）・[ADR-049](#adr-049-ニュース-rag-の活用を線引きするai-は事実を解釈するだけで数値スコアは作らない)（ニュース根拠）・[ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)（3層文脈）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（株数はAIに計算させない）。
