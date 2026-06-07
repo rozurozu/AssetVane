@@ -12,13 +12,16 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import httpx
+import pandas as pd
 import pytest
 
 from app.adapters.index import (
+    US_SECTOR_ETFS,
     IndexAdapter,
     IndexAdapterError,
     IndexSource,
     StooqIndexSource,
+    YahooIndexSource,
 )
 
 # テスト用 CSV（Stooq の実形式）
@@ -238,3 +241,164 @@ def test_facade_builds_from_config_registry(monkeypatch: pytest.MonkeyPatch) -> 
     # 未知 'bogus' はスキップされ、stooq だけが構築される
     assert [s.name for s in adapter._sources] == ["stooq"]
     assert isinstance(adapter._sources[0], StooqIndexSource)
+
+
+# ---------------------------------------------------------------------------
+# YahooIndexSource（yfinance・ネット非依存・fetch を fake 注入して検証）
+# ---------------------------------------------------------------------------
+def _yahoo_df(dates: list[str], closes: list[float]) -> pd.DataFrame:
+    """yfinance.download（multi_level_index=False・auto_adjust=True）の戻り値を模す DataFrame。"""
+    index = pd.DatetimeIndex([pd.Timestamp(d) for d in dates])
+    return pd.DataFrame(
+        {
+            "Open": closes,
+            "High": closes,
+            "Low": closes,
+            "Close": closes,
+            "Volume": [1000] * len(closes),
+        },
+        index=index,
+    )
+
+
+def test_yahoo_normalizes_close_to_rows() -> None:
+    """yfinance DataFrame の index/Close が symbol・date・close に正規化される（ADR-010）。"""
+    captured: dict[str, Any] = {}
+
+    def fake_fetch(source_symbol: str, start: str | None, end: str | None) -> pd.DataFrame:
+        captured["source_symbol"] = source_symbol
+        return _yahoo_df(["2026-05-28", "2026-05-29"], [5250.36, 5265.0])
+
+    source = YahooIndexSource(fetch=fake_fetch)
+    rows = source.fetch_index_quotes("^SPX")
+
+    # ^SPX は Yahoo の ^GSPC に変換して取得する
+    assert captured["source_symbol"] == "^GSPC"
+    assert len(rows) == 2
+    assert all(r["symbol"] == "^SPX" for r in rows)  # canonical に戻る
+    assert rows[0]["date"] == "2026-05-28"
+    assert rows[0]["close"] == pytest.approx(5250.36)
+    assert rows[1]["close"] == pytest.approx(5265.0)
+
+
+def test_yahoo_etf_symbol_is_identity() -> None:
+    """米国業種 ETF（XLK 等）は Yahoo シンボルと同一（恒等変換）で取得する。"""
+    captured: dict[str, Any] = {}
+
+    def fake_fetch(source_symbol: str, start: str | None, end: str | None) -> pd.DataFrame:
+        captured["source_symbol"] = source_symbol
+        return _yahoo_df(["2026-05-28"], [180.0])
+
+    source = YahooIndexSource(fetch=fake_fetch)
+    rows = source.fetch_index_quotes("XLK")
+
+    assert captured["source_symbol"] == "XLK"
+    assert rows == [{"symbol": "XLK", "date": "2026-05-28", "close": 180.0}]
+
+
+def test_yahoo_index_symbol_mapping() -> None:
+    """指数 canonical → Yahoo シンボル変換（^NKX→^N225・^TPX→恒等）を確認する。"""
+    seen: list[str] = []
+
+    def fake_fetch(source_symbol: str, start: str | None, end: str | None) -> pd.DataFrame:
+        seen.append(source_symbol)
+        return _yahoo_df(["2026-05-28"], [1.0])
+
+    source = YahooIndexSource(fetch=fake_fetch)
+    source.fetch_index_quotes("^NKX")
+    source.fetch_index_quotes("^TPX")
+
+    assert seen == ["^N225", "^TPX"]
+
+
+def test_yahoo_empty_df_raises() -> None:
+    """空 DataFrame は黙って 0 行にせず IndexAdapterError を投げる（ADR-018/038）。"""
+    source = YahooIndexSource(fetch=lambda s, a, b: pd.DataFrame())
+
+    with pytest.raises(IndexAdapterError, match="0 行を返しました"):
+        source.fetch_index_quotes("^SPX")
+
+
+def test_yahoo_none_df_raises() -> None:
+    """yfinance が None を返した場合も IndexAdapterError（黙って 0 行にしない）。"""
+    source = YahooIndexSource(fetch=lambda s, a, b: None)  # type: ignore[arg-type,return-value]
+
+    with pytest.raises(IndexAdapterError, match="0 行を返しました"):
+        source.fetch_index_quotes("^SPX")
+
+
+def test_yahoo_fetch_exception_translated() -> None:
+    """yfinance 例外は IndexAdapterError に翻訳して次ソースへ回せるようにする。"""
+
+    def boom(source_symbol: str, start: str | None, end: str | None) -> pd.DataFrame:
+        raise RuntimeError("network down")
+
+    source = YahooIndexSource(fetch=boom)
+
+    with pytest.raises(IndexAdapterError, match="取得に失敗しました"):
+        source.fetch_index_quotes("XLE")
+
+
+def test_yahoo_nan_close_skipped_else_raises() -> None:
+    """全行が NaN close なら有効 0 件で raise（黙って 0 行にしない）。"""
+    df = _yahoo_df(["2026-05-28", "2026-05-29"], [float("nan"), float("nan")])
+    source = YahooIndexSource(fetch=lambda s, a, b: df)
+
+    with pytest.raises(IndexAdapterError, match="有効な close が 0 件"):
+        source.fetch_index_quotes("XLK")
+
+
+def test_yahoo_partial_nan_close_kept() -> None:
+    """一部 NaN 混在でも有効行だけ採用する（NaN 行はスキップ）。"""
+    df = _yahoo_df(["2026-05-28", "2026-05-29"], [180.0, float("nan")])
+    source = YahooIndexSource(fetch=lambda s, a, b: df)
+
+    rows = source.fetch_index_quotes("XLK")
+
+    assert rows == [{"symbol": "XLK", "date": "2026-05-28", "close": 180.0}]
+
+
+def test_yahoo_multiindex_columns_handled() -> None:
+    """単一ティッカーが MultiIndex 列で返っても Close を取り出せる（頑健性）。"""
+    index = pd.DatetimeIndex([pd.Timestamp("2026-05-28")])
+    df = pd.DataFrame(
+        {("Close", "XLK"): [180.0], ("Open", "XLK"): [179.0]},
+        index=index,
+    )
+    df.columns = pd.MultiIndex.from_tuples(df.columns, names=["Price", "Ticker"])
+    source = YahooIndexSource(fetch=lambda s, a, b: df)
+
+    rows = source.fetch_index_quotes("XLK")
+
+    assert rows == [{"symbol": "XLK", "date": "2026-05-28", "close": 180.0}]
+
+
+def test_facade_yahoo_then_stooq_fallback() -> None:
+    """ファサードが yahoo→stooq の順でフォールバックする（yahoo 失敗→stooq 採用）。"""
+    yahoo = YahooIndexSource(fetch=lambda s, a, b: pd.DataFrame())  # 0 行で raise
+    stooq = StooqIndexSource(client=_make_client_stub(_SAMPLE_CSV))
+    adapter = IndexAdapter(sources=[yahoo, stooq])
+
+    rows = adapter.fetch_index_quotes("^SPX")
+
+    assert len(rows) == 3  # Stooq の結果を採用
+    assert all(r["symbol"] == "^SPX" for r in rows)
+
+
+def test_us_sector_etfs_has_11_gics_sectors() -> None:
+    """US_SECTOR_ETFS が GICS 11 セクター（重複なし）であることを確認する（Phase 7）。"""
+    assert len(US_SECTOR_ETFS) == 11
+    assert len(set(US_SECTOR_ETFS)) == 11
+    assert set(US_SECTOR_ETFS) == {
+        "XLB",
+        "XLE",
+        "XLF",
+        "XLI",
+        "XLK",
+        "XLP",
+        "XLU",
+        "XLV",
+        "XLY",
+        "XLC",
+        "XLRE",
+    }

@@ -441,3 +441,30 @@
   - **ログレベルをコード固定** → 障害解析時に DEBUG へ上げられないと不便。`LOG_LEVEL` env で可変にする。
 - **関連**: [ADR-005](#adr-005-db-に触れるのは-fastapi-のみnext-は-rest-経由)（ファイルを持つのは FastAPI だけ）・[ADR-007](#adr-007-通知は-discord-webhookline-notify-は不採用)／[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)（無人失敗は Discord・別経路）・[ADR-017](#adr-017-sqlite-を定期バックアップする)（SD I/O・寿命）・[ADR-037](#adr-037-next--fastapi-は同一オリジン化next-rewrites-プロキシcors-と-api_url-焼き込みを廃止)（今回の障害の発端）。
 - **詳細**: `backend/app/logging_config.py`（`setup_logging()`・`dictConfig`・uvicorn 整合・`/health` 抑制）・`backend/app/main.py`（import 時に `setup_logging()`）・`backend/app/config.py`（`log_level`・env `LOG_LEVEL`）・`compose.yaml`／`compose.prod.yaml`（json-file ローテーション 10m×5）・`frontend/src/components/shell/Topbar.tsx`（握り潰し廃止・定期再チェック）・`frontend/src/lib/api.ts`（失敗時に解決済み URL を載せる・`getHealth` タイムアウト）・運用は [docs/deploy.md](deploy.md) の「ログの見方」。
+
+---
+
+## ADR-039: Phase 7 を (A) Sector Lead-Lag 先行／(B) 米株拡張に分割し、(A) の業種 ETF は IndexAdapter に Yahoo ソースを足して流用する
+
+- **状況**: [roadmap.md Phase 7](roadmap.md) は「Sector Lead-Lag（日米業種リードラグ・論文 SIG-FIN-036 ベース）」と「米国株拡張（米株スクリーナー `/us-stocks`・米国個別株 OHLCV・通貨/FX 換算）」という**性質の違う 2 成果物**を 1 つの Phase に束ねていた。前者は「日足の終値だけで動く軽量な提示専用シグナル」、後者は「数千銘柄の OHLCV・財務ソース・通貨列の波及（holdings/cash/asset_snapshots）・`UsEquityAdapter` 新設」という重い基盤拡張で、リスクと所要が桁違いに違う。これを 1 つのまま進めると、軽い前者まで重い後者に引きずられて止まる。grill-me（`snappy-cuddling-scott`）で分割を確定した。あわせて grill 中に**既存バグが判明**＝指数取得の `StooqIndexSource` が Stooq の BOT 判定で死に、`index_quotes` の取得（^SPX 等）が現状壊れている。
+- **決定**:
+  - **Phase 7 を (A)／(B) に分割し、(A) Sector Lead-Lag を先行**する。(B)〔米株スクリーナー `/us-stocks`・米国個別株 OHLCV・米国ファンダ源・`UsEquityAdapter` 新設・通貨列／`FxAdapter`／GICS／holdings·cash·asset_snapshots の通貨波及〕は別サブフェーズに**繰り延べ**る。
+  - **(A) は論文 SIG-FIN-036（中川慧ほか, 人工知能学会, 2026）に忠実実装**する。米国業種 ETF の当日 close-to-close ショックを、事前部分空間へ正則化した PCA（低ランク予測器）に通して**翌営業日の日本業種スコア**を算出し、`signals`（`signal_type='lead_lag'`・JP 業種コードを `code`）に提示用の最新日だけ UPSERT する。**提示専用**で自動売買はしない（[ADR-009](#adr-009-自動売買はしない提示に徹する)と整合）。手法本体は**テスト済み純関数 `quant/lead_lag.py`**（`compute_lead_lag` ＋ `validate_lead_lag`・DB 非依存）に置く（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)／[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)）。確定パラメータはモジュール定数（`L=60`, `K0=3`, `K=3`, `λ=0.9`, `q=0.3`・env 不可＝[ADR-027](#adr-027-手法パラメータは-phase-1-はコード定数将来-method_settingsai-は助言自動改変しない) 流）。
+  - **【ロードマップ逸脱・本 ADR の核】米国業種 ETF（11 本の SPDR）の取得は、roadmap が想定した `UsEquityAdapter` ではなく、既存の [`IndexAdapter`](architecture.md)（フォールバック連鎖ファサード・[ADR-010](#adr-010-データソースはアダプタ越しにする)）に新ソース `YahooIndexSource`（yfinance・`auto_adjust=True`）を足して `index_quotes` に流用する**。Yahoo を主・Stooq をフォールバックにする（`settings.index_sources="yahoo,stooq"`）。日本側 TOPIX-17 業種 ETF（1617〜1633）は既存 `daily_quotes`（J-Quants）を使う。
+  - **Free プラン時はハード無効化しない**。Free は株価が約 12 週間遅延し、リードラグの「翌日予測」のシグナル日付が約 3 ヶ月古くなって実用外になるが、計算は出した上で frontend に**目立つ低信頼バナー**を出す（`meta.plan` / `meta.is_delayed` / `meta.model_as_of` で判定。Light プランなら本来機能する）。
+  - **検証は軽量にとどめる**。履歴で各 t のシグナルと実現リターンの Spearman IC、および 3 分位ロングショート（q=0.3）の R/R・方向的中率を numpy＋pandas のみで算出し、`meta` に同梱する。**Fama-French / Carhart 回帰・フル backtest 基盤は対象外**。
+  - **提示/AI 配線**: 専用ページは作らず、Dashboard ウィジェット（`GeneralNewsWidget` 流用の `LeadLagWidget`）＋ AI Tool `get_lead_lag`（`min_phase=7`・軸1/軸2 共用）＋ `signals` 統合＋ `GET /lead-lag`。`CURRENT_PHASE` を 4→7 に上げる。マイグレーション不要（`signals`・`index_quotes` を流用）。
+- **理由**:
+  - **(A) は軽く・(B) は重い**。(A) は日足終値のみ・通貨/FX 不要・新テーブル不要で、ラズパイ夜間バッチに無理なく載る。(B) を待たずに価値（提示材料）を出せるので先行が合理的。
+  - **業種 ETF を `IndexAdapter` に流用する理由（最小変更）**: リードラグに必要なのは**業種 ETF の調整後終値だけ**で、OHLCV も通貨換算も要らない。これは既存 `index_quotes`（指数の水準を日足で持つ）の住所にちょうど収まる。`UsEquityAdapter` は OHLCV・財務・通貨という (B) の重い関心を背負うアダプタで、(A) のためだけに前倒し新設すると **(B) のスコープが (A) に漏れて膨張**する。
+  - **同時に既存バグも復旧する**: `YahooIndexSource` を主ソースに足すことで、Stooq 障害で死んでいた ^SPX 等の指数取得も生き返る（フォールバック連鎖の先頭に生きたソースが入る）。1 つの追加で「(A) の取得」と「既存指数取得の復旧」を同時に解く。
+  - **Free でハード無効化しない理由**: 開発は Free（[ADR-008](#adr-008-j-quants-は-v2-を使う)）で進む。計算経路は本番と同じに保ちつつ「いま見ている数字は約 3 ヶ月前のもの」と明示する方が、無効化して何も見せないより開発・検証に有用（Light に上げれば即実用になる）。
+- **代替案**:
+  - **`UsEquityAdapter` を前倒し新設して業種 ETF を取る** → (B) の重い関心（OHLCV・通貨・財務源）を (A) に持ち込み、(A) のスコープが膨張する。却下。
+  - **`StooqIndexSource` 単一を継続** → そもそも現状 Stooq が BOT 判定で死んでおり取得不能。却下（フォールバック連鎖に残置はするが主ソースにはしない）。
+  - **キー付きの契約データソース（有償 API）を主にする** → Phase 7(A) の提示用途には過剰でコストもかかる。将来 (B) で精度・銘柄数が要るときにフォールバック連鎖へ足せばよい（[ADR-010](#adr-010-データソースはアダプタ越しにする) の連鎖は後付け可能）。保留。
+  - **Phase 7 を分割せず一括実装** → (B) の重さに (A) が引きずられる。却下（分割が本 ADR の主旨）。
+  - **scipy を入れて固有分解する** → numpy（`eigh`）＋pandas で足り、依存を増やさない。不採用（追加依存は yfinance のみ）。
+- **(B) への繰り延べ事項（明記）**: 米株スクリーナー `/us-stocks`（[ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離)）・米国個別株（数千・OHLCV・`UsEquityAdapter` 新設）・米国ファンダ源・通貨列・`FxAdapter`・holdings/cash/asset_snapshots の通貨/FX 波及・GICS 分類。これらは (A) のスコープ外で、(B) サブフェーズに送る。
+- **段階**: **着工（2026-06-07）**。設計確定（grill `snappy-cuddling-scott`・論文 PDF `2026_76.pdf` 読了）。実装は `quant/lead_lag.py`（純関数）・`adapters/index.py`（`YahooIndexSource` 追加・yfinance 依存）・`services/lead_lag.py`・`batch/jobs/calc_lead_lag.py`（`NIGHTLY_JOBS` の `calc_signals` 後・`run_advisor` 前）・`GET /lead-lag` ＋ Tool `get_lead_lag`・frontend `LeadLagWidget`。手法カードは [docs/methods/lead-lag.md](methods/lead-lag.md)（参照知識・リポジトリ markdown）。
+- **関連**: [ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し・フォールバック連鎖）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)／[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（手法はテスト済みコード）・[ADR-008](#adr-008-j-quants-は-v2-を使う)（Free 遅延）・[roadmap.md Phase 7](roadmap.md)・[advisor.md §5](advisor.md)・[docs/methods/lead-lag.md](methods/lead-lag.md)。

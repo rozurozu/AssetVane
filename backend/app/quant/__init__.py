@@ -23,12 +23,17 @@ docs/data-model.md §4。
     … 平均分散最適化。
   - `backtest.backtest_portfolio(price_panel, weights, benchmark, rebalance)`
     … buy&hold バックテスト。
+- Phase 7:
+  - `lead_lag.compute_lead_lag_signal(rcc, ...)` … 日米業種リードラグ・シグナル
+    （部分空間正則化付き PCA・米国当日 → 日本翌日）。
+  - `lead_lag.validate_lead_lag(rcc, roc, ...)` … 履歴での IC / hit_rate / R/R 検証。
 """
 
 from __future__ import annotations
 
 from app.quant.backtest import backtest_portfolio
 from app.quant.indicators import compute_indicators
+from app.quant.lead_lag import compute_lead_lag_signal, validate_lead_lag
 from app.quant.momentum import compute_momentum
 from app.quant.optimize import optimize_portfolio
 from app.quant.portfolio import compute_deviations, compute_portfolio_metrics
@@ -38,8 +43,10 @@ __all__ = [
     "backtest_portfolio",
     "compute_deviations",
     "compute_indicators",
+    "compute_lead_lag_signal",
     "compute_momentum",
     "compute_portfolio_metrics",
     "compute_volume_spike",
     "optimize_portfolio",
+    "validate_lead_lag",
 ]

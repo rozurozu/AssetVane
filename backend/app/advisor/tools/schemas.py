@@ -136,6 +136,14 @@ class GetGeneralNewsArgs(_ToolArgs):
     """
 
 
+class GetLeadLagArgs(_ToolArgs):
+    """get_lead_lag の引数（Phase 7・SIG-FIN-036-13・引数なし）。
+
+    日米業種リードラグの最新ランキング＋検証指標を返すだけなので引数は無い
+    （get_general_news / get_asset_overview と同じ空モデル）。
+    """
+
+
 class ProposedPolicyChange(_ToolArgs):
     """方針変更案（単一フィールド・ADR-013）。
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
-from app.adapters.index import IndexAdapter, IndexAdapterError
+from app.adapters.index import US_SECTOR_ETFS, IndexAdapter, IndexAdapterError
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -21,6 +21,21 @@ from app.db.engine import get_engine
 logger = logging.getLogger(__name__)
 
 _SOURCE_PREFIX = "index_quotes"  # fetch_meta の source キー接頭辞
+
+
+def _target_symbols() -> list[str]:
+    """取得対象シンボルを返す＝主要指数（config）＋米国業種 ETF 11 本（ADR-010・Phase 7）。
+
+    config.index_symbol_list（^SPX/^NKX/^TPX 等）に US_SECTOR_ETFS（XLK 等）を足す。
+    canonical=素ティッカー。重複は順序を保って排除する（config に ETF を二重指定しても安全）。
+    """
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for symbol in [*settings.index_symbol_list, *US_SECTOR_ETFS]:
+        if symbol not in seen:
+            seen.add(symbol)
+            ordered.append(symbol)
+    return ordered
 
 
 def _source_key(symbol: str) -> str:
@@ -48,12 +63,13 @@ def _start_date_for_symbol(symbol: str, today: str) -> str:
 def run() -> JobResult:
     """主要指数の日次終値を取得し index_quotes / fetch_meta を前進させる（spec §3.1）。
 
-    config.index_symbol_list のシンボルをループし、それぞれ差分取得して UPSERT する。
+    取得対象は config.index_symbol_list（^SPX/^NKX/^TPX 等）＋米国業種 ETF 11 本
+    （US_SECTOR_ETFS・Phase 7 リードラグ用）。各シンボルを差分取得して UPSERT する。
     シンボルごとに例外が発生しても後続シンボルを継続し、最終的に 1 件でも失敗なら ok=False。
     例外はジョブ境界で握り runner が Discord 通知する（ADR-018）。
     """
     today = date.today().isoformat()
-    symbols = settings.index_symbol_list
+    symbols = _target_symbols()
 
     total_rows = 0
     failed_symbols: list[str] = []

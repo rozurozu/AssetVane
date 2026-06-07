@@ -9,6 +9,7 @@
 // backend 未起動でも壊れないよう fetch 失敗は握って空表示＋注記にする（spec §9.6）。
 
 import { GeneralNewsWidget } from "@/components/general-news/GeneralNewsWidget";
+import { LeadLagWidget } from "@/components/lead-lag/LeadLagWidget";
 import { Card } from "@/components/ui/Card";
 import { DataTable, Td } from "@/components/ui/DataTable";
 import {
@@ -615,8 +616,9 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* 一般ニュース（ADR-034・市況/マクロ/世界情勢をカテゴリ別に眺める）*/}
-      <div className="mb-3">
+      {/* 業種リードラグ（Phase 7・翌日強含み業種）＋ 一般ニュース（ADR-034）*/}
+      <div className="mb-3 grid grid-cols-[2fr_3fr] gap-3 max-[1100px]:grid-cols-1">
+        <LeadLagWidget />
         <GeneralNewsWidget data={generalNews} />
       </div>
 

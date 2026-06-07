@@ -40,8 +40,8 @@ def test_openai_tools_phase3_includes_submit_journal() -> None:
 
 
 def test_openai_tools_default_is_current_phase() -> None:
-    """既定引数は CURRENT_PHASE（=4・ADR-034 で Phase 4 まで露出）。"""
-    assert CURRENT_PHASE == 4
+    """既定引数は CURRENT_PHASE（=7・Phase 7 リードラグまで露出）。"""
+    assert CURRENT_PHASE == 7
     assert {t["function"]["name"] for t in openai_tools()} == {  # type: ignore[index]
         t["function"]["name"]  # type: ignore[index]
         for t in openai_tools(CURRENT_PHASE)
@@ -73,6 +73,8 @@ def test_registry_handlers_are_registered() -> None:
         "fetch_news",
         # ADR-034: 一般ニュース（min_phase=4）。
         "get_general_news",
+        # Phase 7: 日米業種リードラグ（min_phase=7）。
+        "get_lead_lag",
     }
     assert set(REGISTRY) == expected
 
@@ -96,6 +98,16 @@ def test_openai_tools_phase4_exposes_dossier_tools() -> None:
     assert {"get_dossier", "investigate_stock", "fetch_news"} <= names
     # P1〜P3 も引き続き含む（上位 phase は下位を内包する）。
     assert "get_indicators" in names and "submit_journal" in names
+    # min_phase=7 の get_lead_lag は phase 4 では露出しない。
+    assert "get_lead_lag" not in names
+
+
+def test_openai_tools_phase7_exposes_lead_lag() -> None:
+    """available_phase>=7 で get_lead_lag（min_phase=7）が露出する（Phase ゲート）。"""
+    names = {t["function"]["name"] for t in openai_tools(7)}  # type: ignore[index]
+    assert "get_lead_lag" in names
+    # 下位 phase の Tool も内包する。
+    assert {"get_general_news", "get_dossier", "get_indicators"} <= names
 
 
 class _FakeBeginConn:

@@ -25,6 +25,7 @@ from app.routers.batch import router as batch_router
 from app.routers.diagnostics import router as diagnostics_router
 from app.routers.dossier import router as dossier_router
 from app.routers.general_news import router as general_news_router
+from app.routers.lead_lag import router as lead_lag_router
 from app.routers.portfolio import router as portfolio_router
 from app.routers.screening_filters import router as screening_filters_router
 from app.routers.signals import router as signals_router
@@ -120,6 +121,8 @@ app.include_router(watchlist_router)
 app.include_router(dossier_router)
 # 一般ニュース（ADR-034）。GET /general-news（routers/general_news.py）。
 app.include_router(general_news_router)
+# 日米業種リードラグ（Phase 7／SIG-FIN-036-13）。GET /lead-lag（routers/lead_lag.py）。
+app.include_router(lead_lag_router)
 
 # codex 接続用 MCP（plans / ADR-012）。FastAPI 内に streamable HTTP の自前 Tool を立てる。
 # DB に触れるのは FastAPI だけ（ADR-005）を保ちつつ codex に Tool を渡す。

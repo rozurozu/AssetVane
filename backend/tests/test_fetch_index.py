@@ -22,10 +22,20 @@ _SAMPLE_ROWS = [
 ]
 
 
+def _pin_symbols(monkeypatch, symbols: str) -> None:
+    """取得対象を指定シンボルだけに固定する（米国業種 ETF の自動追加を無効化）。
+
+    fetch_index._target_symbols は config の指数に US_SECTOR_ETFS を足すため、
+    シンボル数を固定したいテストでは ETF タプルを空に差し替える（Phase 7 追加の副作用を遮断）。
+    """
+    monkeypatch.setattr(settings, "index_symbols", symbols)
+    monkeypatch.setattr(fetch_index, "US_SECTOR_ETFS", ())
+
+
 def test_fetch_index_run_upserts_rows_and_advances_meta(temp_db, monkeypatch) -> None:
     """fetch_index.run が index_quotes を UPSERT し、fetch_meta を最新日に前進させる。"""
-    # index_symbols を テスト用の 1 シンボルに絞る
-    monkeypatch.setattr(settings, "index_symbols", _TEST_SYMBOL)
+    # index_symbols を テスト用の 1 シンボルに絞る（ETF 自動追加は無効化）
+    _pin_symbols(monkeypatch, _TEST_SYMBOL)
 
     # IndexAdapter.fetch_index_quotes をスタブ化する
     with patch("app.batch.jobs.fetch_index.IndexAdapter") as MockAdapter:
@@ -53,7 +63,7 @@ def test_fetch_index_run_upserts_rows_and_advances_meta(temp_db, monkeypatch) ->
 
 def test_fetch_index_run_empty_rows_advances_meta(temp_db, monkeypatch) -> None:
     """fetch_index.run が空配列を返した場合も fetch_meta を today まで前進させる。"""
-    monkeypatch.setattr(settings, "index_symbols", _TEST_SYMBOL)
+    _pin_symbols(monkeypatch, _TEST_SYMBOL)
 
     with patch("app.batch.jobs.fetch_index.IndexAdapter") as MockAdapter:
         instance = MockAdapter.return_value
@@ -76,7 +86,7 @@ def test_fetch_index_run_empty_rows_advances_meta(temp_db, monkeypatch) -> None:
 
 def test_fetch_index_run_idempotent(temp_db, monkeypatch) -> None:
     """fetch_index.run を 2 回実行しても行数が増えない（UPSERT 冪等）。"""
-    monkeypatch.setattr(settings, "index_symbols", _TEST_SYMBOL)
+    _pin_symbols(monkeypatch, _TEST_SYMBOL)
 
     with patch("app.batch.jobs.fetch_index.IndexAdapter") as MockAdapter:
         instance = MockAdapter.return_value
@@ -100,7 +110,7 @@ def test_fetch_index_run_idempotent(temp_db, monkeypatch) -> None:
 
 def test_fetch_index_run_adapter_error_returns_failure(temp_db, monkeypatch) -> None:
     """IndexAdapter がエラーを投げた場合、ok=False の JobResult を返す。"""
-    monkeypatch.setattr(settings, "index_symbols", _TEST_SYMBOL)
+    _pin_symbols(monkeypatch, _TEST_SYMBOL)
 
     from app.adapters.index import IndexAdapterError
 
@@ -116,7 +126,7 @@ def test_fetch_index_run_adapter_error_returns_failure(temp_db, monkeypatch) -> 
 
 def test_fetch_index_run_multiple_symbols(temp_db, monkeypatch) -> None:
     """複数シンボルを処理し、それぞれ UPSERT と fetch_meta が行われる。"""
-    monkeypatch.setattr(settings, "index_symbols", "^SPX,^NKX")
+    _pin_symbols(monkeypatch, "^SPX,^NKX")
 
     spx_rows = [{"symbol": "^SPX", "date": "2026-05-28", "close": 5250.36}]
     nkx_rows = [{"symbol": "^NKX", "date": "2026-05-28", "close": 38000.0}]
@@ -142,3 +152,28 @@ def test_fetch_index_run_multiple_symbols(temp_db, monkeypatch) -> None:
         nkx = repo.get_index_quotes(conn, "^NKX")
     assert len(spx) == 1
     assert len(nkx) == 1
+
+
+def test_target_symbols_includes_us_sector_etfs(monkeypatch) -> None:
+    """_target_symbols が config 指数＋米国業種 ETF 11 本を重複なく返す（Phase 7・ADR-010）。"""
+    from app.adapters.index import US_SECTOR_ETFS
+
+    monkeypatch.setattr(settings, "index_symbols", "^SPX,^NKX,^TPX")
+
+    symbols = fetch_index._target_symbols()
+
+    # 指数 3 本 ＋ ETF 11 本＝14 本（重複なし）
+    assert symbols[:3] == ["^SPX", "^NKX", "^TPX"]
+    assert set(US_SECTOR_ETFS).issubset(set(symbols))
+    assert len(symbols) == 3 + len(US_SECTOR_ETFS)
+    assert len(symbols) == len(set(symbols))  # 重複なし
+
+
+def test_target_symbols_dedupes_when_etf_in_config(monkeypatch) -> None:
+    """config に ETF を二重指定しても _target_symbols は重複排除する。"""
+    monkeypatch.setattr(settings, "index_symbols", "^SPX,XLK")
+
+    symbols = fetch_index._target_symbols()
+
+    assert symbols.count("XLK") == 1
+    assert len(symbols) == len(set(symbols))

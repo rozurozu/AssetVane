@@ -125,17 +125,30 @@
 
 **目的**: 米国データを「マクロ文脈」から「定量シグナル」へ昇格させ、研究ベース戦略を追加する。
 
-**背景**: 「部分空間正則化付き主成分分析を用いた日米業種リードラグ投資戦略」（中川慧ほか, 人工知能学会 SIG-FIN-036, 2026）。米国業種ショックが翌営業日の日本市場に波及する効果を、事前部分空間へ正則化した PCA で低ランク予測器として捉える。日足のみ・軽量計算でラズパイ夜間バッチに適合。
+**分割（[ADR-039](decisions.md)）**: Phase 7 は性質の違う 2 成果物（軽い提示シグナルと重い米株基盤拡張）を束ねていたため、**(A) Sector Lead-Lag を先行**・**(B) 米国株拡張（米株スクリーナー＋通貨/FX＋個別株 OHLCV）を別サブフェーズに分離**した。
 
-- `UsEquityAdapter` で米国 SPDR 業種 ETF・米国株の日足を取得（[architecture.md 4](architecture.md)）。
-- 日本側は TOPIX-17 業種別 ETF（J-Quants）。
-- 日米結合相関行列を事前部分空間へ正則化 → 固有分解 → 翌日の日本業種スコアを `signals`（`signal_type=lead_lag`）に保存し提示。
-- ここで米国個別株の追跡・分析も本格化（Tier1 相当へ拡張）。
-- **米株スクリーナー `/us-stocks`（[ADR-031](decisions.md)）**: 日本株スクリーナー（`/stocks`・PER/PBR/時価総額/配当利回り）と同型を米株でも作る。ただし**別ルート・別 `valuation_snapshots` 相当**にする（通貨が ¥↔$、業種分類が 33業種↔GICS、財務ソースが J-Quants↔別ソースで市場を跨げないため）。通貨列・FX 換算の導入タイミングと揃える。
+### Phase 7(A): Sector Lead-Lag（日米業種リードラグ）— 着工
 
-**完了条件**: 「翌日強含む日本業種ランキング」が夜間バッチで算出・提示され、AI Advisor が材料に使う。米国株データも扱え、米株スクリーナー `/us-stocks` が日本株版と同等に動く。
+**背景**: 「部分空間正則化付き主成分分析を用いた日米業種リードラグ投資戦略」（中川慧ほか, 人工知能学会 SIG-FIN-036, 2026）。米国業種ショックが翌営業日の日本市場に波及する効果を、事前部分空間へ正則化した PCA で低ランク予測器として捉える。日足のみ・軽量計算でラズパイ夜間バッチに適合。論文要約は [docs/methods/lead-lag.md](methods/lead-lag.md)。
 
-**留意点**: 論文は取引コスト控除後の超過収益の有無を明示していない。提示用途では軽視できるが、将来の実弾運用では検証必須。
+- **取得アーキの逸脱（[ADR-039](decisions.md)）**: 当初想定の `UsEquityAdapter` ではなく、**既存 `IndexAdapter`（フォールバック連鎖）に `YahooIndexSource`（yfinance・配当調整後 close）を足して `index_quotes` に流用**する。米国 SPDR 業種 ETF 11 本（XLB/XLE/XLF/XLI/XLK/XLP/XLU/XLV/XLY/XLC/XLRE）はこの経路で取得。理由は「終値のみ・通貨/FX 不要・最小変更」で、`UsEquityAdapter` の OHLCV/通貨という重い関心を持ち込まないため。同時に Stooq の BOT 判定で死んでいた既存指数取得（^SPX 等）も復旧する。
+- 日本側は TOPIX-17 業種別 ETF（1617〜1633・J-Quants の `daily_quotes`）。
+- 日米結合相関行列を事前部分空間へ正則化 → 固有分解 → 翌日の日本業種スコアを `signals`（`signal_type=lead_lag`）に最新日のみ UPSERT し提示。**提示専用**（[ADR-009](decisions.md)）。手法はテスト済み純関数 `quant/lead_lag.py`（[ADR-014](decisions.md)/[ADR-016](decisions.md)）。
+- 提示/AI: Dashboard ウィジェット（`LeadLagWidget`）＋ AI Tool `get_lead_lag`（`min_phase=7`・軸1/2 共用）＋ `GET /lead-lag`。専用ページなし。
+- **Free プラン時**: ハード無効化せず、計算は出した上で**目立つ低信頼バナー**を出す（Free=株価約 12 週間遅延でシグナル日付が約 3 ヶ月古く実用外と明示。Light なら本来機能＝[ADR-039](decisions.md)）。
+- **検証（軽量）**: 履歴で Spearman IC ＋ 3 分位ロングショート（q=0.3）の R/R・方向的中率を算出し `meta` に同梱。FF/Carhart 回帰・フル backtest 基盤は対象外。
+
+**完了条件（A）**: 「翌日強含む日本業種ランキング」が夜間バッチで算出・提示され（`GET /lead-lag`・`signals?type=lead_lag`）、Dashboard で描画され、AI Advisor が `get_lead_lag` で材料に使う。
+
+**留意点（A）**: 論文は取引コスト控除後の超過収益の有無を明示していない。提示用途では軽視できるが、将来の実弾運用では検証必須。
+
+### Phase 7(B): 米国株拡張 — 未着手（繰り延べ・[ADR-039](decisions.md)）
+
+- `UsEquityAdapter` を新設し米国個別株（数千・OHLCV）・米国ファンダ源を取得（[architecture.md 4](architecture.md)）。
+- **米株スクリーナー `/us-stocks`（[ADR-031](decisions.md)）**: 日本株スクリーナー（`/stocks`・PER/PBR/時価総額/配当利回り）と同型を米株でも作る。ただし**別ルート・別 `valuation_snapshots` 相当**にする（通貨が ¥↔$、業種分類が 33業種↔GICS、財務ソースが J-Quants↔別ソースで市場を跨げないため）。
+- 通貨列・`FxAdapter`・FX 換算と holdings/cash/asset_snapshots への波及・GICS 分類はここで導入する。
+
+**完了条件（B）**: 米国株データを扱え、米株スクリーナー `/us-stocks` が日本株版と同等に動く。通貨/FX 換算が資産評価に反映される。
 
 ---
 

@@ -30,6 +30,7 @@ from app.advisor.tools.schemas import (
     GetFinancialsArgs,
     GetGeneralNewsArgs,
     GetIndicatorsArgs,
+    GetLeadLagArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     InvestigateStockArgs,
@@ -540,4 +541,55 @@ async def handle_get_general_news(args: dict[str, object]) -> dict[str, Any]:
         }
     except Exception as exc:
         logger.exception("handle_get_general_news 失敗")
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 Tool（日米業種リードラグ）
+# ---------------------------------------------------------------------------
+
+
+async def handle_get_lead_lag(args: dict[str, object]) -> dict[str, Any]:
+    """get_lead_lag（Phase 7・SIG-FIN-036-13）。日米業種リードラグの最新ランキング＋検証指標。
+
+    GET /lead-lag と同じ事実（同じ signals を読む）を返す（計算経路を一致させる＝ADR-014）。
+    夜間バッチ calc_lead_lag が焼いた signals（signal_type='lead_lag'）の最新算出日分を score
+    降順で読み、ranking（JP 業種・5桁 code・和名・0..1 score・生 signal）＋meta を組む。
+    台帳が空でも error にせず as_of=None / ranking=[] を返す（ループを落とさない）。
+    """
+    try:
+        GetLeadLagArgs.model_validate(args)
+        with get_engine().connect() as conn:
+            resolved = repo.get_latest_signal_date(conn, "lead_lag")
+            rows = repo.get_signals(conn, resolved, "lead_lag", limit=100) if resolved else []
+
+        ranking: list[dict[str, Any]] = []
+        head_payload: dict[str, Any] = {}
+        for row in rows:
+            payload = _parse_payload(row.get("payload"))
+            if not head_payload:
+                head_payload = payload
+            ranking.append(
+                {
+                    "code": row["code"],
+                    "label": payload.get("label") or row["code"],
+                    "score": row["score"],
+                    "signal": payload.get("signal"),
+                }
+            )
+        return {
+            "as_of": resolved,
+            "ranking": ranking,
+            "meta": {
+                "is_delayed": _signals_is_delayed(resolved),
+                "model_as_of": resolved,
+                "ic": head_payload.get("ic"),
+                "hit_rate": head_payload.get("hit_rate"),
+                "window": head_payload.get("window"),
+                "k": head_payload.get("k"),
+                "lambda": head_payload.get("lambda"),
+            },
+        }
+    except Exception as exc:
+        logger.exception("handle_get_lead_lag 失敗")
         return {"error": str(exc)}

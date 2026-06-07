@@ -22,6 +22,7 @@ from app.advisor.tools.schemas import (
     GetFinancialsArgs,
     GetGeneralNewsArgs,
     GetIndicatorsArgs,
+    GetLeadLagArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     InvestigateStockArgs,
@@ -31,10 +32,11 @@ from app.advisor.tools.schemas import (
 )
 
 # 現在の投入フェーズ（段2 の dispatch が openai_tools(phase) に渡す）。
-# Phase 4（Stock Dossier）＋ADR-034（一般ニュース）まで実装済み。これを 4 にすることで
-# min_phase=4 の Tool（get_dossier / investigate_stock / fetch_news / get_general_news）が
-# チャット・夜の分析AI に露出する（Phase 4 完了時の上げ忘れ修正＝ADR-034 確定事項）。
-CURRENT_PHASE: int = 4
+# Phase 4（Stock Dossier）＋ADR-034（一般ニュース）に加え、Phase 7（日米業種リードラグ・
+# SIG-FIN-036-13）まで実装済み。これを 7 にすることで min_phase=4 の Tool（get_dossier /
+# investigate_stock / fetch_news / get_general_news）と min_phase=7 の get_lead_lag が
+# チャット・夜の分析AI に露出する。
+CURRENT_PHASE: int = 7
 
 
 @dataclass(frozen=True)
@@ -192,6 +194,19 @@ REGISTRY: dict[str, ToolDef] = {
         parameters=_schema(GetGeneralNewsArgs),
         handler=handlers.handle_get_general_news,
         min_phase=4,
+    ),
+    # --- Phase 7（日米業種リードラグ・SIG-FIN-036-13）---
+    "get_lead_lag": ToolDef(
+        name="get_lead_lag",
+        description=(
+            "日米業種リードラグ・モデル（米国当日の業種ショックから日本業種の翌営業日の"
+            "相対的な強弱を予測）の最新ランキング（17 業種・0..1 スコア）と検証指標"
+            "（IC・ヒット率）を取得する。明日どの日本業種が相対的に強い/弱いか、"
+            "業種ローテーションを語るときに呼ぶ。"
+        ),
+        parameters=_schema(GetLeadLagArgs),
+        handler=handlers.handle_get_lead_lag,
+        min_phase=7,
     ),
 }
 

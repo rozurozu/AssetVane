@@ -29,6 +29,7 @@
 | メソッド | パス | 用途 |
 |---|---|---|
 | GET | `/signals?date=&type=` | その日の signals（momentum / volume_spike / ai_alpha / lead_lag）|
+| GET | `/lead-lag` | 日米業種リードラグ（米国業種ショック → 翌営業日の日本業種スコア）の業種ランキング＋検証メタ。提示専用（[ADR-009](decisions.md)/[ADR-039](decisions.md)）。下記スキーマ |
 
 ## 3. ポートフォリオ・資産（Phase 2〜）
 
@@ -105,6 +106,37 @@ GET /policy ->
 ```
 
 `PUT /policy` も `core` と `rationale` を分けて受ける（構造化コアの更新は承認制、`rationale` は即時＝[ADR-013](decisions.md)・`_arbitration.md` U-7）。
+
+### `GET /lead-lag` のレスポンス（業種リードラグ・確定）
+
+`signals`（`signal_type='lead_lag'`）の最新日を読み、業種ランキング＋検証メタを返す（[ADR-039](decisions.md)・[methods/lead-lag.md](methods/lead-lag.md)）。数値はすべて夜間バッチが算出済みの事実で、API は読むだけ（[ADR-014](decisions.md)）。
+
+```jsonc
+GET /lead-lag ->
+  {
+    as_of,                 // この応答の生成基準日（最新の共通営業日）
+    ranking: [             // score 降順の日本業種ランキング
+      {
+        code,              // JP 業種 ETF コード（例 "16170"）
+        label,             // 業種和名
+        score,             // 横断 0..1 正規化スコア（提示用）
+        signal             // 正規化前の raw シグナル値
+      }
+    ],
+    meta: {
+      plan,                // J-Quants プラン（"free" | "light" | ...）
+      is_delayed,          // 株価が遅延しているか（Free=true → frontend で低信頼バナー）
+      model_as_of,         // シグナル算出に使ったモデル基準日（Free だと約3ヶ月前）
+      ic,                  // Spearman IC（検証・履歴で算出）
+      hit_rate,            // 方向的中率（3分位ロングショート q=0.3）
+      window,              // 推定窓 L（=60）
+      k,                   // 採用主成分数 K（=3）
+      lambda               // 正則化強度 λ（=0.9）
+    }
+  }
+```
+
+Free プラン時も `ranking` は返す（ハード無効化しない）。`meta.is_delayed=true` / `meta.model_as_of` を見て frontend が「シグナル日付が約3ヶ月古く実用外」の低信頼バナーを出す（[ADR-039](decisions.md)）。
 
 ### ページネーション
 
