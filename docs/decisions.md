@@ -238,7 +238,7 @@
   - フローティングボタンから開閉し、**ドラッグ移動・リサイズ・最小化**できる（実装は `react-rnd` 等の標準手段で足りる）。
   - 会話状態と窓の位置/サイズはクライアントで保持（`localStorage` 等）。**会話履歴の永続実体（保存先）は実装時に決める**。
   - Tool の実行を UI に明示する（「AI は計算せず Tool の事実で答える」＝[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) を可視化）。
-- **理由**: 「状態の連続性」（[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットai-で実装する製品の核心)）を画面体験として実現する。root layout 配置はフレームワーク標準の素直な方法で、特別な仕掛けが要らない。
+- **理由**: 「状態の連続性」（[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心)）を画面体験として実現する。root layout 配置はフレームワーク標準の素直な方法で、特別な仕掛けが要らない。
 - **代替案**: ページごとに別チャット／専用チャットページのみ → 「見ながら」と連続性が損なわれるため不採用。
 - **詳細**: 画面構成・常駐チャットの挙動は [screens.md](screens.md) を参照。
 
@@ -256,7 +256,7 @@
 
 ## ADR-026: signals は連続スコアの「材料」。AI が主消費者で、閾値は破壊的ゲートにしない
 
-- **状況**: 当初の Phase 1 設計は「検知条件（ゴールデンクロス成立・出来高 3 倍超）を満たした行だけ `signals` に保存し、一覧にスコア順で出す」だった。だが利用者の本来の使い方は「**シグナル一覧を人が見て判断する**」のではなく「**AI Advisor が複数の手法で銘柄を確認し、根拠つきで提案する**」（[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットai-で実装する製品の核心)・[advisor.md](advisor.md)）。この前提だと、閾値で「クロス目前(near-miss)だが他のシグナルは強い」銘柄を**保存時にバッサリ捨てる**と、AI の判断材料が消える。
+- **状況**: 当初の Phase 1 設計は「検知条件（ゴールデンクロス成立・出来高 3 倍超）を満たした行だけ `signals` に保存し、一覧にスコア順で出す」だった。だが利用者の本来の使い方は「**シグナル一覧を人が見て判断する**」のではなく「**AI Advisor が複数の手法で銘柄を確認し、根拠つきで提案する**」（[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心)・[advisor.md](advisor.md)）。この前提だと、閾値で「クロス目前(near-miss)だが他のシグナルは強い」銘柄を**保存時にバッサリ捨てる**と、AI の判断材料が消える。
 - **決定**:
   - `signals` は **AI に渡す「材料」**であり、`signal_type` ごとの `score` は **0..1 の連続値**にする（イベントの 0/1 ではない）。momentum も「今日クロスしたか」ではなく**連続の上昇トレンド強度**として算出し、クロス・反転は加点ブースターにする。
   - **閾値（例 volume_spike の 3.0 倍・momentum のクロス）は「保存時の破壊的ゲート」にしない**。`notable` フラグ＋既定の表示カットオフに格下げし、**夜間バッチは低フロア以上の行を広めに保存**して near-miss を残す。絞り込みは**読み取り時**に行う —— AI は `screen_stocks(min_score=…)` で自分でカットオフを動かし、個別銘柄は `get_indicators(code)`（都度計算・[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない) の手法コード）で**フィルタ無しの全数値**を見られる。
@@ -364,7 +364,7 @@
   - **別テーブル `general_news`**（`0011_general_news`）に持つ。`dossier_sources`（code FK 必須）は個別銘柄ドシエ専用のまま据え置き、`general_news` は **`code` FK を持たず `category` 列を持つ**。`url` UNIQUE ＋ `on_conflict_do_nothing` で再取得の二重取り込みを防ぐ（本文は保存せず summary と url のみ＝ADR-020 の流儀）。
   - **取得**: `NewsAdapter` に新メソッド `fetch_general_news()` を追加し、既存の内部パイプライン（`_fetch_rss_items` / `_process_item` の 3 段フォールバック要約）を再利用する（`fetch_news`〔銘柄専用〕は不変更）。Google News キーワード検索 RSS。**カテゴリ定義（ラベル＋検索クエリ）・件数上限・lookback は定数モジュール `app/adapters/general_news_config.py` に置く**（env / config.py には足さない＝構造データは安定資産でありコードと共に育てる。ADR-010 が禁じるのは接続情報のハードコードであって検索キーワードは別物）。
   - **タイミング**: 夜間バッチに新ジョブ `fetch_general_news.run` を追加し、`NIGHTLY_JOBS` の `run_advisor.run` の**直前**に置く（軸1 が当日の市況文脈を briefing 材料にできるよう先に台帳へ入れる）。冪等・無人 cron 前提（httpx 一本＝ADR-020 改訂）。
-  - **消費先（両方）**: ① **Dashboard ウィジェット**（`GET /general-news` → `GeneralNewsWidget` がカテゴリ別に表示）。② **軸1（夜の分析 AI・[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットai-で実装する製品の核心)）の briefing**＝新 Tool `get_general_news`（`min_phase=4`）を足し、`_NIGHTLY_INSTRUCTION` で取得を促す。Tool なので**軸2 チャットでも再利用**できる。Discord 通知には含めない（Phase 6 の領域）。
+  - **消費先（両方）**: ① **Dashboard ウィジェット**（`GET /general-news` → `GeneralNewsWidget` がカテゴリ別に表示）。② **軸1（夜の分析 AI・[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心)）の briefing**＝新 Tool `get_general_news`（`min_phase=4`）を足し、`_NIGHTLY_INSTRUCTION` で取得を促す。Tool なので**軸2 チャットでも再利用**できる。Discord 通知には含めない（Phase 6 の領域）。
   - **副件（上げ忘れ修正）**: 本実装で `CURRENT_PHASE` を 3→4 に上げた。Phase 4 完了時に上げ忘れており、`min_phase=4` の既存 Tool（`get_dossier` / `investigate_stock` / `fetch_news`）がチャット・夜AI に露出していなかった（夜間 `investigate_dossier` ジョブは handler 直呼びで動いていたため気づきにくかった）。これにより Phase 4 Tool 群と新 `get_general_news` が両軸に露出する。
 - **理由**: 個別銘柄ドシエ（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）と一般ニュースは**住所（紐づく対象）が根本的に違う**ため、同じ台帳に混ぜず別系統で持つのが正しい。
 - **代替案**: `dossier_sources` を code FK 任意に緩めて一般ニュースも載せる → 台帳の住所が崩れるため不採用。`fetch_news` を汎用化して共用 → 銘柄専用シグネチャがぶれるため不採用（新メソッド追加に留めた）。日次総括 markdown を別テーブルに焼く 2 テーブル構成 → 消費先が「眺める＋文脈材料」だけなので YAGNI（必要になれば後付け）。カテゴリ定義を env 化 → 構造データの JSON 文字列化・`.env.example` 同期が煩雑なだけで益が無いため定数モジュールに。
@@ -483,3 +483,60 @@
   - **Free でハード無効化しない**: 計算/取得経路は本番（Light）と同じに保ち、Free では 403 が log/Discord に出ることでアップグレードを促す。無効化して経路ごと隠すより、開発・運用の見通しが良い（[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する) の Free 非無効化方針と同じ姿勢）。
 - **段階**: docs 確定（2026-06-07・実 API プローブ＋公式 spec で検証）。コード実装は別タスク（backend 担当）で `adapters/index.py` に `JQuantsIndexSource` を追加・連鎖末尾に組み込む。詳細は [jquants.md §6 項目7](jquants.md) を参照。
 - **関連**: [ADR-008](#adr-008-j-quants-は-v2-を使う)（J-Quants V2 認証・Free/Light）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し）・[ADR-038](#adr-038-ログ規約テキスト形式stdout-集約docker-json-file-ローテーション握り潰し禁止)（握り潰し禁止）・[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（IndexAdapter フォールバック連鎖）・[jquants.md](jquants.md)。
+
+---
+
+> ADR-041〜043 は、`~/Develop/dexter`（金融リサーチ自律エージェント）の調査（[dexter-research.md](dexter-research.md)・[dexter-harness.md](dexter-harness.md)）から AI Advisor に活きる設計を取り込む 3 件。スコープは設計判断（本 ADR）まで。実装は別タスク。
+
+## ADR-041: AI Advisor の CORE に反追従規律とペルソナ層を明示する（リスク選好は POLICY のまま・職業アイデンティティのみ固定）
+
+- **状況**: CORE プロンプト（`backend/app/advisor/core_prompt.md`）は CORE 5 要素（役割・方法論・規律・Tool の使い方・出力の型＝[advisor.md §2](advisor.md)）を持つが、**(1) 反追従（sycophancy 回避＝ユーザーの誤った思い込みに同調しない）の規律が無く**、**(2) ペルソナが箇条書きで、一貫した人格として embody されにくい**。投資アドバイザーにとって追従は致命的で、ユーザーの誤前提・隠れたリスクに同意すると損失へ直結する。dexter の `SOUL.md` が手本になる——一人称の価値観宣言・名前付きメンタルモデル（margin of safety / invert / circle of competence）・"accuracy over comfort"・"protecting your interests" を、システムプロンプト組み立て時に `## Identity` として注入し "embody this" で締める（[dexter-harness.md §2](dexter-harness.md)）。
+- **決定**:
+  - **ペルソナ層を `core_prompt.md` 内に新設する**（別ファイル化しない）。[ADR-015](#adr-015-システムプロンプトを不変-core--可変-policyに分離する専門性は-coretool手法カードに宿す) が「CORE ＝ `core_prompt.md` 単一」と規定しているため、過剰なファイル分割をせず同ファイル内の一人称「ペルソナ／職業哲学」セクションとして書く。チャットで書き換えない不変層（jj 版管理・意図的コミットのみ）であることは [ADR-015](#adr-015-システムプロンプトを不変-core--可変-policyに分離する専門性は-coretool手法カードに宿す) のまま。
+  - **ペルソナに固定するのは「職業アイデンティティ」のみ**: 規律あるクオンツアナリストの姿勢／反追従／知的誠実（"分からない" と言える・circle of competence）／**ユーザーの利益を守る**／事実を集めてから見解を作る（合理化しない）・margin of safety・PER 単体で割安判断しない等の**方法論の哲学**／**提示専用＝決めるのはユーザー・売買は実行しない**（[ADR-001](#adr-001-単一ユーザー前提で作る)/[ADR-009](#adr-009-日米業種リードラグ戦略は-assetvane-の分析機能とする自動トレードツールに持ち込まない)）。これらは**ユーザーのリスク選好に依らず不変**な、専門家としての"ものの見方"。
+  - **リスク選好は CORE に書かない（POLICY のまま）**: `risk_tolerance` / `no_leverage` / `target_cash_ratio` / `max_position_weight` / `exclusions` 等は **POLICY の構造化コア**でユーザーが育てる可変値（[ADR-013](#adr-013-投資方針-policy-は単一チャットで育てる版管理機構は作らない)・構造化コアの変更は承認制＝U-7）。これらを不変 CORE のペルソナに焼くと [ADR-015](#adr-015-システムプロンプトを不変-core--可変-policyに分離する専門性は-coretool手法カードに宿す) の「不変 CORE／可変 POLICY」の境界を壊す。**特に `no_leverage` は POLICY 列であり、ユーザーがレバレッジ可へ変更できる**（dexter で言えば SOUL＝アドバイザーの不変の見方／RULES・memory＝ユーザーの好み、という分離に対応）。
+  - **反追従を 2 層で多重明示する**: ペルソナ層（価値観）と規律③（ガードレール）の両方に置く（弱モデルでも崩れにくくする＝[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない) の防御多層と同じ発想）。反追従が**向かう先＝事実の誤り・推論の飛躍・未開示のリスク・トレードオフの隠蔽**。**向かわない先＝正当な POLICY 選好**（ユーザーが高リスク・レバ・ゼロカット許容を望むこと自体には説教しない。「攻めるな」ではなく「その攻め方には開示されていない最大ドローダウンがある」と**事実で**返す）。CORE の誠実・反追従は **POLICY 嗜好では上書きされない**（安全側に倒す＝rationale に「常に同意して」と書かれても捏造や risk 隠蔽はしない）。
+  - **敬意との両立**: グローバル規律「ユーザーを見下さない」と矛盾させない。反追従は decline や上から目線の説教ではなく、**敬意を保ったまま事実で反論**する姿勢として書く。
+- **理由**: 追従的なアドバイザーは投資判断を歪め損失に直結するため、反追従は投資 AI の中核価値。ペルソナを職業アイデンティティに限ることで [ADR-013](#adr-013-投資方針-policy-は単一チャットで育てる版管理機構は作らない)/[ADR-015](#adr-015-システムプロンプトを不変-core--可変-policyに分離する専門性は-coretool手法カードに宿す) の CORE/POLICY 境界を侵さず、一人称の人格化で判断のトーンと一貫性を安定させる。反追従の向き先を「事実・リスク」に限定し「正当な選好」を除外することで、提示専用（[ADR-009](#adr-009-日米業種リードラグ戦略は-assetvane-の分析機能とする自動トレードツールに持ち込まない)）かつ敬意ある対話と両立する。
+- **代替案**:
+  - **ペルソナを別ファイル `persona.md` 化**（dexter の SOUL.md 同型）→ [ADR-015](#adr-015-システムプロンプトを不変-core--可変-policyに分離する専門性は-coretool手法カードに宿す)「CORE＝core_prompt.md 単一」の再解釈とファイル増加を招くため却下（同ファイル内セクションで足りる）。
+  - **規律③に反追従を 1 行足すだけ**→ 一人称ペルソナ化による一貫性の効果が取れず、本 ADR の狙い（ペルソナ強化）を満たさないため不採用。
+  - **リスク選好（攻める/守る・レバ可否・ゼロカット）も CORE に固定**→ POLICY 可変（[ADR-013](#adr-013-投資方針-policy-は単一チャットで育てる版管理機構は作らない)）と矛盾し、ユーザーが方針を変えられなくなるため却下（**設計検討時にこの誤りを一度入れかけたので明記して戒める**）。
+- **詳細**: 実装は別タスク。本 ADR は `core_prompt.md` の改稿方針（ペルソナ層の新設・反追従の 2 層化）と CORE/POLICY 境界の確認のみを宣言する。[advisor.md §2](advisor.md)・[dexter-harness.md §2/§4](dexter-harness.md)。
+- **関連**: [ADR-013](#adr-013-投資方針-policy-は単一チャットで育てる版管理機構は作らない)（POLICY を育てる・構造化コアは承認制）・[ADR-015](#adr-015-システムプロンプトを不変-core--可変-policyに分離する専門性は-coretool手法カードに宿す)（CORE/POLICY 2 層）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（数値は Tool の事実のみ）・[ADR-001](#adr-001-単一ユーザー前提で作る)/[ADR-009](#adr-009-日米業種リードラグ戦略は-assetvane-の分析機能とする自動トレードツールに持ち込まない)（提示専用）・[ADR-042](#adr-042-出力面ごとの-channelprofile-で-nightlychat-等の差分を一元化するcore-は横断不変)（ペルソナは全プロファイル横断で不変）・[ADR-043](#adr-043-ai-advisor-の品質回帰を-eval-スイートで検証するpytest自前-llm-as-judge別レーン)（反追従が効くかを eval で検証）。
+
+## ADR-042: 出力面ごとの ChannelProfile で nightly/chat 等の差分を一元化する（CORE は横断不変）
+
+- **状況**: AI Advisor は同じ「脳」（CORE＋POLICY＋Tool）を複数の出力面で使う（[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心) の 2 軸＋将来 Discord 双方向化＝[dexter-research.md §3.5](dexter-research.md)）。だが現状、軸1（夜の分析AI）と軸2（チャット）の差は **`backend/app/advisor/nightly.py` の `_NIGHTLY_INSTRUCTION`（ベタ書き文字列）＋ `build_messages()` に渡す `screen_context=None` 分岐**に**散在**しており、面が増えるたび分岐が増える。dexter は `ChannelProfile` registry（`src/agent/channels.ts`）で「**同じペルソナ・面ごとに振る舞いと出力形式だけ差し替える**」を実現している（[dexter-harness.md §3](dexter-harness.md)）。
+- **決定**:
+  - **`ChannelProfile` を導入する**（**コード定数 registry**・env を挟まない＝[ADR-027](#adr-027-手法パラメータは-phase-1-はコード定数将来-method_settingsai-は助言自動改変しない) 流に「構造データはコードと共に育てる」。dexter `channels.ts` 同型）。1 プロファイルが **behavior（行動規範）・responseFormat（出力形式）・その面固有の instruction（例: nightly の `submit_journal` 強制）・`screen_context` の有無** を保持し、「**出力面ごとの差分の単一の真実**」にする。
+  - **`_NIGHTLY_INSTRUCTION` のベタ書きと `screen_context=None` 分岐を廃し、プロファイルに吸収する**。`build_messages()`（`prompt_builder.py`）はプロファイルを受け取って組み立てる。
+  - **CORE／ペルソナ（[ADR-041](#adr-041-ai-advisor-の-core-に反追従規律とペルソナ層を明示するリスク選好は-policy-のまま職業アイデンティティのみ固定)）は全プロファイル横断で不変**。プロファイルが差し替えるのは振る舞い・出力形式・面固有指示のみ＝[ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心)「1 つの脳・複数の起動口」のプロンプト層版。
+  - **provider 選択はプロファイルに統合しない**。`settings.provider_for(source)`（[ADR-032](#adr-032-codex-接続は-mcpcodex-app-serverapicodex-を面別切替自動フォールバックなし) で集約済み）を参照のまま使い、二重管理を避ける（プロファイル＝プロンプトの面適応／provider_for＝LLM バックエンドの面適応、と関心を分ける）。
+  - **初期は nightly / chat の 2 プロファイルを定義**。将来 **discord（双方向チャット）枠を予約**する。**Phase 6 の Discord digest は advisor の LLM 呼び出しではない別経路（`notify_digest`）なので本プロファイルの対象外**（[phase6-spec](phase-specs/phase6-spec.md)）。
+- **理由**: 散在した面差分を 1 か所（registry）に集め、将来の面追加を 1 エントリで済ませる。CORE 不変・プロファイルは振る舞い/形式のみ、という分離で [ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心) の「1 つの脳」をプロンプト層に素直に落とす。env を挟まないのは [ADR-027](#adr-027-手法パラメータは-phase-1-はコード定数将来-method_settingsai-は助言自動改変しない) の構造データ方針に揃えるため。
+- **代替案**:
+  - **出力形式だけプロファイル化**（instruction/screen は現状の分岐に残す）→ 面差分が 2 か所に分散したままで一元化の目的を果たさないため不採用。
+  - **provider 選択もプロファイルに統合**→ [ADR-032](#adr-032-codex-接続は-mcpcodex-app-serverapicodex-を面別切替自動フォールバックなし) の `provider_for` 集約と重複し、設定の真実が二重化するため却下。
+  - **プロファイルを md ファイル/DB 化**→ 構造データはコードで持つ（[ADR-027](#adr-027-手法パラメータは-phase-1-はコード定数将来-method_settingsai-は助言自動改変しない) 流）方針に反し、env/ファイル同期の手間が増えるだけで益が無いため不採用。
+- **詳細**: 実装は別タスク。本 ADR は `ChannelProfile` の導入方針（registry・保持項目・`_NIGHTLY_INSTRUCTION`/screen 分岐の吸収・provider は非統合）のみ宣言する。`backend/app/advisor/{prompt_builder.py,nightly.py,router.py}`。[dexter-harness.md §3/§4.4](dexter-harness.md)。
+- **関連**: [ADR-011](#adr-011-ai-advisor-を-2-軸夜の分析ai相談チャットaiで実装する製品の核心)（1 つの脳・複数の起動口）・[ADR-041](#adr-041-ai-advisor-の-core-に反追従規律とペルソナ層を明示するリスク選好は-policy-のまま職業アイデンティティのみ固定)（CORE/ペルソナは横断不変）・[ADR-032](#adr-032-codex-接続は-mcpcodex-app-serverapicodex-を面別切替自動フォールバックなし)（provider は provider_for で別管理）・[ADR-025](#adr-025-画面コンテキスト注入は軽量ヒントのみ数値は渡さない)（軸1 は画面コンテキスト無し）・[ADR-027](#adr-027-手法パラメータは-phase-1-はコード定数将来-method_settingsai-は助言自動改変しない)（構造データはコード定数）。
+
+## ADR-043: AI Advisor の品質回帰を eval スイートで検証する（pytest＋自前 LLM-as-judge・別レーン）
+
+- **状況**: 現状の Advisor テスト（`backend/tests/test_advisor_*.py` / `test_nightly.py`）は**決定論的な機構検証のみ**（Phase ゲート・tool_runs の形・policy 更新・縮退/失敗分岐）で、実 LLM は全モック。**「そもそも Advisor が正しい提案・正しい Tool 呼び出しをしているか」を継続検証する手段が無い**。[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)（縮退検知）・[ADR-030](#adr-030-proposed_policy_change-は単一-field-to-に構造強制するfield-は-policy-列の-enum)（構造強制）はランタイムの防御に留まり、「縮退ではないが提案がズレている」「Tool を呼ぶべき場面で生データ解釈に走った（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) 違反）」は拾えない。dexter は eval でフルエージェントを実走させ LLM-as-judge で採点している（[dexter-research.md §3.6](dexter-research.md)）。
+- **決定**:
+  - **pytest＋自前 LLM-as-judge で eval スイートを作る**（LangSmith 等の外部トレース SaaS は使わない＝[ADR-001](#adr-001-単一ユーザー前提で作る) の単一ユーザー・外部非公開に対し過剰）。
+  - **通常テストから分離する**。実 LLM を叩く（ネットに出る）ため、`@pytest.mark.eval`（名称は実装時確定）で**通常の pytest（ネットに出ない＝testing-strategy）から除外**し、**手動／定期で実行**する。**CI の必須 gate にはしない**（実 LLM は非決定的・ネット必要で flaky なため）。結果は人が観測する（ログ／md）。
+  - **採点は 2 層**にする（dexter は最終回答のみ採点だが AssetVane は機構＋質に広げる）:
+    - **(a) 決定論アサーション**: 期待した Tool が呼ばれたか・observations が非空か・`proposed_policy_change` が単一 `{field,to}` か（[ADR-030](#adr-030-proposed_policy_change-は単一-field-to-に構造強制するfield-は-policy-列の-enum)）・`tool_runs` に結果値が載っていないか（[ADR-025](#adr-025-画面コンテキスト注入は軽量ヒントのみ数値は渡さない)）・**Tool の戻り値に無い数字を出していないか（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) の捏造監査）**。
+    - **(b) LLM-as-judge**: 提案の妥当性・**反追従が効いているか（[ADR-041](#adr-041-ai-advisor-の-core-に反追従規律とペルソナ層を明示するリスク選好は-policy-のまま職業アイデンティティのみ固定) 連携）**。judge は本番同等の強モデル（[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)）。
+  - **ゴールデンセット**は**一時 SQLite**（testing-strategy の `temp_db` 流）で市況・ポートフォリオの固定シナリオを**小さく数ケース**組み、`backend/tests/eval/` 配下に置く。**反追従ケース（ユーザーの誤った前提に同意せず事実で返すか）を含める**。
+- **理由**: [ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)/[ADR-030](#adr-030-proposed_policy_change-は単一-field-to-に構造強制するfield-は-policy-列の-enum) が拾えない「質のズレ」「[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) 違反の生データ解釈」を回帰検出できる手段が、現状ゼロという最大の盲点を埋める。機構（決定論で測れる部分）＋質（judge）の 2 層にすることで、原因の切り分け（機構の回帰か・質の劣化か）ができる。外部 SaaS を避け pytest＋一時 SQLite に乗せるのは testing-strategy／[ADR-001](#adr-001-単一ユーザー前提で作る) の規律に揃えるため。
+- **代替案**:
+  - **決定論アサーションのみ**（judge なし）→ 「提案が妥当か・反追従が効くか」を測れず [ADR-041](#adr-041-ai-advisor-の-core-に反追従規律とペルソナ層を明示するリスク選好は-policy-のまま職業アイデンティティのみ固定) の効果検証ができないため不採用。
+  - **LLM-judge 主体**（dexter 流に最終回答を丸ごと採点）→ 非決定的で、機構の回帰（期待 Tool が呼ばれたか等）まで judge のぶれに依存し原因切り分けが難しいため不採用。
+  - **LangSmith 等の外部 eval 基盤**→ 単一ユーザー・外部非公開（[ADR-001](#adr-001-単一ユーザー前提で作る)）には過剰で不採用。
+  - **CI の必須 gate にする**→ 実 LLM は非決定的・ネット必要で flaky になり、testing-strategy の「ネットに出ない CI」と衝突するため不採用（別レーンで手動/定期）。
+- **詳細**: 実装は別タスク。本 ADR は eval の方式（pytest＋自前 judge）・分離（マーカー・非 gate）・採点 2 層・ゴールデンセットの置き場の方針のみ宣言する。testing-strategy スキルへの「eval レーン」追記は実装タスクで `project-skill-authoring` 承認を得て行う。`backend/tests/eval/`・[dexter-research.md §3.6](dexter-research.md)。
+- **関連**: [ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)（縮退検知＝ランタイム防御）・[ADR-030](#adr-030-proposed_policy_change-は単一-field-to-に構造強制するfield-は-policy-列の-enum)（構造強制＝予防）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（数値捏造監査）・[ADR-041](#adr-041-ai-advisor-の-core-に反追従規律とペルソナ層を明示するリスク選好は-policy-のまま職業アイデンティティのみ固定)（反追従の効果検証）・[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)（judge は強モデル）・[ADR-001](#adr-001-単一ユーザー前提で作る)（外部 SaaS 不要）。

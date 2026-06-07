@@ -3,6 +3,8 @@
 > 調査日: 2026-06-07。対象は `~/Develop/dexter`（virattt/dexter・TypeScript/Bun・LangChain/Ink 製の金融リサーチ自律エージェント、CalVer `2026.6.3`）。
 > **本書はスコープを「調査結果の記録」に限定する**（実装はしない）。AssetVane への採否・実装は別タスクで、本書を入力にする。
 > 設計の真実は引き続き AssetVane 側の `docs/`（特に [decisions.md](decisions.md)）。本書の提案はすべて AssetVane の ADR 不変条件に従う前提で書く。
+>
+> **採用状況（2026-06-07）**: 候補のうち 3 つを ADR 化済み —— A（反追従＋ペルソナ）＝[ADR-041](decisions.md)、C（ChannelProfile）＝[ADR-042](decisions.md)、B（Advisor eval）＝[ADR-043](decisions.md)。実装は別タスク。
 
 ---
 
