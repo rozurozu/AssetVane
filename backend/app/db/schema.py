@@ -305,6 +305,14 @@ valuation_snapshots = Table(
     Column("pbr", Float),  # close / bps
     Column("market_cap", Float),  # close * shares_net
     Column("dividend_yield", Float),  # dividend_per_share / close（0..1）
+    # ファンダ指標（ADR-048・0012_valuation_metrics）。当期＝最新FY、YoY は前期FYと突合。
+    Column("roe", Float),  # eps / bps（純利益/自己資本・0..1）
+    Column("operating_margin", Float),  # 営業利益 / 売上高（0..1）
+    Column("net_margin", Float),  # 純利益 / 売上高（0..1）
+    Column("revenue_growth_yoy", Float),  # 売上高 YoY 成長率（0..1 基準の比率）
+    Column("op_growth_yoy", Float),  # 営業利益 YoY 成長率
+    Column("profit_growth_yoy", Float),  # 純利益 YoY 成長率
+    Column("eps_growth_yoy", Float),  # EPS YoY 成長率（FY 基準）
     Column("fin_disclosed_date", String),  # 採用した財務の開示日（監査・どの決算を使ったか）
     Column("updated_at", String),  # ISO8601（この行を焼いた時刻）
 )

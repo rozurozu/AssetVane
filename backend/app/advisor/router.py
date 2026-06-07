@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from app.advisor.codex_engine import CodexEngineError
 from app.advisor.engine import run_turn
 from app.advisor.llm import CostGuardError
+from app.advisor.method_cards import METHOD_CARDS
 from app.advisor.prompt_builder import Message, ScreenContext, build_messages
 from app.advisor.tools.registry import CURRENT_PHASE
 from app.db import repo
@@ -67,6 +68,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         policy=policy,
         conversation=req.messages,
         screen_context=req.context,
+        method_cards=METHOD_CARDS,
         recent_journal=recent,
     )
 

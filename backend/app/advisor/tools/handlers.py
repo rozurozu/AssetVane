@@ -33,9 +33,11 @@ from app.advisor.tools.schemas import (
     GetLeadLagArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
+    GetValuationArgs,
     InvestigateStockArgs,
     OptimizePortfolioArgs,
     ScreenStocksArgs,
+    ScreenValuationArgs,
     SubmitJournalArgs,
     coerce_policy_change,
 )
@@ -305,6 +307,80 @@ async def handle_get_financials(args: dict[str, object]) -> dict[str, Any]:
         return {"code": code, "items": [dict(r) for r in rows]}
     except Exception as exc:
         logger.exception("handle_get_financials 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
+    """get_valuation（ADR-048）。指定銘柄のバリュエーション事実＋業種内ランクを返す。
+
+    数値は夜間 calc_valuation が焼いた事実のみ。verdict（割安/割高の判定）は返さず、解釈は
+    LLM が手法カード（docs/methods/valuation.md）の作法で行う（ADR-014）。市場は契約として
+    明示する（今は JP 固定・米株は Phase 7(B)＝ADR-039）。未焼成/未上場は found=False で返す。
+    """
+    try:
+        code = GetValuationArgs.model_validate(args).code
+        with get_engine().connect() as conn:
+            row = repo.get_valuation_snapshot(conn, code)
+        if row is None:
+            return {
+                "code": code,
+                "market": "JP",
+                "currency": "JPY",
+                "found": False,
+                "is_delayed": _IS_DELAYED,
+            }
+        return {
+            "code": code,
+            "company_name": row.get("company_name"),
+            "sector33_code": row.get("sector33_code"),
+            "market": "JP",
+            "currency": "JPY",
+            "as_of": row.get("as_of_date"),
+            "is_delayed": _IS_DELAYED,
+            "found": True,
+            "per": row.get("per"),
+            "pbr": row.get("pbr"),
+            "roe": row.get("roe"),
+            "operating_margin": row.get("operating_margin"),
+            "net_margin": row.get("net_margin"),
+            "dividend_yield": row.get("dividend_yield"),
+            "market_cap": row.get("market_cap"),
+            "market_cap_rank": row.get("market_cap_rank"),
+            "per_sector_pctile": row.get("per_sector_pctile"),
+            "revenue_growth_yoy": row.get("revenue_growth_yoy"),
+            "op_growth_yoy": row.get("op_growth_yoy"),
+            "profit_growth_yoy": row.get("profit_growth_yoy"),
+            "eps_growth_yoy": row.get("eps_growth_yoy"),
+        }
+    except Exception as exc:
+        logger.exception("handle_get_valuation 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_screen_valuation(args: dict[str, object]) -> dict[str, Any]:
+    """screen_valuation（ADR-048）。バリュエーション/ファンダ条件で割安・優良銘柄を絞り込む。
+
+    しきい値は AI が criteria で渡す（コードは破壊的ゲートを持たない＝ADR-026/031）。
+    repo.screen_stocks を valuation 列で叩き、verdict を付けず事実だけを列挙する（ADR-014）。
+    市場は契約として明示（今は JP 固定・ランクは市場内＝ADR-031/048）。
+    """
+    try:
+        c = ScreenValuationArgs.model_validate(args)
+        criteria = c.model_dump(exclude_none=True)
+        criteria.setdefault("limit", 50)
+        with get_engine().connect() as conn:
+            rows = repo.screen_stocks(conn, criteria)
+        as_of = rows[0].get("as_of_date") if rows else None
+        return {
+            "market": "JP",
+            "currency": "JPY",
+            "as_of": as_of,
+            "is_delayed": _IS_DELAYED,
+            "count": len(rows),
+            "items": rows,
+        }
+    except Exception as exc:
+        logger.exception("handle_screen_valuation 失敗")
         return {"error": str(exc)}
 
 

@@ -158,6 +158,16 @@
 
 ---
 
+## バリュエーション判断基準（ADR-048・横断 TODO）
+
+Phase をまたぐ機能なのでここに TODO を集約する。**日本株のバリュエーション判断基準は実装済み（2026-06-07・[ADR-048](decisions.md)）**＝`valuation_snapshots` に ROE/営業利益率/純利益率/売上・利益・EPS の YoY 成長率を追加し、AI Tool `get_valuation(code)`／`screen_valuation(criteria)`（min_phase=2・market:JP 明示）と参照知識カード（`backend/app/advisor/cards/valuation.md`・`jp-market-context.md`・常時注入）で、AI が PER/PBR/ROE を根拠に割安/割高を解釈・提示できる。残る山:
+
+- **25 指標フル充足（要 J-Quants 実機確認）**: ROA/ROIC/自己資本比率/D-E/流動比率/EBITDA は総資産・負債を要するが、現 `financials`（売上/営業利益/純利益/EPS/BPS/配当/株数）に無い。J-Quants `fins/summary` の総資産系フィールド有無を確認し、財務取得を拡張してから後付けする。
+- **カードローダ機構（近接の planned）**: 今は全カード常時注入。カードが増える前に、メタデータだけ常時露出・本文は選ばれた時にロードする on-demand 機構（progressive disclosure）を用意する（[ADR-048](decisions.md)）。
+- **米株バリュエーション**: 上記 Phase 7(B) の `/us-stocks` 別スナップショットで ROE 等も含めて拡張し、通貨/業種（GICS）を跨がず市場内ランクにする。日米横断の "both" バランスは portfolio/資産概要レイヤ（FX 換算）で見る。
+
+---
+
 ## 米国データの「深掘りの軌跡」
 
 米国の扱いは固定ではなく、ロードマップが進むと深まる。

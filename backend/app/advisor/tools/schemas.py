@@ -98,6 +98,41 @@ class GetFinancialsArgs(_ToolArgs):
     code: str
 
 
+class GetValuationArgs(_ToolArgs):
+    """get_valuation の引数（ADR-048）。指定銘柄のバリュエーション事実を取得する。"""
+
+    code: str
+
+
+class ScreenValuationArgs(_ToolArgs):
+    """screen_valuation の criteria（ADR-048・キーは内部列名）。
+
+    バリュエーション/ファンダ指標で割安・優良銘柄を絞り込む。すべて任意（省略時は無条件）。
+    しきい値は AI が手法カード（docs/methods/valuation.md）の作法を見て explicit に渡す
+    （コードは破壊的ゲートを持たない＝ADR-014/026/031）。比率系は 0..1、PER/PBR は倍率。
+    """
+
+    per_min: float | None = None
+    per_max: float | None = None
+    pbr_min: float | None = None
+    pbr_max: float | None = None
+    roe_min: float | None = None
+    roe_max: float | None = None
+    dividend_yield_min: float | None = None  # 0..1
+    operating_margin_min: float | None = None  # 0..1
+    net_margin_min: float | None = None  # 0..1
+    revenue_growth_yoy_min: float | None = None  # 0..1 基準の比率
+    profit_growth_yoy_min: float | None = None
+    market_cap_min: float | None = None  # 円
+    sector33_code: str | None = None
+    per_sector_pctile_max: float | None = None  # 業種内で安い割合（0..1）
+    market_cap_rank_max: int | None = None  # 時価総額 上位 N
+    exclude_etf: bool | None = None
+    sort_by: str | None = None  # per/pbr/roe/market_cap/dividend_yield/*_growth_yoy 等
+    sort_dir: Literal["asc", "desc"] | None = None
+    limit: int | None = None
+
+
 class GetAssetOverviewArgs(_ToolArgs):
     """get_asset_overview の引数（spec §4.4・引数なし）。"""
 

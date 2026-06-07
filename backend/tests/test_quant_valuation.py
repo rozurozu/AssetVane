@@ -8,9 +8,13 @@ from __future__ import annotations
 from app.quant.valuation import (
     compute_valuation,
     dividend_yield,
+    growth_yoy,
     market_cap,
+    net_margin,
+    operating_margin,
     pbr,
     per,
+    roe,
 )
 
 
@@ -78,3 +82,37 @@ def test_compute_valuation_partial_missing() -> None:
     assert out["pbr"] is None
     assert out["market_cap"] is None
     assert out["dividend_yield"] is None
+
+
+# --- ファンダ指標（ADR-048） ---
+
+
+def test_roe_basic_and_guards() -> None:
+    # ROE = EPS / BPS。赤字（eps<0）は負の ROE として事実なので返す（PER と違う）
+    assert roe(100.0, 1000.0) == 0.1
+    assert roe(-50.0, 1000.0) == -0.05
+    assert roe(100.0, None) is None
+    assert roe(None, 1000.0) is None
+    assert roe(100.0, 0.0) is None
+    assert roe(100.0, -10.0) is None
+
+
+def test_margins_basic_and_guards() -> None:
+    assert operating_margin(20.0, 100.0) == 0.2
+    assert net_margin(8.0, 100.0) == 0.08
+    # 赤字は負の利益率として事実
+    assert operating_margin(-5.0, 100.0) == -0.05
+    # 売上 0 以下・欠損は None（捏造しない）
+    assert operating_margin(20.0, 0.0) is None
+    assert net_margin(8.0, None) is None
+    assert operating_margin(None, 100.0) is None
+
+
+def test_growth_yoy_basic_and_guards() -> None:
+    assert abs(growth_yoy(110.0, 100.0) - 0.1) < 1e-12
+    assert abs(growth_yoy(90.0, 100.0) - (-0.1)) < 1e-12
+    # 前年が 0 以下（赤字→黒字 等）は意味を成さず None
+    assert growth_yoy(50.0, 0.0) is None
+    assert growth_yoy(50.0, -10.0) is None
+    assert growth_yoy(None, 100.0) is None
+    assert growth_yoy(100.0, None) is None

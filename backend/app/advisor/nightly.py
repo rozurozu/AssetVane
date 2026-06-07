@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Connection
 
 from app.advisor.engine import run_turn
+from app.advisor.method_cards import METHOD_CARDS
 from app.advisor.prompt_builder import Message, build_messages
 from app.advisor.router import _CORE
 from app.advisor.tools import handlers
@@ -93,6 +94,7 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
         policy=policy,
         conversation=[Message(role="user", content=_NIGHTLY_INSTRUCTION)],
         screen_context=None,  # 軸1 は画面が無い（ADR-025）
+        method_cards=METHOD_CARDS,
         recent_journal=recent,
     )
 

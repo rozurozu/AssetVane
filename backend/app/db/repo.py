@@ -320,6 +320,9 @@ def _latest_financials_subquery(only_with_bps: bool):
     base = select(
         financials.c.code,
         financials.c.disclosed_date,
+        financials.c.net_sales,
+        financials.c.operating_profit,
+        financials.c.profit,
         financials.c.eps,
         financials.c.bps,
         financials.c.dividend_per_share,
@@ -340,9 +343,23 @@ def get_latest_financials_by_code(conn: Connection) -> dict[str, dict[str, Any]]
 
 
 def get_latest_annual_financials_by_code(conn: Connection) -> dict[str, dict[str, Any]]:
-    """銘柄ごと最新の通期(FY)行（実績 EPS/BPS 用）を {code: {...}} で返す（ADR-031）。"""
+    """銘柄ごと最新の通期(FY)行（実績 EPS/BPS・利益率・成長率の当期）を {code: {...}} で返す。
+
+    ADR-031（PER/PBR の実績 EPS/BPS）＋ ADR-048（営業利益率/純利益率/YoY の当期＝最新FY）。
+    """
     sub = _latest_financials_subquery(only_with_bps=True)
     rows = conn.execute(select(sub).where(sub.c.rn == 1)).mappings().all()
+    return {r["code"]: dict(r) for r in rows}
+
+
+def get_prior_annual_financials_by_code(conn: Connection) -> dict[str, dict[str, Any]]:
+    """銘柄ごと前期の通期(FY)行（YoY 成長率の前年同期）を {code: {...}} で返す（ADR-048）。
+
+    最新FYの 1 つ前（rn==2）。同一 fiscal_period タイプ（FY）の直前行を前年同期として使う。
+    前期 FY が無い銘柄（新規上場等）は dict に現れない（成長率は None になる）。
+    """
+    sub = _latest_financials_subquery(only_with_bps=True)
+    rows = conn.execute(select(sub).where(sub.c.rn == 2)).mappings().all()
     return {r["code"]: dict(r) for r in rows}
 
 
@@ -351,34 +368,49 @@ def upsert_valuation_snapshots(rows: list[dict[str, Any]]) -> int:
     return _upsert(valuation_snapshots, rows, index_elements=["code"])
 
 
-# screen_stocks が受け付ける数値レンジのキー → (列, 比較演算子) の対応
-_SCREEN_RANGE_FIELDS = ("per", "pbr", "market_cap", "dividend_yield")
+# screen_stocks が受け付ける数値レンジのキー（{field}_min / {field}_max で絞る）。
+# ADR-048 で ROE・利益率・YoY 成長率を追加（バリュエーション + ファンダの横断スクリーン）。
+_SCREEN_RANGE_FIELDS = (
+    "per",
+    "pbr",
+    "market_cap",
+    "dividend_yield",
+    "roe",
+    "operating_margin",
+    "net_margin",
+    "revenue_growth_yoy",
+    "op_growth_yoy",
+    "profit_growth_yoy",
+    "eps_growth_yoy",
+)
 # sort_by に許す列名（外側サブクエリの列）。安全な allowlist。
 _SCREEN_SORT_COLS = {
     "per",
     "pbr",
     "market_cap",
     "dividend_yield",
+    "roe",
+    "operating_margin",
+    "net_margin",
+    "revenue_growth_yoy",
+    "op_growth_yoy",
+    "profit_growth_yoy",
+    "eps_growth_yoy",
     "per_sector_pctile",
     "market_cap_rank",
     "code",
 }
 
 
-def screen_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[str, Any]]:
-    """valuation_snapshots × stocks を絞り込み・整列して返す（読み取り時計算・ADR-026/031）。
+def _valuation_inner_subquery():
+    """valuation_snapshots × stocks ＋ window ランク列の内側サブクエリ（ADR-031/048）。
 
-    業種内パーセンタイル（per_sector_pctile）と時価総額順位（market_cap_rank）は ~4000 行への
-    window 関数で都度算出する。criteria は薄い辞書（router が Pydantic から作る）:
-      per_min/per_max・pbr_min/pbr_max・market_cap_min/max・dividend_yield_min/max（絶対レンジ）、
-      sector33_code・market_code（完全一致）、exclude_etf(bool)、
-      per_sector_pctile_max（業種内で安い割合・0..1）、market_cap_rank_max（時価総額 上位 N）、
-      sort_by・sort_dir('asc'|'desc')・limit・offset。
-    戻り値は素 dict（company_name/sector33_code/market_code/is_etf を stocks から JOIN 補完）。
+    業種内パーセンタイル（per_sector_pctile・per 昇順＝安いほど低い）と時価総額順位
+    （market_cap_rank・降順 1 位が最大）を ~4000 行に対して都度算出する。screen_stocks（一覧）
+    と get_valuation_snapshot（単票）が同じランクを共有するための単一の真実。
     """
     v = valuation_snapshots
     s = stocks
-    # 内側: スナップショット × 銘柄属性 ＋ window ランク列
     per_sector_pctile = (
         func.percent_rank()
         .over(partition_by=s.c.sector33_code, order_by=v.c.per)
@@ -387,7 +419,7 @@ def screen_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[str, 
     market_cap_rank = (
         func.row_number().over(order_by=v.c.market_cap.desc()).label("market_cap_rank")
     )
-    inner = (
+    return (
         select(
             v.c.code,
             s.c.company_name,
@@ -403,12 +435,44 @@ def screen_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[str, 
             v.c.pbr,
             v.c.market_cap,
             v.c.dividend_yield,
+            v.c.roe,
+            v.c.operating_margin,
+            v.c.net_margin,
+            v.c.revenue_growth_yoy,
+            v.c.op_growth_yoy,
+            v.c.profit_growth_yoy,
+            v.c.eps_growth_yoy,
             per_sector_pctile,
             market_cap_rank,
         )
         .select_from(v.join(s, v.c.code == s.c.code))
         .subquery()
     )
+
+
+def get_valuation_snapshot(conn: Connection, code: str) -> dict[str, Any] | None:
+    """指定銘柄のバリュエーション事実（PER/PBR/ROE/利益率/成長率＋業種内ランク）を返す（ADR-048）。
+
+    screen_stocks と同じ window ランクを共有し、code で 1 行に絞る。未焼成・未上場なら None。
+    数値は夜間 calc_valuation が焼いた事実で、verdict（割安/割高の判定）は持たない（ADR-014）。
+    """
+    inner = _valuation_inner_subquery()
+    row = conn.execute(select(inner).where(inner.c.code == code)).mappings().first()
+    return dict(row) if row else None
+
+
+def screen_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[str, Any]]:
+    """valuation_snapshots × stocks を絞り込み・整列して返す（読み取り時計算・ADR-026/031/048）。
+
+    業種内パーセンタイル（per_sector_pctile）と時価総額順位（market_cap_rank）は ~4000 行への
+    window 関数で都度算出する。criteria は薄い辞書（router/Tool が Pydantic から作る）:
+      {field}_min/{field}_max（per/pbr/market_cap/dividend_yield/roe/operating_margin/net_margin/
+      *_growth_yoy の絶対レンジ）、sector33_code・market_code（完全一致）、exclude_etf(bool)、
+      per_sector_pctile_max（業種内で安い割合・0..1）、market_cap_rank_max（時価総額 上位 N）、
+      sort_by・sort_dir('asc'|'desc')・limit・offset。
+    戻り値は素 dict（company_name/sector33_code/market_code/is_etf を stocks から JOIN 補完）。
+    """
+    inner = _valuation_inner_subquery()
 
     conds = []
     # 絶対レンジ（min/max）

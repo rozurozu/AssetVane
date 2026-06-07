@@ -65,6 +65,9 @@ def test_registry_handlers_are_registered() -> None:
         "get_portfolio_metrics",
         "optimize_portfolio",
         "get_financials",
+        # ADR-048: バリュエーション判断（min_phase=2）。
+        "get_valuation",
+        "screen_valuation",
         "get_asset_overview",
         "submit_journal",
         # Phase 4（Stock Dossier）。露出は min_phase=4 ゲートで制御（CURRENT_PHASE=4 で露出）。

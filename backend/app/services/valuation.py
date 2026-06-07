@@ -43,7 +43,8 @@ def build_valuation_snapshots(conn: Connection) -> list[dict[str, Any]]:
     if not closes:
         return []
     latest_fin = repo.get_latest_financials_by_code(conn)  # 配当・株数
-    annual_fin = repo.get_latest_annual_financials_by_code(conn)  # 実績 EPS/BPS（FY）
+    annual_fin = repo.get_latest_annual_financials_by_code(conn)  # 実績 EPS/BPS・当期FY
+    prior_fin = repo.get_prior_annual_financials_by_code(conn)  # 前期FY（YoY 前年同期・ADR-048）
     now = datetime.now(UTC).isoformat()
 
     rows: list[dict[str, Any]] = []
@@ -52,6 +53,7 @@ def build_valuation_snapshots(conn: Connection) -> list[dict[str, Any]]:
         as_of = price["date"]
         latest = latest_fin.get(code)
         annual = annual_fin.get(code)
+        prior = prior_fin.get(code)
         eps = annual.get("eps") if annual else None
         bps = annual.get("bps") if annual else None
         dps = latest.get("dividend_per_share") if latest else None
@@ -73,8 +75,31 @@ def build_valuation_snapshots(conn: Connection) -> list[dict[str, Any]]:
                 "pbr": metrics["pbr"],
                 "market_cap": metrics["market_cap"],
                 "dividend_yield": metrics["dividend_yield"],
+                **_fundamentals(annual, prior),
                 "fin_disclosed_date": (annual or latest or {}).get("disclosed_date"),
                 "updated_at": now,
             }
         )
     return rows
+
+
+def _fundamentals(
+    annual: dict[str, Any] | None, prior: dict[str, Any] | None
+) -> dict[str, float | None]:
+    """当期FY＋前期FY から ROE・利益率・YoY 成長率を組む（数値計算は quant.valuation・ADR-048）。
+
+    当期は最新FY行（annual）、YoY は前期FY行（prior）と突合。財務が無い銘柄は全て None。
+    """
+    a = annual or {}
+    p = prior or {}
+    eps, bps = a.get("eps"), a.get("bps")
+    sales, op, profit = a.get("net_sales"), a.get("operating_profit"), a.get("profit")
+    return {
+        "roe": valuation.roe(eps, bps),
+        "operating_margin": valuation.operating_margin(op, sales),
+        "net_margin": valuation.net_margin(profit, sales),
+        "revenue_growth_yoy": valuation.growth_yoy(sales, p.get("net_sales")),
+        "op_growth_yoy": valuation.growth_yoy(op, p.get("operating_profit")),
+        "profit_growth_yoy": valuation.growth_yoy(profit, p.get("profit")),
+        "eps_growth_yoy": valuation.growth_yoy(eps, p.get("eps")),
+    }

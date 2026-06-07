@@ -89,6 +89,76 @@ def test_build_snapshot_uses_fy_eps_bps_and_latest_dividend_shares(temp_db) -> N
     assert abs(r["market_cap"] - 2500.0 * shares_net) < 1.0
 
 
+def test_build_snapshot_computes_roe_margins_and_yoy_growth(temp_db) -> None:
+    # 当期FY＋前期FY を入れ、ROE/利益率/YoY 成長率が当期FY・前期FY から組まれる（ADR-048）
+    repo.upsert_stocks([_stock("90000")])
+    repo.upsert_daily_quotes([_quote("90000", "2026-06-03", 1000.0)])
+    repo.upsert_financials(
+        [
+            _fin(
+                "90000",
+                "2024-05-10",
+                "FY",  # 前期FY（YoY 前年同期）
+                net_sales=1000.0,
+                operating_profit=80.0,
+                profit=50.0,
+                eps=50.0,
+                bps=500.0,
+            ),
+            _fin(
+                "90000",
+                "2025-05-10",
+                "FY",  # 当期FY（採用・利益率/ROE/YoY の当期）
+                net_sales=1200.0,
+                operating_profit=120.0,
+                profit=72.0,
+                eps=60.0,
+                bps=600.0,
+            ),
+        ]
+    )
+    with get_engine().connect() as conn:
+        rows = valsvc.build_valuation_snapshots(conn)
+
+    r = next(x for x in rows if x["code"] == "90000")
+    # ROE = 当期FY eps/bps = 60/600
+    assert abs(r["roe"] - 60.0 / 600.0) < 1e-12
+    # 利益率 = 当期FY op/sales, profit/sales
+    assert abs(r["operating_margin"] - 120.0 / 1200.0) < 1e-12
+    assert abs(r["net_margin"] - 72.0 / 1200.0) < 1e-12
+    # YoY = 当期FY / 前期FY - 1
+    assert abs(r["revenue_growth_yoy"] - (1200.0 / 1000.0 - 1)) < 1e-12
+    assert abs(r["op_growth_yoy"] - (120.0 / 80.0 - 1)) < 1e-12
+    assert abs(r["profit_growth_yoy"] - (72.0 / 50.0 - 1)) < 1e-12
+    assert abs(r["eps_growth_yoy"] - (60.0 / 50.0 - 1)) < 1e-12
+
+
+def test_build_snapshot_yoy_none_without_prior_fy(temp_db) -> None:
+    # 前期FY が無い（新規上場等）→ 成長率は None・ROE/利益率は当期FYから出る（ADR-048）
+    repo.upsert_stocks([_stock("90001")])
+    repo.upsert_daily_quotes([_quote("90001", "2026-06-03", 1000.0)])
+    repo.upsert_financials(
+        [
+            _fin(
+                "90001",
+                "2025-05-10",
+                "FY",
+                net_sales=1200.0,
+                operating_profit=120.0,
+                profit=72.0,
+                eps=60.0,
+                bps=600.0,
+            )
+        ]
+    )
+    with get_engine().connect() as conn:
+        rows = valsvc.build_valuation_snapshots(conn)
+    r = next(x for x in rows if x["code"] == "90001")
+    assert abs(r["roe"] - 0.1) < 1e-12
+    assert r["revenue_growth_yoy"] is None
+    assert r["eps_growth_yoy"] is None
+
+
 def test_build_snapshot_priced_but_no_financials_gives_none_metrics(temp_db) -> None:
     # 財務の無い銘柄（ETF 等）も価格があれば行は作る・各指標 None
     repo.upsert_stocks([_stock("13060", is_etf=1)])

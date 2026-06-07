@@ -25,9 +25,11 @@ from app.advisor.tools.schemas import (
     GetLeadLagArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
+    GetValuationArgs,
     InvestigateStockArgs,
     OptimizePortfolioArgs,
     ScreenStocksArgs,
+    ScreenValuationArgs,
     SubmitJournalArgs,
 )
 
@@ -119,11 +121,37 @@ REGISTRY: dict[str, ToolDef] = {
     "get_financials": ToolDef(
         name="get_financials",
         description=(
-            "指定銘柄の直近の財務（売上・営業利益・純利益・EPS・BPS）を取得する。"
-            "割安・割高や業績の良し悪しを語る前に呼ぶ（PER 単体で結論しない）。"
+            "指定銘柄の直近の財務（売上・営業利益・純利益・EPS・BPS）の生時系列を取得する。"
+            "決算の推移そのものを見たいときに呼ぶ（派生比率は get_valuation）。"
         ),
         parameters=_schema(GetFinancialsArgs),
         handler=handlers.handle_get_financials,
+        min_phase=2,
+    ),
+    "get_valuation": ToolDef(
+        name="get_valuation",
+        description=(
+            "指定銘柄のバリュエーション/ファンダ事実を取得する（PER・PBR・ROE・営業/純利益率・"
+            "配当利回り・売上/利益/EPS の YoY 成長率・時価総額と業種内パーセンタイル/順位）。"
+            "割安・割高や収益性・成長性を語る前に必ず呼ぶ。"
+            "数値は事実のみで判定は付かない＝PER 単体で結論せず、成長率・業種比較と併せて解釈する"
+            "（手法カード『バリュエーション』参照）。日本株（market:JP・JPY）。"
+        ),
+        parameters=_schema(GetValuationArgs),
+        handler=handlers.handle_get_valuation,
+        min_phase=2,
+    ),
+    "screen_valuation": ToolDef(
+        name="screen_valuation",
+        description=(
+            "バリュエーション/ファンダ条件で全銘柄を絞り込み、候補を指標付きで列挙する"
+            "（per/pbr/roe/利益率/配当利回り/YoY 成長率のレンジ・業種・時価総額順位など）。"
+            "『割安な銘柄を探して』『高 ROE で割安を探して』等の候補探しのときに呼ぶ。"
+            "しきい値は手法カードの作法に基づき自分で criteria に渡す（例: 割安≈PER<15 や PBR<1 を"
+            "起点に、成長率・業種で調整）。日本株のみ・ランクは市場内（market:JP）。"
+        ),
+        parameters=_schema(ScreenValuationArgs),
+        handler=handlers.handle_screen_valuation,
         min_phase=2,
     ),
     "get_asset_overview": ToolDef(
