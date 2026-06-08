@@ -316,7 +316,10 @@ class _AppServer:
             config: dict[str, object] = {}
             if with_tools:
                 # 自前 Tool を FastAPI 内 MCP 越しに公開（DB は FastAPI に閉じる・ADR-005）。
-                config = {"mcp_servers": {"assetvane": {"url": settings.codex_mcp_url}}}
+                config["mcp_servers"] = {"assetvane": {"url": settings.codex_mcp_url}}
+            if settings.codex_reasoning_effort:
+                # 推論努力レベル（none/minimal/low/medium/high/xhigh）。空なら codex 既定。
+                config["model_reasoning_effort"] = settings.codex_reasoning_effort
             thread_params: dict[str, object] = {
                 "sandbox": settings.codex_sandbox,  # read-only（Advisor は書かない・ADR-005）
                 "approvalPolicy": "never",  # 非対話（承認待ちで固まらない）

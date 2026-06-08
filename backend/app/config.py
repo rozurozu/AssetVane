@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # （plans / ADR-012）。exec は MCP がキャンセルされる既知不具合のため app-server を使う。
     codex_bin: str = "codex"  # 実行ファイル（PATH 上の名前 or 絶対パス）。`codex app-server` を起動
     codex_model: str = "gpt-5.5"  # thread/start の model（codex 側の強モデル）
+    # 推論努力レベル＝thread/start の config.model_reasoning_effort（ReasoningEffort enum）。
+    # none/minimal/low/medium/high/xhigh のいずれか。空文字なら codex/モデル既定に任せる。
+    codex_reasoning_effort: str = ""
     # thread/start の sandbox。Advisor は書かない（書き込みは MCP Tool＝FastAPI）。
     codex_sandbox: str = "read-only"
     codex_mcp_url: str = "http://localhost:8000/mcp"  # FastAPI 内 MCP の URL（codex が接続する）
