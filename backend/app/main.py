@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 
@@ -17,7 +18,8 @@ from app.advisor import router as advisor_router
 from app.advisor.mcp_server import mount_mcp, session_manager_lifespan
 from app.batch import run_nightly
 from app.config import settings
-from app.db.engine import healthcheck, init_db
+from app.db import repo
+from app.db.engine import get_engine, healthcheck, init_db
 from app.logging_config import setup_logging
 from app.routers.advisor_state import router as advisor_state_router
 from app.routers.assets import router as assets_router
@@ -134,7 +136,18 @@ mount_mcp(app)
 
 @app.get("/health")
 def health() -> dict[str, object]:
-    """死活監視と必須環境変数の充足チェック（architecture.md §7.4）。"""
+    """死活監視と必須環境変数の充足チェック（architecture.md §7.4）。
+
+    llm_cost は ADR-028 コストガードの状態（画面バナーの判定材料・spec §7.1）。当月累計は
+    sum_llm_cost_month で毎回算出する派生値で専用フラグは持たない（UTC 月＝llm.py と同算式）。
+    集計失敗は死活監視を巻き込まないよう握って 0.0 とみなす（best-effort）。
+    """
+    month_total = 0.0
+    try:
+        with get_engine().connect() as conn:
+            month_total = repo.sum_llm_cost_month(conn, datetime.now(UTC).strftime("%Y-%m"))
+    except Exception:  # noqa: BLE001 — health を集計失敗で落とさない（best-effort）
+        logger.exception("llm_cost 集計に失敗（health は続行）")
     return {
         "status": "ok",
         "service": "assetvane-backend",
@@ -142,4 +155,10 @@ def health() -> dict[str, object]:
         "phase": 6,
         "db": "ok" if healthcheck() else "error",
         "env": settings.env_status(),
+        "llm_cost": {
+            "mode": settings.llm_cost_guard_mode,
+            "limit_usd": settings.llm_cost_limit_usd,
+            "month_total_usd": month_total,
+            "exceeded": month_total >= settings.llm_cost_limit_usd,
+        },
     }

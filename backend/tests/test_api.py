@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
+import pytest
+
+from app.config import settings
 from app.db import repo
+from app.db.engine import get_engine
 
 STOCK = {
     "code": "72030",
@@ -21,6 +26,29 @@ def test_health(client) -> None:
     body = client.get("/health").json()
     assert body["status"] == "ok"
     assert body["db"] == "ok"
+    # ADR-028: コストガード状態（画面バナーの判定材料）。空 DB なら未超過・既定 warn。
+    cost = body["llm_cost"]
+    assert set(cost) == {"mode", "limit_usd", "month_total_usd", "exceeded"}
+    assert cost["mode"] == "warn"
+    assert cost["month_total_usd"] == 0.0
+    assert cost["exceeded"] is False
+
+
+def test_health_llm_cost_exceeded(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """当月 llm_usage を上限以上積むと /health の llm_cost.exceeded=True（ADR-028）。"""
+    monkeypatch.setattr(settings, "llm_cost_limit_usd", 1.0)
+    month = datetime.now(UTC).strftime("%Y-%m")
+    with get_engine().begin() as conn:
+        repo.insert_llm_usage(
+            conn,
+            created_at=f"{month}-10T00:00:00+00:00",
+            source="chat",
+            model="test-model",
+            cost_usd=2.5,
+        )
+    cost = client.get("/health").json()["llm_cost"]
+    assert cost["month_total_usd"] == 2.5
+    assert cost["exceeded"] is True
 
 
 def test_stocks_empty_then_populated(client) -> None:

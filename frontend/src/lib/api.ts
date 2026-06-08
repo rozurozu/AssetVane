@@ -884,6 +884,14 @@ export interface EnvStatus {
   required_from_phase: number;
 }
 
+/** LLM コストガード状態（ADR-028・Topbar の warn バナー判定）。/health が毎回算出する派生値。 */
+export interface LlmCostStatus {
+  mode: string; // "off" | "warn" | "block"
+  limit_usd: number;
+  month_total_usd: number;
+  exceeded: boolean; // month_total_usd >= limit_usd
+}
+
 /** `GET /health` レスポンス（疎通確認・Settings の env 詳細表示・main.py）。 */
 export interface HealthResponse {
   status?: string;
@@ -892,6 +900,7 @@ export interface HealthResponse {
   phase?: number;
   db?: string;
   env?: Record<string, EnvStatus>; // 各キーの set 状況（discord_webhook_url 等）
+  llm_cost?: LlmCostStatus; // ADR-028: warn バナーの判定材料
   [k: string]: unknown;
 }
 

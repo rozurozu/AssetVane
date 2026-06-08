@@ -98,7 +98,8 @@ def _check_cost_guard() -> None:
             f"${settings.llm_cost_limit_usd:.2f}（block）"
         )
     # mode == "warn"（既定）: 止めずに警告だけ残す。
-    # TODO(notify): spec §7.1 では Discord 通知も任意。本格通知は Phase 6（DiscordAdapter）。
+    # Discord 通知は夜間バッチ notify_cost_warn へ移管（advisor→batch 逆流回避・ADR-028）。
+    # 画面バナーは /health の llm_cost を frontend が読む。ここはログのみ。
     logger.warning(
         "LLM 月額コスト上限超過（warn・続行）: 当月累計 $%.2f >= 上限 $%.2f",
         total,
