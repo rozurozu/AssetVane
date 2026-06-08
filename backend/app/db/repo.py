@@ -674,6 +674,36 @@ def list_transactions(conn: Connection, portfolio_id: int) -> list[dict[str, Any
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
+def get_transaction(conn: Connection, txn_id: int) -> dict[str, Any] | None:
+    """transactions の 1 行を id で引く。存在しなければ None（spec P2-2・ADR-019）。
+
+    編集・削除の存在確認と、所属 portfolio_id の取得に使う。読み取りなので commit しない。
+    """
+    stmt = select(transactions).where(transactions.c.id == txn_id)
+    row = conn.execute(stmt).mappings().first()
+    return dict(row) if row else None
+
+
+def update_transaction(conn: Connection, txn_id: int, row: dict[str, Any]) -> None:
+    """transactions の id 行を更新する（spec P2-2・ADR-019）。
+
+    row には code/side/shares/price/fee/traded_at を含める（portfolio_id は不変）。
+    commit はしない。取引更新と holdings 再導出を atomic にするため、呼び出し側が
+    `with get_engine().begin()` で境界を所有する（ADR-019）。
+    """
+    stmt = transactions.update().where(transactions.c.id == txn_id).values(**row)
+    conn.execute(stmt)
+
+
+def delete_transaction(conn: Connection, txn_id: int) -> None:
+    """transactions の id 行を削除する（spec P2-2・ADR-019）。
+
+    commit はしない。取引削除と holdings 再導出を atomic にするため、呼び出し側が
+    `with get_engine().begin()` で境界を所有する（ADR-019）。
+    """
+    conn.execute(transactions.delete().where(transactions.c.id == txn_id))
+
+
 def replace_holdings(conn: Connection, portfolio_id: int, rows: list[dict[str, Any]]) -> None:
     """portfolio の holdings を入れ替える（削除 + 一括挿入・ADR-019）。
 

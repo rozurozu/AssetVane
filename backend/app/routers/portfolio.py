@@ -88,10 +88,26 @@ class TransactionIn(BaseModel):
 
 
 class TransactionResult(BaseModel):
-    """spec §5 P2-2 TransactionResult（POST /transactions のレスポンス）。"""
+    """spec §5 P2-2 TransactionResult（POST/PUT/DELETE /transactions のレスポンス）。"""
 
     transaction_id: int
     holdings: HoldingsResponse
+
+
+class TransactionOut(BaseModel):
+    """spec §5 P2-2 Transaction（GET /transactions の 1 行）。
+
+    company_name は stocks JOIN で補完（行レベルに名前を焼かない＝ADR-019/repo 規約）。
+    """
+
+    id: int
+    code: str
+    company_name: str | None = None
+    side: str  # 'buy' / 'sell'
+    shares: float
+    price: float
+    fee: float | None = None
+    traded_at: str  # 約定日 YYYY-MM-DD
 
 
 class DeviationOut(BaseModel):
@@ -286,6 +302,99 @@ def post_transaction(
         txn_id = repo.insert_transaction(conn, row)
         recalc_holdings(conn, body.portfolio_id)
         holdings_resp = _build_holdings_response(conn, body.portfolio_id)
+    return TransactionResult(transaction_id=txn_id, holdings=holdings_resp)
+
+
+@router.get("/transactions", response_model=list[TransactionOut])
+def list_transactions_endpoint(
+    portfolio_id: int | None = Query(default=None, description="省略時は先頭ポートフォリオ"),
+    conn: Connection = Depends(get_conn),
+) -> list[TransactionOut]:
+    """取引履歴を新しい順で返す（spec P2-2・ADR-019）。
+
+    company_name は stocks と突き合わせて補完する（repo の JOIN 流儀に倣い router で付与）。
+    list_transactions は holdings 再導出用に昇順だが、履歴表示は新しい順
+    （traded_at 降順・同日は id 降順）で返す。
+    """
+    pid = _resolve_portfolio(conn, portfolio_id)
+    txns = repo.list_transactions(conn, pid)
+
+    # code -> company_name の対応を引く（stocks から該当コード分だけ拾う）
+    names = {s["code"]: s.get("company_name") for s in repo.list_stocks(conn)}
+
+    # 新しい順（traded_at 降順・同日は id 降順）に並べ替える
+    txns_sorted = sorted(txns, key=lambda t: (t["traded_at"], t["id"]), reverse=True)
+
+    return [
+        TransactionOut(
+            id=t["id"],
+            code=t["code"],
+            company_name=names.get(t["code"]),
+            side=t["side"],
+            shares=t["shares"],
+            price=t["price"],
+            fee=t.get("fee"),
+            traded_at=t["traded_at"],
+        )
+        for t in txns_sorted
+    ]
+
+
+@router.put("/transactions/{txn_id}", response_model=TransactionResult)
+def put_transaction(
+    txn_id: int,
+    body: TransactionIn,
+) -> TransactionResult:
+    """取引を更新し holdings を再計算して返す（spec P2-2・ADR-019）。
+
+    1. get_transaction で存在確認（無ければ 404）。
+    2. transactions を UPDATE。
+    3. recalc_holdings で holdings を入れ替え（ADR-019）。
+    4. 更新後 holdings を評価額付きで返す。
+    2〜4 は同じトランザクション内で行い、中間状態を残さない。
+    """
+    row: dict[str, Any] = {
+        "code": body.code,
+        "side": body.side,
+        "shares": body.shares,
+        "price": body.price,
+        "fee": body.fee,
+        "traded_at": body.traded_at,
+    }
+
+    with get_engine().begin() as conn:
+        if repo.get_transaction(conn, txn_id) is None:
+            raise HTTPException(status_code=404, detail=f"取引 {txn_id} は存在しません。")
+
+        # 取引更新と holdings 再導出を atomic にする（ADR-019）。
+        repo.update_transaction(conn, txn_id, row)
+        recalc_holdings(conn, body.portfolio_id)
+        holdings_resp = _build_holdings_response(conn, body.portfolio_id)
+    return TransactionResult(transaction_id=txn_id, holdings=holdings_resp)
+
+
+@router.delete("/transactions/{txn_id}", response_model=TransactionResult)
+def delete_transaction_endpoint(
+    txn_id: int,
+) -> TransactionResult:
+    """取引を削除し holdings を再計算して返す（spec P2-2・ADR-019）。
+
+    1. get_transaction で存在確認＆所属 portfolio_id を取得（無ければ 404）。
+    2. transactions を DELETE。
+    3. recalc_holdings で holdings を入れ替え（ADR-019）。
+    4. 更新後 holdings を評価額付きで返す。
+    2〜4 は同じトランザクション内で行い、中間状態を残さない。
+    """
+    with get_engine().begin() as conn:
+        existing = repo.get_transaction(conn, txn_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"取引 {txn_id} は存在しません。")
+        pid = int(existing["portfolio_id"])
+
+        # 取引削除と holdings 再導出を atomic にする（ADR-019）。
+        repo.delete_transaction(conn, txn_id)
+        recalc_holdings(conn, pid)
+        holdings_resp = _build_holdings_response(conn, pid)
     return TransactionResult(transaction_id=txn_id, holdings=holdings_resp)
 
 

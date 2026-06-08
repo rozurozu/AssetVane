@@ -1,17 +1,20 @@
 "use client";
 
 // Portfolio ページ（screens.md #5・phase2-spec.md §6）。
-// タブ「保有 / 入力」を上部に配置（OPEN-D 推奨タブ方式）。
+// タブ「保有 / 入力 / 履歴」を上部に配置（OPEN-D 推奨タブ方式）。
 // 保有タブ: 保有テーブル＋評価額カード（遅延注記）＋相関ヒートマップ＋メトリクスカード
 //           ＋最適化ボタン→OptimizeTable＋資産推移スパークライン。
 // 入力タブ: AssetInputPanel（取引フォーム＋現金＋外部資産を 1 つに集約。OPEN-D＝独立 nav を作らず
 //           Portfolio 内タブに収める＝screens.md §2）。?tab=input で入力タブに直接着地できる。
+// 履歴タブ: TransactionHistory（取引履歴の一覧＋インライン編集＋削除。transactions が一次データ・ADR-019）。
+//           ?tab=history で着地。編集・削除で再計算された保有を holdings state に反映する。
 // DB には触れない。データ取得はすべて lib/api.ts 経由（ADR-005）。
 
 import { BacktestChart } from "@/components/chart/BacktestChart";
 import { AssetInputPanel } from "@/components/portfolio/AssetInputPanel";
 import { CorrelationHeatmap } from "@/components/portfolio/CorrelationHeatmap";
 import { OptimizeTable } from "@/components/portfolio/OptimizeTable";
+import { TransactionHistory } from "@/components/portfolio/TransactionHistory";
 import { Card } from "@/components/ui/Card";
 import { DataTable, Td } from "@/components/ui/DataTable";
 import { StatusBlock } from "@/components/ui/StatusBlock";
@@ -34,7 +37,13 @@ import { fmtJpy, pct } from "@/lib/format";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
-type Tab = "holdings" | "input";
+type Tab = "holdings" | "input" | "history";
+
+/** ?tab クエリを Tab に解決する（既定は保有）。 */
+function resolveTab(raw: string | null): Tab {
+  if (raw === "input" || raw === "history") return raw;
+  return "holdings";
+}
 
 // useSearchParams は Suspense 境界を要求する（Next App Router）。default export は薄い
 // ラッパにして本体を境界内に置く。
@@ -47,9 +56,9 @@ export default function PortfolioPage() {
 }
 
 function PortfolioPageInner() {
-  // ?tab=input なら入力タブに着地（Dashboard の「資産未投入」案内からの遷移先）。
+  // ?tab=input なら入力タブ・?tab=history なら履歴タブに着地（既定は保有）。
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "input" ? "input" : "holdings");
+  const [tab, setTab] = useState<Tab>(resolveTab(searchParams.get("tab")));
 
   // ポートフォリオ ID（先頭＝既定・裁定 L-9）
   const [portfolioId, setPortfolioId] = useState<number | null>(null);
@@ -175,6 +184,7 @@ function PortfolioPageInner() {
   const TABS: { key: Tab; label: string }[] = [
     { key: "holdings", label: "保有" },
     { key: "input", label: "入力" },
+    { key: "history", label: "履歴" },
   ];
 
   return (
@@ -526,6 +536,22 @@ function PortfolioPageInner() {
             portfolioId={portfolioId}
             stocks={stocks}
             onDone={handleTransactionDone}
+          />
+        ) : (
+          <div className="text-[13px] text-ink-subtle">ポートフォリオを読み込み中…</div>
+        ))}
+
+      {/* ===== 履歴タブ（取引履歴の一覧・編集・削除）===== */}
+      {tab === "history" &&
+        (portfolioId != null ? (
+          <TransactionHistory
+            portfolioId={portfolioId}
+            stocks={stocks}
+            onHoldingsChange={(updated) => {
+              // 編集・削除で再計算された保有を保有タブの state に反映（最適化結果は無効化）。
+              setHoldings(updated);
+              setOptimizeResult(null);
+            }}
           />
         ) : (
           <div className="text-[13px] text-ink-subtle">ポートフォリオを読み込み中…</div>

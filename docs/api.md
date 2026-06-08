@@ -37,7 +37,10 @@
 |---|---|---|
 | GET/POST/PUT/DELETE | `/portfolios`, `/portfolios/{id}` | ポートフォリオ CRUD（当面は単一固定）|
 | GET/POST/PUT/DELETE | `/holdings` | 保有 CRUD |
+| GET | `/transactions?portfolio_id=` | 取引履歴（新しい順・会社名付き）|
 | POST | `/transactions` | 取引（買い/売り）記録 → holdings 再計算 |
+| PUT | `/transactions/{id}` | 取引の編集 → holdings 再計算 |
+| DELETE | `/transactions/{id}` | 取引の削除 → holdings 再計算（存在しない id は 404）|
 | GET/PUT | `/cash` | 現金残高 |
 | GET/POST/PUT/DELETE | `/external-assets` | 投信等（割合文脈）|
 | GET | `/portfolio/{id}/metrics` | 相関・シャープ・最大ドローダウン |
@@ -61,6 +64,24 @@ interface BacktestResult {
   portfolio: BacktestLeg; benchmark: BacktestLeg; excess_return: number;
 }
 ```
+
+### 取引履歴の一覧・編集・削除（`GET`/`PUT`/`DELETE` `/transactions`）
+
+取引の訂正手段。**transactions が一次データ、holdings はそこからの導出**（[ADR-019](decisions.md)）なので、取引を直すと holdings は `recalc_holdings` で自動再計算され、`PUT`/`DELETE` は再計算後の holdings を同梱して返す。`POST /transactions` と同一トランザクション内で atomic。
+
+```ts
+interface TransactionOut { // GET の 1 行。company_name は stocks JOIN で補完
+  id: number; code: string; company_name: string | null;
+  side: "buy" | "sell"; shares: number; price: number;
+  fee: number | null; traded_at: string; // YYYY-MM-DD
+}
+// TransactionInput（PUT の body）は POST /transactions と同一
+// TransactionResult（PUT/DELETE のレスポンス）は POST と同一 = { transaction_id, holdings }
+```
+
+- `GET /transactions?portfolio_id=` → `TransactionOut[]`（**新しい順**）。
+- `PUT /transactions/{id}` body=`TransactionInput` → `TransactionResult`（`holdings` は再計算後）。存在しない id は 404。
+- `DELETE /transactions/{id}` → `TransactionResult`（`transaction_id`=削除した id・`holdings` は再計算後）。存在しない id は 404。
 
 ## 4. AI Advisor（Phase 3〜）
 

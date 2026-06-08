@@ -203,6 +203,204 @@ def test_post_transaction_rolls_back_when_recalc_fails(client, monkeypatch) -> N
 
 
 # ---------------------------------------------------------------------------
+# GET /transactions（履歴一覧・新しい順・company_name 付き）
+# ---------------------------------------------------------------------------
+
+
+def test_list_transactions_newest_first(client) -> None:
+    """GET /transactions は取引を新しい順で company_name 付きで返す（spec P2-2・ADR-019）。"""
+    repo.upsert_stocks([STOCK_A])
+    pid = _get_portfolio_id(client)
+
+    # 古い取引 → 新しい取引の順に投入（API は新しい順で返すべき）
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1000,
+            "traded_at": "2026-01-10",
+        },
+    )
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 50,
+            "price": 1200,
+            "traded_at": "2026-02-15",
+        },
+    )
+
+    resp = client.get(f"/transactions?portfolio_id={pid}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 2
+    # 新しい順（traded_at 降順）
+    assert body[0]["traded_at"] == "2026-02-15"
+    assert body[1]["traded_at"] == "2026-01-10"
+    # company_name が付与される
+    assert body[0]["company_name"] == "トヨタ自動車"
+    # フィールド形の確認
+    assert body[0]["code"] == "72030"
+    assert body[0]["side"] == "buy"
+    assert body[0]["shares"] == 50.0
+    assert body[0]["price"] == 1200.0
+
+
+def test_list_transactions_empty(client) -> None:
+    """取引がない場合 GET /transactions は空配列を返す。"""
+    pid = _get_portfolio_id(client)
+    resp = client.get(f"/transactions?portfolio_id={pid}")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# PUT /transactions/{id}（編集 → holdings 再導出）
+# ---------------------------------------------------------------------------
+
+
+def test_put_transaction_recalcs_holdings(client) -> None:
+    """PUT で株数・単価を変更すると holdings の shares・avg_cost が再計算される。"""
+    repo.upsert_stocks([STOCK_A])
+    pid = _get_portfolio_id(client)
+
+    create = client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1500,
+            "traded_at": "2026-01-10",
+        },
+    )
+    txn_id = create.json()["transaction_id"]
+
+    # 株数 200・単価 1800 に編集
+    resp = client.put(
+        f"/transactions/{txn_id}",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 200,
+            "price": 1800,
+            "traded_at": "2026-01-10",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["transaction_id"] == txn_id
+
+    holdings = body["holdings"]["holdings"]
+    assert len(holdings) == 1
+    assert holdings[0]["shares"] == 200.0
+    assert holdings[0]["avg_cost"] == 1800.0
+
+
+def test_put_transaction_404(client) -> None:
+    """存在しない取引 id への PUT は 404。"""
+    pid = _get_portfolio_id(client)
+    resp = client.put(
+        "/transactions/99999",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1500,
+            "traded_at": "2026-01-10",
+        },
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /transactions/{id}（削除 → holdings 再導出）
+# ---------------------------------------------------------------------------
+
+
+def test_delete_transaction_removes_holding(client) -> None:
+    """唯一の取引を DELETE すると holdings 行が消える（全売却相当）。"""
+    repo.upsert_stocks([STOCK_A])
+    pid = _get_portfolio_id(client)
+
+    create = client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1500,
+            "traded_at": "2026-01-10",
+        },
+    )
+    txn_id = create.json()["transaction_id"]
+
+    resp = client.delete(f"/transactions/{txn_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["transaction_id"] == txn_id
+    # holdings が空に再導出される
+    assert body["holdings"]["holdings"] == []
+
+    # 取引一覧も空
+    listed = client.get(f"/transactions?portfolio_id={pid}")
+    assert listed.json() == []
+
+
+def test_delete_transaction_partial_recalc(client) -> None:
+    """複数取引の 1 件を DELETE すると残りから holdings が再導出される。"""
+    repo.upsert_stocks([STOCK_A])
+    pid = _get_portfolio_id(client)
+
+    first = client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1000,
+            "traded_at": "2026-01-10",
+        },
+    )
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 2000,
+            "traded_at": "2026-02-10",
+        },
+    )
+
+    # 1 件目（100 株 @1000）を削除 → 残りは 100 株 @2000
+    resp = client.delete(f"/transactions/{first.json()['transaction_id']}")
+    assert resp.status_code == 200
+    holdings = resp.json()["holdings"]["holdings"]
+    assert len(holdings) == 1
+    assert holdings[0]["shares"] == 100.0
+    assert holdings[0]["avg_cost"] == 2000.0
+
+
+def test_delete_transaction_404(client) -> None:
+    """存在しない取引 id への DELETE は 404。"""
+    resp = client.delete("/transactions/99999")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # GET /holdings
 # ---------------------------------------------------------------------------
 

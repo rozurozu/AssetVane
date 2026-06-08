@@ -109,6 +109,19 @@ export interface TransactionResult {
   holdings: HoldingsResponse;
 }
 
+/** 取引履歴 1 行（`GET /transactions` の 1 要素・P2-2）。新しい順で返る。
+ * company_name は stocks JOIN で補完（行に名前を焼かない＝ADR-019）。 */
+export interface Transaction {
+  id: number;
+  code: string;
+  company_name: string | null;
+  side: "buy" | "sell";
+  shares: number;
+  price: number; // 約定単価
+  fee: number | null; // 手数料（任意）
+  traded_at: string; // 約定日 YYYY-MM-DD
+}
+
 /** `GET /cash` レスポンス・`PUT /cash` レスポンス（P2-3）。 */
 export interface Cash {
   id: number;
@@ -682,6 +695,23 @@ export function getHoldings(portfolioId: number, signal?: AbortSignal): Promise<
 /** 取引記録（P2-2）。サーバ側で holdings を再計算し、更新後の一覧を返す（ADR-019）。 */
 export function postTransaction(input: TransactionInput): Promise<TransactionResult> {
   return postJSON<TransactionResult>("/transactions", input);
+}
+
+/** 取引履歴一覧（P2-2）。新しい順・company_name 付き（ADR-019）。 */
+export function getTransactions(portfolioId: number, signal?: AbortSignal): Promise<Transaction[]> {
+  return getJSON<Transaction[]>(`/transactions?portfolio_id=${portfolioId}`, signal);
+}
+
+/** 取引を更新（P2-2）。サーバ側で holdings を再計算し、更新後の一覧を返す（ADR-019）。
+ * 存在しない id は 404。 */
+export function updateTransaction(id: number, input: TransactionInput): Promise<TransactionResult> {
+  return putJSON<TransactionResult>(`/transactions/${id}`, input);
+}
+
+/** 取引を削除（P2-2）。サーバ側で holdings を再計算し、更新後の一覧を返す（ADR-019）。
+ * 存在しない id は 404。 */
+export function deleteTransaction(id: number): Promise<TransactionResult> {
+  return del<TransactionResult>(`/transactions/${id}`);
 }
 
 /** 現金残高取得（P2-3）。未登録は 404（呼び元で ApiError.status===404 を「未設定」表示）。 */
