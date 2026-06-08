@@ -103,8 +103,27 @@ def upsert_fetch_meta(source: str, last_fetched_date: str) -> None:
         "source": source,
         "last_fetched_date": last_fetched_date,
         "updated_at": datetime.now(UTC).isoformat(),
+        "last_attempt_ok": 1,  # 前進＝直近試行は成功（空取得＝休場も成功扱い）
     }
     _upsert(fetch_meta, [row], index_elements=["source"])
+
+
+def mark_fetch_attempt_failed(source: str) -> None:
+    """`source` の直近取得試行を失敗（last_attempt_ok=0）として記録する（ADR-018）。
+
+    取得失敗（IndexAdapterError 等）を fetch_meta に残し、notify_digest が「今回取れなかった
+    指数」を朝の digest に情報行で出せるようにする。差分取得の再開点 last_fetched_date は
+    **潰さない**（成功時の最終取得日を保つ）。行が無ければ last_fetched_date=NULL で作る。
+    _upsert は全列を EXCLUDED で上書きするため使えず、更新列を絞った専用 UPSERT で書く。
+    """
+    now = datetime.now(UTC).isoformat()
+    stmt = sqlite_insert(fetch_meta).values(source=source, last_attempt_ok=0, updated_at=now)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["source"],
+        set_={"last_attempt_ok": 0, "updated_at": now},  # last_fetched_date は据え置く
+    )
+    with get_engine().begin() as conn:
+        conn.execute(stmt)
 
 
 def get_fetch_meta(conn: Connection, source: str) -> dict[str, Any] | None:

@@ -133,6 +133,68 @@ def test_build_digest_always_sends_summary_when_empty(
     assert "注目シグナル: なし" in content
 
 
+def _pin_index_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
+    """digest の指数対象を 2 指数に固定（米国業種 ETF の自動追加を無効化）。"""
+    from app.batch.jobs import fetch_index
+
+    monkeypatch.setattr(settings, "index_symbols", "^SPX,^NKX")
+    monkeypatch.setattr(fetch_index, "US_SECTOR_ETFS", ())
+    monkeypatch.setattr(settings, "always_daily_digest", True)
+
+
+def test_build_digest_includes_failed_index_line(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """直近の取得試行が失敗した指数があれば digest に非アラートの情報行が出る。"""
+    _pin_index_symbols(monkeypatch)
+
+    # ^SPX は成功・^NKX は過去に取得済みだが直近試行は失敗。
+    repo.upsert_fetch_meta("index_quotes:^SPX", "2026-06-05")
+    repo.upsert_fetch_meta("index_quotes:^NKX", "2026-06-04")
+    repo.mark_fetch_attempt_failed("index_quotes:^NKX")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, "2026-06-05")
+
+    assert content is not None
+    assert "取得できなかった指数" in content
+    assert "^NKX（最終取得 2026-06-04）" in content  # 最後に取得できた日を添える
+    failed_line = next(line for line in content.splitlines() if "取得できなかった指数" in line)
+    assert "^SPX" not in failed_line  # 成功した指数は出ない
+
+
+def test_build_digest_failed_index_never_fetched(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """一度も取得できていない指数の失敗は「未取得」と表示する。"""
+    _pin_index_symbols(monkeypatch)
+
+    repo.upsert_fetch_meta("index_quotes:^SPX", "2026-06-05")
+    repo.mark_fetch_attempt_failed("index_quotes:^NKX")  # 成功歴なし → last_fetched_date NULL
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, "2026-06-05")
+
+    assert content is not None
+    assert "^NKX（未取得）" in content
+
+
+def test_build_digest_no_failed_line_when_all_ok(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """全指数の直近試行が成功なら情報行は出ない（休場の空取得も成功扱い）。"""
+    _pin_index_symbols(monkeypatch)
+
+    repo.upsert_fetch_meta("index_quotes:^SPX", "2026-06-05")
+    repo.upsert_fetch_meta("index_quotes:^NKX", "2026-06-05")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, "2026-06-05")
+
+    assert content is not None
+    assert "取得できなかった指数" not in content
+
+
 def test_run_sends_once_and_returns_jobresult(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:

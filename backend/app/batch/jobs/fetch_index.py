@@ -65,13 +65,17 @@ def run() -> JobResult:
 
     取得対象は config.index_symbol_list（^SPX/^NKX/^TPX 等）＋米国業種 ETF 11 本
     （US_SECTOR_ETFS・Phase 7 リードラグ用）。各シンボルを差分取得して UPSERT する。
-    シンボルごとに例外が発生しても後続シンボルを継続し、最終的に 1 件でも失敗なら ok=False。
-    例外はジョブ境界で握り runner が Discord 通知する（ADR-018）。
+    シンボルごとに例外が発生しても後続シンボルを継続する。**全試行シンボルが失敗したとき
+    （＝総崩れ）だけ ok=False** とし、1 本でも成功すれば ok=True（一部失敗は detail に内訳を残す）。
+    取得手段の無いシンボル（例: Free プランで取れない指数）1 本のために毎晩バッチ失敗アラートを
+    鳴らさないための割り切り。落ちたシンボルは notify_digest が fetch_meta 鮮度から拾い可視化する。
+    例外はジョブ境界で握り、総崩れ時のみ runner が Discord 通知する（ADR-018）。
     """
     today = date.today().isoformat()
     symbols = _target_symbols()
 
     total_rows = 0
+    attempted = 0  # 実際に取得を試みた数（最新でスキップした分は含めない）
     failed_symbols: list[str] = []
 
     adapter = IndexAdapter()
@@ -84,6 +88,7 @@ def run() -> JobResult:
             )
             continue
 
+        attempted += 1
         try:
             rows = adapter.fetch_index_quotes(symbol, from_=start, to=today)
             # symbol/date が欠けた行は弾く（PK が NULL だと UPSERT が壊れる）
@@ -99,20 +104,27 @@ def run() -> JobResult:
             logger.info("fetch_index: %s %s〜%s・%d 行 UPSERT", symbol, start, today, len(rows))
         except (IndexAdapterError, Exception) as exc:  # noqa: BLE001 — ジョブ境界で握る
             logger.exception("fetch_index: %s が失敗（start=%s）", symbol, start)
+            # 直近試行の失敗を記録（last_fetched_date は据え置き）。
+            # digest が「取得できなかった指数」を情報行に出す（ADR-018）。
+            repo.mark_fetch_attempt_failed(_source_key(symbol))
             failed_symbols.append(f"{symbol}: {exc}")
 
-    if failed_symbols:
-        detail = f"失敗シンボル: {', '.join(failed_symbols)}"
+    # 総崩れ（試行した全シンボルが失敗）のときだけ失敗扱い＝runner が Discord 通知（ADR-018）。
+    if attempted > 0 and len(failed_symbols) == attempted:
         return JobResult(
             name="fetch_index",
             ok=False,
             rows=total_rows,
-            detail=detail,
+            detail=f"全 {attempted} シンボル取得失敗: {', '.join(failed_symbols)}",
         )
 
+    # 一部失敗（1 本でも成功）or 全スキップは成功扱い。失敗があれば内訳を detail に残す。
+    detail = f"シンボル {attempted}/{len(symbols)} 件試行・{total_rows} 行 UPSERT（〜{today}）"
+    if failed_symbols:
+        detail += f"・取得不可 {len(failed_symbols)} 件: {', '.join(failed_symbols)}"
     return JobResult(
         name="fetch_index",
         ok=True,
         rows=total_rows,
-        detail=f"シンボル {len(symbols)} 件・{total_rows} 行 UPSERT（〜{today}）",
+        detail=detail,
     )

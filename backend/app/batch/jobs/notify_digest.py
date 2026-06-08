@@ -82,6 +82,32 @@ def _rebalance_line(conn: Connection, today: str) -> str | None:
     )
 
 
+def _failed_index_line(conn: Connection) -> str | None:
+    """直近の取得試行が失敗した指数を 1 行（非アラート情報）にまとめる。
+
+    fetch_index の各シンボル（^SPX/^NKX/^TPX＋米国業種 ETF）について
+    fetch_meta['index_quotes:<symbol>'] の last_attempt_ok を読み、0（直近試行が失敗）のものを
+    抽出する。成否は fetch_index が試行ごとに記録する（成功=1／空取得＝休場も成功=1／失敗=0）。
+    取得手段の無い指数（例: Free プランの ^TPX）を名指しハードコードせず汎用に拾う
+    （将来 ^SPX 等が落ちても自動で出る）。試行成否そのものを見るため、市場休場やシンボル間の
+    カレンダー差では誤検知しない。表示には最後に取得できた日（last_fetched_date）を添える。
+    """
+    # 同一 batch パッケージ内。対象集合とキー規約は fetch_index を正本に再利用する。
+    from app.batch.jobs.fetch_index import _source_key, _target_symbols
+
+    failed: list[str] = []
+    for sym in _target_symbols():
+        meta = repo.get_fetch_meta(conn, _source_key(sym))
+        if not meta or meta.get("last_attempt_ok") != 0:
+            continue
+        last = meta.get("last_fetched_date")
+        failed.append(f"{sym}（最終取得 {last}）" if last else f"{sym}（未取得）")
+
+    if not failed:
+        return None
+    return f"📉 取得できなかった指数: {', '.join(failed)}"
+
+
 def build_digest_content(conn: Connection, today: str) -> str | None:
     """当日の⑦⑧＋夜AI 提案を 1 通の digest 本文に組み立てる（spec §3）。
 
@@ -104,6 +130,10 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
 
     # ⑦ リバランス判定。
     rebalance = _rebalance_line(conn, today)
+
+    # 取得できなかった指数の情報行（非アラート）。has_content には含めない（取得失敗だけの日に
+    # digest を新規発火させない＝静けさ維持。毎朝送信時はその本文に乗る）。
+    failed_index = _failed_index_line(conn)
 
     # 夜AI 当日提案（Phase 3 生成済み文を引用・ADR-014）。
     journal = repo.get_journal_for_date(conn, today)
@@ -142,6 +172,10 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
         if policy_change:
             to = policy_change.get("to")
             lines.append(f"　方針変更案: {policy_change['field']} → {to}")
+        lines.append("")
+
+    if failed_index:
+        lines.append(failed_index)
         lines.append("")
 
     # 当日サマリ（検知ゼロでも届く＝完了条件）。

@@ -154,6 +154,56 @@ def test_fetch_index_run_multiple_symbols(temp_db, monkeypatch) -> None:
     assert len(nkx) == 1
 
 
+def test_fetch_index_run_partial_failure_is_ok(temp_db, monkeypatch) -> None:
+    """一部シンボルが失敗しても、1 本でも成功すれば ok=True（取得不可は detail に残す）。"""
+    _pin_symbols(monkeypatch, "^SPX,^NKX")
+
+    from app.adapters.index import IndexAdapterError
+
+    spx_rows = [{"symbol": "^SPX", "date": "2026-05-28", "close": 5250.36}]
+
+    def fake_fetch(symbol: str, **kwargs: object) -> list[dict]:
+        if symbol == "^SPX":
+            return spx_rows
+        raise IndexAdapterError("取得手段なし")
+
+    with patch("app.batch.jobs.fetch_index.IndexAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.fetch_index_quotes.side_effect = fake_fetch
+
+        result = fetch_index.run()
+
+    assert result.ok is True  # 全滅ではないので失敗扱いにしない
+    assert result.rows == 1
+    assert "^NKX" in result.detail
+    assert "取得不可" in result.detail
+
+    # 試行成否が fetch_meta に記録される（成功=1／失敗=0）。失敗側の last_fetched_date は据え置き。
+    with get_engine().connect() as conn:
+        spx_meta = repo.get_fetch_meta(conn, "index_quotes:^SPX")
+        nkx_meta = repo.get_fetch_meta(conn, "index_quotes:^NKX")
+    assert spx_meta is not None and spx_meta["last_attempt_ok"] == 1
+    assert nkx_meta is not None and nkx_meta["last_attempt_ok"] == 0
+    assert nkx_meta["last_fetched_date"] is None  # 成功歴なし＝据え置きで NULL のまま
+
+
+def test_fetch_index_run_all_fail_returns_failure(temp_db, monkeypatch) -> None:
+    """試行した全シンボルが失敗（総崩れ）したときだけ ok=False。"""
+    _pin_symbols(monkeypatch, "^SPX,^NKX")
+
+    from app.adapters.index import IndexAdapterError
+
+    with patch("app.batch.jobs.fetch_index.IndexAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.fetch_index_quotes.side_effect = IndexAdapterError("接続失敗")
+
+        result = fetch_index.run()
+
+    assert result.ok is False
+    assert "^SPX" in result.detail
+    assert "^NKX" in result.detail
+
+
 def test_target_symbols_includes_us_sector_etfs(monkeypatch) -> None:
     """_target_symbols が config 指数＋米国業種 ETF 11 本を重複なく返す（Phase 7・ADR-010）。"""
     from app.adapters.index import US_SECTOR_ETFS

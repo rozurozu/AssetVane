@@ -68,6 +68,9 @@ fetch_meta = Table(
     ),  # 'daily_quotes' / 'stocks' / 将来 'index_quotes' 等
     Column("last_fetched_date", String),  # 'YYYY-MM-DD'（未取得なら NULL）
     Column("updated_at", String),  # ISO8601 UTC（この行の更新時刻）
+    # 直近の取得試行の成否（1=成功 / 0=失敗 / NULL=未試行）。fetch_index が試行ごとに記録し、
+    # notify_digest が「今回取れなかった指数」を朝の digest に情報行で出すのに使う（ADR-018）。
+    Column("last_attempt_ok", Integer),
 )
 
 # シグナル事前計算（Phase 1・data-model.md §4・ADR-002・ADR-026）。
