@@ -1089,6 +1089,31 @@ def list_news(
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
+def get_news_by_url(conn: Connection, url: str) -> dict[str, Any] | None:
+    """url 一致の news 1 行を素の dict で返す（無ければ None・ADR-046）。
+
+    ユーザー投入（ingest_user_news）後に、UPSERT で確定した行（id・fetched_at 補完済み）を
+    読み直して返すために使う。UNIQUE(url) なので 1 行に定まる。本文は持たない（ADR-020）。
+    """
+    row = conn.execute(select(news).where(news.c.url == url).limit(1)).mappings().first()
+    return dict(row) if row else None
+
+
+def delete_user_news(news_id: int) -> int:
+    """source='user' の news 1 行を id で削除し、削除件数を返す（ADR-046）。
+
+    ユーザー投入分（source='user'）のみ削除し、自動取得分（source='news' 等）は id が一致しても
+    消さない（WHERE で source='user' を AND する＝誤って自動取得記事を消さない安全弁）。単発の
+    単純な書き込み（1 文で閉じる）なので repo が自前で begin する（W1・remove_watchlist と同流儀）。
+    返り値は影響行数（0=対象なし・router が 404 に翻訳）。
+    """
+    with get_engine().begin() as conn:
+        result = conn.execute(
+            news.delete().where(and_(news.c.id == news_id, news.c.source == "user"))
+        )
+    return result.rowcount or 0
+
+
 def get_dossier(conn: Connection, code: str) -> dict[str, Any] | None:
     """stock_dossiers の 1 行を素の dict で返す（無ければ None・spec §2.2/§5.2）。
 

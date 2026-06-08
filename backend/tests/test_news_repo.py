@@ -193,3 +193,46 @@ def test_list_news_ordered_desc_and_limit(temp_db) -> None:
         limited = repo.list_news(conn, limit=2)
     assert [r["published_at"] for r in rows] == ["2026-06-03", "2026-06-02", "2026-06-01"]
     assert [r["published_at"] for r in limited] == ["2026-06-03", "2026-06-02"]
+
+
+# ===== ADR-046: get_news_by_url / delete_user_news =====
+
+
+def test_get_news_by_url_returns_row_or_none(temp_db) -> None:
+    """get_news_by_url は url 一致行を dict で返し、無ければ None（読み直し用・ADR-046）。"""
+    with get_engine().begin() as conn:
+        repo.upsert_news(conn, [_row("https://a.example/by-url")])
+    with get_engine().connect() as conn:
+        row = repo.get_news_by_url(conn, "https://a.example/by-url")
+        missing = repo.get_news_by_url(conn, "https://a.example/none")
+    assert row is not None
+    assert row["url"] == "https://a.example/by-url"
+    assert "id" in row
+    assert missing is None
+
+
+def test_delete_user_news_only_user_source(temp_db) -> None:
+    """delete_user_news は source='user' の行だけ削除する（自動取得分は残す・ADR-046）。"""
+    with get_engine().begin() as conn:
+        repo.upsert_news(
+            conn,
+            [
+                _row("https://a.example/u", source="user", category=None),
+                _row("https://a.example/n", source="news"),
+            ],
+        )
+    with get_engine().connect() as conn:
+        user_row = repo.get_news_by_url(conn, "https://a.example/u")
+        news_row = repo.get_news_by_url(conn, "https://a.example/n")
+    assert user_row is not None and news_row is not None
+
+    # source='user' 行は 1 件削除される。
+    assert repo.delete_user_news(int(user_row["id"])) == 1
+    # source='news' 行は id 一致でも 0 件（消さない）。
+    assert repo.delete_user_news(int(news_row["id"])) == 0
+    # 不在 id も 0 件。
+    assert repo.delete_user_news(999_999) == 0
+
+    with get_engine().connect() as conn:
+        remaining = {r["url"] for r in repo.list_news(conn)}
+    assert remaining == {"https://a.example/n"}  # user は消え、news は残る

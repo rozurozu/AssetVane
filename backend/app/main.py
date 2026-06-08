@@ -26,6 +26,7 @@ from app.routers.diagnostics import router as diagnostics_router
 from app.routers.dossier import router as dossier_router
 from app.routers.general_news import router as general_news_router
 from app.routers.lead_lag import router as lead_lag_router
+from app.routers.news import router as news_router
 from app.routers.portfolio import router as portfolio_router
 from app.routers.screening_filters import router as screening_filters_router
 from app.routers.signals import router as signals_router
@@ -121,6 +122,8 @@ app.include_router(watchlist_router)
 app.include_router(dossier_router)
 # 一般ニュース（ADR-034）。GET /general-news（routers/general_news.py）。
 app.include_router(general_news_router)
+# ニュース統合コーパス（ADR-046/047）。GET/POST/DELETE /news（routers/news.py）。
+app.include_router(news_router)
 # 日米業種リードラグ（Phase 7／SIG-FIN-036-13）。GET /lead-lag（routers/lead_lag.py）。
 app.include_router(lead_lag_router)
 

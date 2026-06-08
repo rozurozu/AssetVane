@@ -167,7 +167,7 @@ def _patch_pipeline(
     monkeypatch.setattr(news, "_fetch_rss_items", _items)
     monkeypatch.setattr(news, "_decode_google_url", _decode)
     monkeypatch.setattr(news, "_fetch_html", _html)
-    monkeypatch.setattr(news, "_summarize_article", _summarize)
+    monkeypatch.setattr(news, "summarize_article", _summarize)
 
 
 def test_fallback_summarized(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,7 +208,7 @@ def test_summarize_failure_falls_back_to_description(
     async def _boom(text: str) -> str:
         raise RuntimeError("LLM 障害")
 
-    monkeypatch.setattr(news, "_summarize_article", _boom)
+    monkeypatch.setattr(news, "summarize_article", _boom)
     result = _run(news.fetch_news("7203", "トヨタ"))
     # og:description が _ARTICLE_HTML_FULL にもあるため description に落ちる
     assert result[0]["extraction_status"] == "description"

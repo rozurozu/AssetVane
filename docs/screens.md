@@ -25,8 +25,11 @@ AssetVane の画面構成（情報設計）、ナビゲーション、Dashboard 
 | 12 | **Alpha Scorer** | 決算スコアランキング | `/signals?type=ai_alpha` | 5 |
 | 13 | **Lead-Lag** | 翌日強含む日本業種ランキング | `/signals?type=lead_lag` | 7 |
 | 14 | **Settings / System** | health・必須 env チェック・夜間バッチ手動起動 | `/health` `/batch/run` | 0→ |
+| 15 | **News（統合ニュース）** | 統合コーパスの一覧（`level` 単一タブ＋期間フィルタ）・「ニュースを貼る」投入フォーム・`source='user'` 行の削除。検索ボックスは [ADR-045](decisions.md) 送り（未実装） | `/news`（GET/POST/DELETE） | 4 |
 
 > 銘柄詳細（#3）は「チャート＋指標＋財務＋ドシエ＋watchlist 追加」を 1 ページに集約するハブ。ドシエ（#11 由来）は独立ページではなく**銘柄詳細内のセクション/タブ**として見せる。
+
+> News（#15）は統合コーパス（[ADR-044](decisions.md)）の単一の顔（一覧＋貼付フォーム＋user 行削除＝[ADR-046](decisions.md)/[ADR-047](decisions.md)）。Dashboard の `GeneralNewsWidget`（[ADR-034](decisions.md)・市況の "ちら見"）は**別物として温存**し、News ページに全面置換しない。
 
 ---
 
@@ -35,7 +38,7 @@ AssetVane の画面構成（情報設計）、ナビゲーション、Dashboard 
 - **ヘッダー常設**。ロゴ（AssetVane）＋ナビ＋右上に「Free・株価12週遅延」バッジ（[ADR-008](decisions.md)）。
 - ナビ項目は **Phase 進行で増える**。未投入の機能を最初から全部並べない。
   - **Phase 0**: Dashboard / Stocks / Settings
-  - 以降: Signals(P1) → Portfolio(P2) → Advisor・Policy・Journal・Proposals(P3) → Watchlist(P4) → Alpha Scorer(P5) → Lead-Lag(P7)
+  - 以降: Signals(P1) → Portfolio(P2) → Advisor・Policy・Journal・Proposals(P3) → Watchlist・News(P4) → Alpha Scorer(P5) → Lead-Lag(P7)
 - 各項目に **Phase バッジ**（例 `P2`）を付け、「いつ有効になるか」を可視化してもよい。
 - **評価額の遅延注記**は Dashboard・Portfolio・銘柄詳細の評価額/PL に横断的に必要。共通バッジ/バナーで明示する（Free は約 3 か月前の値＝[api.md](api.md)）。
 

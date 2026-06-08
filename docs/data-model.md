@@ -316,10 +316,11 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 | `extraction_status` | TEXT | 取得レベル `summarized`/`description`/`headline` |
 
 - インデックス: `url`（UNIQUE）、`level`、`code`、`sector17_code`。`url` UNIQUE ＋ `on_conflict_do_nothing` で冪等。
-- **3 層の使い分け**: `level='stock'`（銘柄自身・旧 `dossier_sources`）／`level='sector'`（その銘柄の TOPIX-17 業種）／`level='market'`（市況・マクロ・旧 `general_news`）／`level='user'`（ユーザー入力＝[ADR-046](decisions.md)・将来）。`get_news_context(code)` がこの 3 層（銘柄／セクター／市況）を**必ず構造的に揃えて**返す。
+- **3 層の使い分け**: `level='stock'`（銘柄自身・旧 `dossier_sources`）／`level='sector'`（その銘柄の TOPIX-17 業種）／`level='market'`（市況・マクロ・旧 `general_news`）／`level='user'`（ユーザー入力＝[ADR-046](decisions.md)・schema 上許容）。`get_news_context(code)` がこの 3 層（銘柄／セクター／市況）を**必ず構造的に揃えて**返す。
+- **`user` 層（ユーザー投入・[ADR-046](decisions.md)）**: 貼付テキストを要約して `source='user'` で投入する（`ingest_user_news`）。**タグ v1 はユーザー明示**＝銘柄コードありで `level='stock'`＋`code`、無しで `level='market'`＋`category="ユーザー投入"`（`GET /general-news` にも出る）。`level='user'` 値は schema 上許容だが**本実装は未使用**。**URL 未入力時は合成キー `user://`＋`sha256(text)` 先頭 16 桁**を `url`（NOT NULL UNIQUE）に詰め、`on_conflict_do_nothing` で冪等化する。削除は `source='user'` のみ可（`delete_user_news`・自動取得分は 404）。**migration なし**（既存 `news` 列で表現）。
 - **取り込みジョブ**: ① `fetch_general_news`（`run_advisor` 直前）が市況ニュースを `level='market'` に UPSERT。② 新ジョブ `fetch_sector_news`（`fetch_general_news` の直後・`run_advisor` の前）が TOPIX-17 全業種を毎晩取得し `level='sector'`／`sector17_code` に UPSERT。**タグ付けは `stocks` と同じ J-Quants S17（"1".."17"）でそろえる**（`build_news_context` の等値 JOIN が直接一致するため＝[ADR-053](decisions.md)）。③ 調査パイプライン（`investigate_stock`／`fetch_news`）が銘柄ニュースを `level='stock'`／`code` に取り込む。いずれも**要約前 dedup**（既存 URL は本文取得・要約をスキップ）で冪等・省コスト。
 - **定数モジュール**: カテゴリ／セクターの検索クエリ・件数上限・lookback は `app/adapters/general_news_config.py`（`SECTOR_NEWS_QUERIES`／`SECTOR_NEWS_MAX_PER_SECTOR=3`／`SECTOR_NEWS_LOOKBACK_DAYS=3` 等・env 化しない＝[ADR-034](decisions.md)）。
-- **消費先**: `GET /general-news`（Dashboard widget）・Tool `get_general_news`（市況のみ）・新 Tool `get_news_context`（3 層構造）・`investigate_stock`／`GET /dossiers/{code}`（銘柄層）。既存 API のレスポンス形は不変（`source` を `source_type` にマップ）。UI 変更なし（`/news` 画面・セクター可視化は [ADR-047](decisions.md) へ繰り延べ）。
+- **消費先**: `GET /general-news`（Dashboard widget）・`GET /news`（`/news` 画面の一覧＝[ADR-047](decisions.md)）・Tool `get_general_news`（市況のみ）・新 Tool `get_news_context`（3 層構造）・`investigate_stock`／`GET /dossiers/{code}`（銘柄層）。既存 API のレスポンス形は不変（`source` を `source_type` にマップ）。
 - 適時開示（TDnet）は有料アドオンのため後付け。`source='disclosure'` でこのコーパスに入れる（構造が複雑になれば専用テーブルに分離）。
 
 ### `method_cards` — 手法カタログ／参照知識（将来予約・初期は不要）

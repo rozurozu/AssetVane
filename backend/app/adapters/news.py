@@ -430,7 +430,7 @@ async def _process_item(item: dict) -> dict:
     body = extract(html)
     if body and len(body) >= _MIN_ARTICLE_TEXT_LEN:
         try:
-            summary = await _summarize_article(body)
+            summary = await summarize_article(body)
             return _article(real_url, summary, "summarized")
         except Exception as exc:  # noqa: BLE001 — 要約失敗で記事を捨てず description/headline へ落とす
             logger.warning("記事要約に失敗（%s）: %s → description/headline へ", real_url, exc)
@@ -468,11 +468,14 @@ def _extract_description(html: str) -> str | None:
     return description.strip() if isinstance(description, str) and description.strip() else None
 
 
-async def _summarize_article(text: str) -> str:
+async def summarize_article(text: str) -> str:
     """記事本文を LLM 単発で 2〜3 行に要約する（summarize_dossier と同じ流儀・ADR-014/020）。
 
     advisor の CORE/POLICY は使わず、最小指示＋本文を渡して `generate_once(source="dossier")` を
     1 回呼ぶ。engine は import 鎖の先（service→registry→…）にあるため遅延 import で循環を断つ。
+
+    ADR-046 でユーザー貼付テキストの要約（services.news.ingest_user_news）にも再利用するため
+    public 名（summarize_article）に公開した。本体・指示文はニュース記事要約と共通でよい。
     """
     from app.advisor.engine import generate_once
 

@@ -924,6 +924,63 @@ export function getGeneralNews(signal?: AbortSignal): Promise<GeneralNewsRespons
   return getJSON<GeneralNewsResponse>("/general-news", signal);
 }
 
+// --- ADR-047 ニュース統合コーパス（news・銘柄/セクター/市場の 3 層）---
+// backend の GET/POST/DELETE /news と 1:1。本文は持たず要約＋URL のみ（ADR-020）。
+// level は "stock"/"sector"/"market" の 3 層。source='user' のものだけ DELETE 可。
+
+/** ニュース 1 件（ADR-047）。level で 3 層に分かれる。url が "user://" 始まりは手入力で外部リンクなし。 */
+export interface NewsItem {
+  id: number;
+  level: string; // "stock" / "sector" / "market"
+  code: string | null; // level=stock のとき銘柄コード（他は null）
+  sector17_code: string | null; // level=sector のとき S17 コード（他は null）
+  category: string | null; // market/一般カテゴリ（任意）
+  source: string | null; // "user"（手入力）/ 取得源（"user" のみ DELETE 可）
+  url: string; // 手入力は "user://..."（外部リンク化しない）
+  title: string | null;
+  summary: string | null;
+  published_at: string | null;
+}
+
+/** `GET /news` レスポンス（items ラッパ）。 */
+export interface NewsListResponse {
+  items: NewsItem[];
+}
+
+/** `POST /news` リクエスト（本文を要約して取り込む。要約失敗時 502）。 */
+export interface NewsIngestInput {
+  text: string;
+  url?: string | null;
+  code?: string | null;
+}
+
+/** ニュース一覧（ADR-047）。level/since/limit は指定時のみ query に付与。台帳が空でも 200。 */
+export function getNews(
+  params?: { level?: string; since?: string; limit?: number },
+  signal?: AbortSignal,
+): Promise<NewsListResponse> {
+  const p = new URLSearchParams();
+  if (params?.level) p.set("level", params.level);
+  if (params?.since) p.set("since", params.since);
+  if (params?.limit != null) p.set("limit", String(params.limit));
+  const qs = p.toString();
+  return getJSON<NewsListResponse>(`/news${qs ? `?${qs}` : ""}`, signal);
+}
+
+/** ニュースを手入力で取り込む（ADR-047・本文を AI 要約。失敗時 502 が detail 付きで throw）。 */
+export function ingestNews(input: NewsIngestInput): Promise<NewsItem> {
+  return postJSON<NewsItem>("/news", {
+    text: input.text,
+    url: input.url ?? null,
+    code: input.code ?? null,
+  });
+}
+
+/** ニュースを削除（ADR-047・source='user' 以外は backend が 404）。 */
+export function deleteNews(id: number): Promise<{ ok: boolean }> {
+  return del<{ ok: boolean }>(`/news/${id}`);
+}
+
 // --- Phase 7 Sector Lead-Lag（業種リードラグ・GET /lead-lag）---
 // backend の Pydantic と 1:1。score 降順ランキング（翌日強含み業種）を読むだけ（AI には計算させない＝ADR-014）。
 // is_delayed=true（plan=free か model_as_of が約 3 ヶ月古い）は Free 低信頼バナーの判定材料。

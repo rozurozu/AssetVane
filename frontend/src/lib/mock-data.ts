@@ -31,6 +31,7 @@ export const nav: NavSection[] = [
       // 取引・現金・外部資産の入力は Portfolio 内「入力」タブに集約（OPEN-D＝独立 nav を作らない）。
       { label: "Portfolio", icon: "⚖", href: "/portfolio" },
       { label: "Watchlist", icon: "👁", href: "/watchlist" },
+      { label: "News", icon: "📰", href: "/news" },
     ],
   },
   {

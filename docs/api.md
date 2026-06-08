@@ -69,6 +69,9 @@
 | GET | `/dossiers/{code}` | 銘柄の調査レポート（markdown）と要約ソース一覧（未調査時は実装上 200＋空ドシエを返す＝要確認・phase4-spec §5.2）|
 | POST | `/dossiers/{code}/investigate` | その銘柄を調査（`investigate_stock` を起動。チャットの「この銘柄調査して」と共用）|
 | GET | `/general-news` | 銘柄に紐づかない直近の一般ニュース（市況・マクロ・世界情勢）をカテゴリ別に返す（[ADR-034](decisions.md)）|
+| GET | `/news` | 統合ニュースを `level`/`since`/`limit` で一覧（新着順・[ADR-047](decisions.md)）|
+| POST | `/news` | 貼付テキストを要約して統合コーパスに投入（同期・要約失敗時は 502・[ADR-046](decisions.md)）|
+| DELETE | `/news/{id}` | ユーザー投入（`source='user'`）のニュースを削除（自動取得分は 404・[ADR-046](decisions.md)）|
 
 ## 6. システム
 

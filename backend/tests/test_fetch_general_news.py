@@ -1,7 +1,7 @@
 """fetch_general_news（一般ニュース・市況層・ADR-034 → ADR-044）の単体テスト（ネット非依存）。
 
 testing-strategy: 外部 API は叩かず、NewsAdapter の内部関数（_fetch_rss_items / _decode_google_url
-/ _fetch_html / _summarize_article）と config 定数（カテゴリ・lookback・件数上限）を monkeypatch
+/ _fetch_html / summarize_article）と config 定数（カテゴリ・lookback・件数上限）を monkeypatch
 する。担保すること（ADR-034 / ADR-044 確定事項）:
   - 各記事に正しい category（ラベル）＋統合タグ（level='market'・source='news'）が付く
   - カテゴリ数ぶんループする
@@ -91,7 +91,7 @@ def _patch_pipeline(
     monkeypatch.setattr(news, "_fetch_rss_items", _items)
     monkeypatch.setattr(news, "_decode_google_url", _decode)
     monkeypatch.setattr(news, "_fetch_html", _html)
-    monkeypatch.setattr(news, "_summarize_article", _summarize)
+    monkeypatch.setattr(news, "summarize_article", _summarize)
 
 
 def test_disabled_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -141,7 +141,7 @@ def test_known_urls_skipped_and_excluded(monkeypatch: pytest.MonkeyPatch) -> Non
         summarize_calls.append(text)
         return "要約された 2 行。"
 
-    monkeypatch.setattr(news, "_summarize_article", _summarize_counting)
+    monkeypatch.setattr(news, "summarize_article", _summarize_counting)
 
     known = {"https://news.google.com/rss/articles/KNOWN?oc=5"}
     result = _run(news.fetch_general_news(known))
