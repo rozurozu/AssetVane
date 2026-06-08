@@ -20,6 +20,7 @@ from app.advisor.tools.schemas import (
     FetchNewsArgs,
     GetDossierArgs,
     GetFinancialsArgs,
+    GetFundHoldingsArgs,
     GetGeneralNewsArgs,
     GetIndicatorsArgs,
     GetLeadLagArgs,
@@ -164,6 +165,17 @@ REGISTRY: dict[str, ToolDef] = {
         parameters=_EMPTY_SCHEMA,
         handler=handlers.handle_get_asset_overview,
         min_phase=2,
+    ),
+    "get_fund_holdings": ToolDef(
+        name="get_fund_holdings",
+        description=(
+            "保有投資信託（投信）の口数・取得単価・最新基準価額（NAV）・評価額・含み損益・"
+            "投信内ウェイトを取得する。投信の保有状況・含み損益を論じる前に呼ぶ"
+            "（基準価額は 10,000 口あたりの円・ADR-054）。"
+        ),
+        parameters=_schema(GetFundHoldingsArgs),
+        handler=handlers.handle_get_fund_holdings,
+        min_phase=4,
     ),
     # --- Phase 3 ---
     "submit_journal": ToolDef(

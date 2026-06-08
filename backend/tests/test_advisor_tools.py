@@ -69,6 +69,8 @@ def test_registry_handlers_are_registered() -> None:
         "get_valuation",
         "screen_valuation",
         "get_asset_overview",
+        # ADR-054: 投信保有（min_phase=4）。
+        "get_fund_holdings",
         "submit_journal",
         # Phase 4（Stock Dossier）。露出は min_phase=4 ゲートで制御（CURRENT_PHASE=4 で露出）。
         "get_dossier",

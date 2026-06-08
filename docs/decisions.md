@@ -714,3 +714,28 @@
 - **採否経緯**: Codex ×2 と設計エージェントが独立に同結論（S17 canonical ＋ `app/reference` 集約・lead_lag 不変）に至った。
 - **段階**: docs 確定＋実装（別タスク）＝`app/reference/sector_codes.py`（マッピング dict＋純関数）・`adapters/general_news_config.py`／`adapters/news.py`／`services/news.py`／`services/lead_lag.py` の張り替え・`db/schema.py` コメント修正・テスト修正＋新規 `test_sector_codes.py`。[data-model.md](data-model.md) に同期（stocks／news の `sector17_code` 説明・取り込みジョブ）。
 - **関連**: [ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)（バグの発生元・本 ADR で体系を確定）・[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（sector17/lead_lag の ETF ティッカー）・[ADR-034](#adr-034-一般ニュースダイジェスト銘柄に紐づかないニュースを別系統で持つ実装済み)（`general_news_config.py`・参照知識の区別）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタは外部 IO 専用・参照知識は別）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（事実はコード・参照知識は安定資産）。
+
+## ADR-054: 投資信託（非上場投信）を専用テーブルで保有管理し含み損益を随時計算する（external_assets と分離）
+
+- **状況/問題**: 利用者は楽天証券で **eMAXIS Slim 全世界株式（オール・カントリー）** と **楽天・ゴールド・ファンド**（いずれも非上場の公募投信）を保有しており、基準価額（NAV）を日次取得して含み損益を**随時**見たい。現状の投信の置き場は `external_assets`（[ADR-010](#adr-010-データソースはアダプタ越しにする)・[data-model.md](data-model.md)）＝「全体に対する割合だけ AI に把握させる軽量記録・評価額は手入力・深追いしない」だった。これは「割合文脈で深追いしない」という当初方針に沿った設計だが、NAV を引いて取得単価との差から損益を自動計算する用途には合わない（手入力評価額では随時の含み損益が出せない）。株（`stocks`/`daily_quotes`/`transactions`/`holdings`）は取引ベースで保有・損益を導出する仕組みが既にある（[ADR-019](#adr-019-保有は取引から導出する-holdings-は-transactions-の射影)）のに、投信だけがその枠外にいた。
+- **検討して却下した案**:
+  - **`external_assets` を拡張して NAV と取得単価を相乗りさせる** → 却下。`external_assets` は「軽量・割合文脈・1 行＝評価額手入力」という役割で意図的に薄く作ってある（[ADR-010](#adr-010-データソースはアダプタ越しにする)）。ここに取引履歴・口数・移動平均取得単価・NAV 時系列を足すと、薄い記録という役割が崩れ、株側の取引ベース導出（[ADR-019](#adr-019-保有は取引から導出する-holdings-は-transactions-の射影)）と二重実装になる。投信は別の重さの存在として独立させる。
+  - **投信を `stocks`/`daily_quotes` に混ぜる**（上場 ETF と同列に扱う）→ 却下。非上場投信は証券コードでなく **ISIN/協会コード**で識別し、四本値でなく **1 日 1 本の NAV（基準価額）**を持つ。価格の単位も「10,000 口あたりの円」で株価とは別物。混ぜると識別子・価格単位・取得元（J-Quants は[日本株専用](#adr-008-j-quants-は-v2x-api-key-を使うv1-は使わない)で投信 NAV を返さない）がすべて食い違う。
+  - **NAV 取得元に各運用会社サイトのスクレイピングや有料 API を使う** → 却下。**投信総合検索ライブラリー**（ウエルスアドバイザー運営）が **ISIN 指定の CSV** を全公募投信で同一フォーマット・遅延なしの実値で提供しており、これを使えば 1 経路で両ファンドを賄える。
+- **決定**:
+  - **投信専用テーブルを 4 つ新設**し、株の `stocks`/`daily_quotes`/`transactions`/`holdings` を**ミラー**する（`funds`／`fund_navs`／`fund_transactions`／`fund_holdings`・列詳細は [data-model.md](data-model.md)）。`external_assets` には混ぜない。
+  - **識別子は ISIN を主キー**にする（NAV 取得が ISIN 必須のため）。協会コードは表示用の任意列に留める。
+  - **NAV 取得元は投資信託総合検索ライブラリーの CSV**（ISIN 指定・全公募投信同一フォーマット・遅延なし実値）。アダプタ越しに取る（[ADR-010](#adr-010-データソースはアダプタ越しにする)）。
+  - **単位はすべて「10,000 口あたりの円」**（基準価額・取得単価・口数の換算基準）。評価額 = `units / 10000 * nav`、含み損益 = `units / 10000 * (nav - avg_cost)`。AI には計算させず、Python が事実を出す（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)）。
+  - **入力は株と同じ取引ベース**＝`fund_transactions`（buy/sell）を記録し、口数と移動平均取得単価を `fund_holdings` に自動導出する（[ADR-019](#adr-019-保有は取引から導出する-holdings-は-transactions-の射影)と同型・mutation 後に atomic 再計算）。
+  - **画面は portfolio に専用「投資信託」セクション**を設け、`asset-overview` に **`fund_value` バケット**を新設して total／pnl／配分パイに独立スライス（「投資信託」）として合算する（`asset_snapshots` に `fund_value` 列を追加）。
+  - **周辺連携は最小限を今回含める**＝AI Advisor Tool `get_fund_holdings`（投信保有の事実を返す）と NAV 推移チャートまで。**`/optimize`（PyPortfolioOpt 最適化）への投信組み込みは見送り**。
+  - **二重計上の回避は手動**＝既存 `external_assets` に置いていたオルカン等は、利用者が手動で削除する。移行コードは書かない。
+  - **「投信は割合文脈で深追いしない」という当初方針（[ADR-010](#adr-010-データソースはアダプタ越しにする)）を、本 ADR で意図的に上書きする**。深追いするのは保有 2 ファンドの「含み損益の随時計算」という具体目的があるため。
+- **理由**: 投信を株と同じ「取引ベース＋日次価格＋導出保有」の形に揃えれば、含み損益・評価額・資産全体への合算が株とまったく同じ規律（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)＝事実は Python・[ADR-019](#adr-019-保有は取引から導出する-holdings-は-transactions-の射影)＝取引から導出）で出せる。`external_assets` の「軽量・割合文脈」という役割を壊さず、投信だけ別の重さで独立させることで、両者の責務が混ざらない。
+- **将来課題（落とさない・明示管理）**:
+  - **自動積立**: 毎月の積立を `fund_transactions` の buy として自動生成する仕組みは今回作らない。当面は積立分も buy として手入力する。
+  - **`/optimize`・相関分析への投信組み込み**: 平均分散最適化・相関ヒートマップ（[ADR の Phase 2 群]）に投信を載せるのは見送り。NAV 時系列が溜まり相関を語れるようになってから再検討。
+  - **`external_assets` からの自動データ移行はしない**（手動削除）。移行コードを書かない判断は本 ADR で確定済みで、将来も自動移行は予定しない。
+- **段階**: docs 確定（本 ADR）。コードは別タスクで実装中（[data-model.md](data-model.md)／[api.md](api.md)／[roadmap.md](roadmap.md) に同期）。
+- **関連**: [ADR-010](#adr-010-データソースはアダプタ越しにする)（external_assets の「軽量・割合文脈」を本 ADR で上書き・NAV はアダプタ越し）・[ADR-019](#adr-019-保有は取引から導出する-holdings-は-transactions-の射影)（取引ベース導出・mutation 後 atomic 再計算）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（含み損益は Python が計算）・[ADR-008](#adr-008-j-quants-は-v2x-api-key-を使うv1-は使わない)（J-Quants は日本株専用＝投信 NAV は別経路）・[ADR-001](#adr-001-単一ユーザー前提で作る)（単一ユーザー・移行は手動で足りる）。

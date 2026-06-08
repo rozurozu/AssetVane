@@ -16,6 +16,7 @@ from sqlalchemy import Connection
 
 from app.db import repo
 from app.db.engine import get_conn
+from app.services.fund_holdings import value_fund_holdings
 from app.services.policy import get_policy
 from app.services.portfolio import portfolio_deviations, value_holdings
 
@@ -73,7 +74,7 @@ class OkOut(BaseModel):
 class AllocationSliceOut(BaseModel):
     """spec §5 P2-7 AllocationSlice。"""
 
-    name: str  # "株式" | "現金" | "投信"
+    name: str  # "株式" | "現金" | "投資信託" | "外部資産"
     value: float
     weight: float  # 総資産内 0..1
 
@@ -105,6 +106,7 @@ class AssetOverviewOut(BaseModel):
     stock_value: float
     cash_value: float
     external_value: float
+    fund_value: float  # 投信評価額合計（最新 NAV・ADR-054）
     pnl: float
     allocation: list[AllocationSliceOut]
     policy_targets: dict[str, Any]  # target_cash_ratio / max_position_weight
@@ -179,7 +181,8 @@ def delete_external_asset(asset_id: int) -> dict[str, bool]:
 def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut:
     """資産全体像を返す（spec P2-7）。
 
-    株式評価額（holdings × 最新 close）＋ 現金 ＋ 外部資産の合計。
+    株式評価額（holdings × 最新 close）＋ 現金 ＋ 外部資産 ＋ 投信評価額（最新 NAV・ADR-054）
+    の合計。投信の含み損益も pnl に合算する。
     deviations は quant の compute_deviations（単一関数）が計算（決定6）。
     sector_weights は株式内 0..1 ベースで統一（注記: 全資産内比率ではなく株式内）。
     Free 12週遅延（ADR-008）: is_delayed=True 固定。
@@ -215,7 +218,21 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
     ext_rows = repo.list_external_assets(conn)
     external_value = sum(float(r["value"]) for r in ext_rows if r.get("value") is not None)
 
-    total_value = stock_value + cash_value + external_value
+    # --- 投信評価額（最新 NAV・ADR-054）---
+    fund_value = 0.0
+    if portfolio_id is not None:
+        fund_rows = repo.list_fund_holdings(conn, portfolio_id)
+        isins = [f["isin"] for f in fund_rows]
+        if isins:
+            latest_navs = repo.get_latest_fund_navs(conn, isins)
+            fund_valued = value_fund_holdings(fund_rows, latest_navs)
+            for f in fund_valued:
+                if f.get("market_value") is not None:
+                    fund_value += float(f["market_value"])
+                if f.get("unrealized_pnl") is not None:
+                    pnl += float(f["unrealized_pnl"])
+
+    total_value = stock_value + cash_value + external_value + fund_value
 
     # --- allocation スライス（総資産内 0..1）---
     def _weight(v: float) -> float:
@@ -224,7 +241,8 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
     allocation = [
         AllocationSliceOut(name="株式", value=stock_value, weight=_weight(stock_value)),
         AllocationSliceOut(name="現金", value=cash_value, weight=_weight(cash_value)),
-        AllocationSliceOut(name="投信", value=external_value, weight=_weight(external_value)),
+        AllocationSliceOut(name="投資信託", value=fund_value, weight=_weight(fund_value)),
+        AllocationSliceOut(name="外部資産", value=external_value, weight=_weight(external_value)),
     ]
 
     # --- policy と deviations ---
@@ -253,6 +271,7 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
         stock_value=stock_value,
         cash_value=cash_value,
         external_value=external_value,
+        fund_value=fund_value,
         pnl=pnl,
         allocation=allocation,
         policy_targets=policy_targets,

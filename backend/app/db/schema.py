@@ -172,7 +172,7 @@ index_quotes = Table(
 )
 
 # 日次総資産（夜間バッチが焼く・1 日 1 行）。
-# 保有評価額（遅延株価）＋ 現金 ＋ 外部資産の合計（spec §3.3）。
+# 保有評価額（遅延株価）＋ 現金 ＋ 外部資産 ＋ 投信評価額の合計（spec §3.3・ADR-054）。
 asset_snapshots = Table(
     "asset_snapshots",
     metadata,
@@ -181,7 +181,73 @@ asset_snapshots = Table(
     Column("stock_value", Float),
     Column("cash_value", Float),
     Column("external_value", Float),
+    Column("fund_value", Float),  # 投信評価額合計（ADR-054・0015_funds で追加）
     Column("pnl", Float),
+)
+
+# ===== 投資信託（ADR-054: 専用テーブル・投信総合検索ライブラリー CSV で NAV 取得） =====
+# 当初方針（投信は割合文脈で深追いしない）を ADR-054 で上書きし、非上場投信の保有を株と
+# 同じ「取引→導出」構造で本格管理する。識別子は ISIN（NAV 取得が ISIN 必須）。基準価額・
+# 取得単価・口数は日本の慣行「10,000 口あたりの円」で扱う（評価額 = units/10000 * nav）。
+# external_assets には混ぜない（投信以外の不透明資産＝金・他口座まとめ専用に残す）。
+
+# 投信マスタ（stocks 相当）。ユーザーが ISIN＋名称＋協会コードを 1 銘柄一度だけ登録する。
+# 協会コード（0331418A 等）は NAV 取得に必須（投信総合検索ライブラリー CSV の associFundCd
+# パラメータ。欠落すると空レスポンス＝実機確認 2026-06-08）。DB 列は nullable のままだが、
+# 登録 API/UI の境界で必須にする（assoc_code 無しの投信は NAV 自動取得が効かず fetch_fund_navs
+# が個別 skip する）。ISIN は NAV の isinCd と holdings 結合キーを兼ねる。
+funds = Table(
+    "funds",
+    metadata,
+    Column("isin", String, primary_key=True),  # 例 'JP90C000H1T1'（オルカン）
+    Column("name", String, nullable=False),  # 表示名「eMAXIS Slim 全世界株式」等
+    Column("assoc_code", String),  # 協会コード '0331418A'（NAV 取得に必須・登録境界で required）
+    Column("updated_at", String),  # ISO8601
+)
+
+# NAV（基準価額）時系列（daily_quotes 相当・FundNavAdapter 供給）。
+# (isin, date) を複合主キーにし UPSERT で冪等（ADR-002）。nav は 10,000 口あたりの円。
+# isin への FK は張らない（生データ流儀＝index_quotes と同方針・マスタ未登録でも取り込める）。
+fund_navs = Table(
+    "fund_navs",
+    metadata,
+    Column("isin", String, nullable=False),
+    Column("date", String, nullable=False),  # 基準日 'YYYY-MM-DD'
+    Column("nav", Float),  # 基準価額（10,000 口あたりの円）
+    PrimaryKeyConstraint("isin", "date", name="pk_fund_navs"),
+    Index("ix_fund_navs_isin", "isin"),
+    Index("ix_fund_navs_date", "date"),
+)
+
+# 投信取引記録（transactions 相当・一次データ。fund_holdings はここから導出＝ADR-019/054）。
+# 自分データ（手入力）なので isin → funds.isin に FK を張る（誤入力防止・裁定 L-7）。
+# price は約定時の基準価額（10,000 口あたりの円）、units は口数。毎月積立も buy として手入力。
+fund_transactions = Table(
+    "fund_transactions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("portfolio_id", Integer, ForeignKey("portfolios.portfolio_id"), nullable=False),
+    Column("isin", String, ForeignKey("funds.isin"), nullable=False),
+    Column("side", String, nullable=False),  # 'buy' / 'sell'
+    Column("units", Float, nullable=False),  # 口数
+    Column("price", Float, nullable=False),  # 約定基準価額（10,000 口あたりの円）
+    Column("fee", Float),  # 手数料（任意・avg_cost には含めない）
+    Column("traded_at", String, nullable=False),  # 約定日 'YYYY-MM-DD'
+    Index("ix_fund_transactions_portfolio", "portfolio_id"),
+    Index("ix_fund_transactions_isin", "isin"),
+)
+
+# 投信保有（holdings 相当・fund_transactions からの導出値。直接編集しない＝ADR-019/054）。
+# (portfolio_id, isin) に UNIQUE を張り UPSERT キーとする。avg_cost は移動平均取得単価。
+fund_holdings = Table(
+    "fund_holdings",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("portfolio_id", Integer, ForeignKey("portfolios.portfolio_id"), nullable=False),
+    Column("isin", String, ForeignKey("funds.isin"), nullable=False),
+    Column("units", Float, nullable=False),  # 導出: Σbuy.units − Σsell.units
+    Column("avg_cost", Float),  # 導出: 移動平均取得単価（10,000 口あたりの円）
+    UniqueConstraint("portfolio_id", "isin", name="uq_fund_holdings_portfolio_isin"),
 )
 
 # 財務・決算（0005_financials・data-model.md §2・spec §2.1）。

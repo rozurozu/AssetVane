@@ -46,7 +46,34 @@
 | GET | `/portfolio/{id}/metrics` | 相関・シャープ・最大ドローダウン |
 | POST | `/portfolio/{id}/optimize` | policy 制約下の最適比率 |
 | GET | `/portfolio/{id}/backtest` | 過去シミュレーション（現保有 buy&hold vs TOPIX） |
-| GET | `/asset-overview` | 保有・現金・割合・資産推移（遅延注記付き）|
+| GET | `/asset-overview` | 保有・現金・割合・資産推移（遅延注記付き・**`fund_value` を含む**＝[ADR-054](decisions.md)）|
+
+### 投資信託（非上場投信・[ADR-054](decisions.md)）
+
+NAV を日次取得し含み損益を随時計算する投信専用系統。株（`/holdings`・`/transactions`）の取引ベース導出（[ADR-019](decisions.md)）をミラーする。識別子は **ISIN**、価格・口数・取得単価は**「10,000 口あたりの円」**。`external_assets`（割合文脈・軽量）とは別系統。
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| GET | `/funds` | 投信マスタ一覧 → `[{isin, name, assoc_code, updated_at}]` |
+| POST | `/funds` | 投信を登録（body `{isin, name, assoc_code?}`）→ 登録した 1 件 |
+| DELETE | `/funds/{isin}` | 投信を削除 → `{ok}` |
+| GET | `/fund-transactions?portfolio_id=` | 投信の取引履歴 → `[{id, portfolio_id, isin, side, units, price, fee, traded_at}]` |
+| POST/PUT/DELETE | `/fund-transactions`, `/fund-transactions/{id}` | 投信取引の記録・編集・削除 → mutation 後、評価額付き保有 `FundHolding[]` を返す（holdings 再計算と同型・atomic＝[ADR-019](decisions.md)）|
+| GET | `/fund-holdings?portfolio_id=` | 投信の保有（評価額・含み損益・配分つき）→ `FundHolding[]` |
+| GET | `/funds/{isin}/nav-series?limit=` | NAV 推移（チャート用）→ `[{date, nav}]` |
+
+```ts
+interface FundHolding {
+  isin: string; name: string;
+  units: number; avg_cost: number;        // avg_cost は 10,000 口あたり円
+  last_nav: number; nav_date: string;     // YYYY-MM-DD
+  market_value: number;                   // units/10000*last_nav
+  unrealized_pnl: number;                 // units/10000*(last_nav-avg_cost)
+  weight: number;                         // 投信内の配分（0..1）
+}
+```
+
+`POST`/`PUT`/`DELETE /fund-transactions` のレスポンスは、取引 mutation と同一トランザクション内で再計算した `FundHolding[]` を返す（取引が一次データ、保有はその導出＝[ADR-019](decisions.md)）。存在しない id は 404。NAV は投信総合検索ライブラリーの CSV（ISIN 指定・遅延なし実値）をアダプタ越しに取得する（[ADR-010](decisions.md)）。**`/optimize` への投信組み込みは見送り**（[ADR-054](decisions.md) の将来課題）。
 
 ### `GET /portfolio/{id}/backtest`
 

@@ -59,6 +59,8 @@
 
 > **当面は単一 portfolio 固定で運用**する（`portfolio_id` は将来の器として持つが、UI/最適化は 1 個前提で進める）。複数 portfolio を全機能に引き回すのは増えてから（[ADR-001](decisions.md)）。
 
+> **投資信託の保有管理・含み損益（Phase 2 の延長・[ADR-054](decisions.md)）**: 非上場投信（eMAXIS Slim 全世界株式・楽天ゴールド等）を専用テーブル（`funds`/`fund_navs`/`fund_transactions`/`fund_holdings`）で取引ベース管理し、NAV（投信総合検索ライブラリーの CSV・ISIN キー・10,000 口あたり円）を日次取得して含み損益を随時計算する。portfolio に専用「投資信託」セクション・`asset-overview` に `fund_value` バケットを足し total/pnl/配分に独立スライスで合算。AI Tool `get_fund_holdings`・NAV 推移チャートまで含め、**`/optimize` への投信組み込みは見送り**。`external_assets` のオルカン等は二重計上回避のため手動削除（移行コードなし）。当初の「投信は割合文脈で深追いしない」（[ADR-010](decisions.md)）を [ADR-054](decisions.md) で上書き。
+
 ---
 
 ## Phase 3: 🧠 AI Advisor（製品の核心）— 2 軸

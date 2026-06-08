@@ -133,6 +133,12 @@ class ScreenValuationArgs(_ToolArgs):
     limit: int | None = None
 
 
+class GetFundHoldingsArgs(_ToolArgs):
+    """get_fund_holdings の引数（ADR-054）。省略時は先頭ポートフォリオ（portfolio_id 既定 1）。"""
+
+    portfolio_id: int | None = None
+
+
 class GetAssetOverviewArgs(_ToolArgs):
     """get_asset_overview の引数（spec §4.4・引数なし）。"""
 

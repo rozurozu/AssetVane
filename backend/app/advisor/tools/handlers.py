@@ -28,6 +28,7 @@ from app.advisor.tools.schemas import (
     GetAssetOverviewArgs,
     GetDossierArgs,
     GetFinancialsArgs,
+    GetFundHoldingsArgs,
     GetGeneralNewsArgs,
     GetIndicatorsArgs,
     GetLeadLagArgs,
@@ -49,6 +50,7 @@ from app.quant import (
     compute_portfolio_metrics,
     optimize_portfolio,
 )
+from app.services.fund_holdings import value_fund_holdings
 from app.services.news import build_news_context
 from app.services.policy import get_policy
 from app.services.portfolio import (
@@ -414,7 +416,21 @@ async def handle_get_asset_overview(args: dict[str, object]) -> dict[str, Any]:
             cash_value = float(cash_row["balance"]) if cash_row else 0.0
             ext_rows = repo.list_external_assets(conn)
             external_value = sum(float(r["value"]) for r in ext_rows if r.get("value") is not None)
-            total_value = stock_value + cash_value + external_value
+
+            # 投信評価額（最新 NAV・ADR-054）。routers/assets.py の asset-overview と同経路。
+            fund_value = 0.0
+            if portfolio_id is not None:
+                fund_rows = repo.list_fund_holdings(conn, portfolio_id)
+                isins = [f["isin"] for f in fund_rows]
+                if isins:
+                    latest_navs = repo.get_latest_fund_navs(conn, isins)
+                    for f in value_fund_holdings(fund_rows, latest_navs):
+                        if f.get("market_value") is not None:
+                            fund_value += float(f["market_value"])
+                        if f.get("unrealized_pnl") is not None:
+                            pnl += float(f["unrealized_pnl"])
+
+            total_value = stock_value + cash_value + external_value + fund_value
 
             def _weight(v: float) -> float:
                 return v / total_value if total_value > 0 else 0.0
@@ -422,7 +438,8 @@ async def handle_get_asset_overview(args: dict[str, object]) -> dict[str, Any]:
             allocation = [
                 {"name": "株式", "value": stock_value, "weight": _weight(stock_value)},
                 {"name": "現金", "value": cash_value, "weight": _weight(cash_value)},
-                {"name": "投信", "value": external_value, "weight": _weight(external_value)},
+                {"name": "投資信託", "value": fund_value, "weight": _weight(fund_value)},
+                {"name": "外部資産", "value": external_value, "weight": _weight(external_value)},
             ]
 
             policy = get_policy(conn)
@@ -445,6 +462,7 @@ async def handle_get_asset_overview(args: dict[str, object]) -> dict[str, Any]:
             "stock_value": stock_value,
             "cash_value": cash_value,
             "external_value": external_value,
+            "fund_value": fund_value,
             "pnl": pnl,
             "allocation": allocation,
             "policy_targets": policy_targets,
@@ -453,6 +471,44 @@ async def handle_get_asset_overview(args: dict[str, object]) -> dict[str, Any]:
         }
     except Exception as exc:
         logger.exception("handle_get_asset_overview 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_fund_holdings(args: dict[str, object]) -> dict[str, Any]:
+    """get_fund_holdings（ADR-054）。投信保有を最新 NAV で評価して事実だけ返す。
+
+    routers/funds.py の fund-holdings 経路を踏襲（計算経路を一致させる＝ADR-014）。
+    Python（value_fund_holdings）が 10,000 口換算で評価額・含み損益・投信内 weight を算出し、
+    LLM には事実だけ渡す（判定はしない）。保有 0・NAV 未取得は空/None をそのまま通す。
+    """
+    try:
+        pid_arg = GetFundHoldingsArgs.model_validate(args).portfolio_id
+        with get_engine().connect() as conn:
+            portfolio_id = _resolve_portfolio_id(conn, pid_arg)
+            if portfolio_id is None:
+                return {"error": "ポートフォリオが存在しません。"}
+            holdings_rows = repo.list_fund_holdings(conn, portfolio_id)
+            isins = [h["isin"] for h in holdings_rows]
+            latest_navs = repo.get_latest_fund_navs(conn, isins) if isins else {}
+            valued = value_fund_holdings(holdings_rows, latest_navs)
+
+        holdings = [
+            {
+                "isin": h["isin"],
+                "name": h.get("name"),
+                "units": h.get("units"),
+                "avg_cost": h.get("avg_cost"),
+                "last_nav": h.get("last_nav"),
+                "nav_date": h.get("nav_date"),
+                "market_value": h.get("market_value"),
+                "unrealized_pnl": h.get("unrealized_pnl"),
+                "weight": h.get("weight"),
+            }
+            for h in valued
+        ]
+        return {"portfolio_id": portfolio_id, "holdings": holdings}
+    except Exception as exc:
+        logger.exception("handle_get_fund_holdings 失敗")
         return {"error": str(exc)}
 
 

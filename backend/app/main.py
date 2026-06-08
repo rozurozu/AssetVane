@@ -26,6 +26,7 @@ from app.routers.assets import router as assets_router
 from app.routers.batch import router as batch_router
 from app.routers.diagnostics import router as diagnostics_router
 from app.routers.dossier import router as dossier_router
+from app.routers.funds import router as funds_router
 from app.routers.general_news import router as general_news_router
 from app.routers.lead_lag import router as lead_lag_router
 from app.routers.news import router as news_router
@@ -116,6 +117,8 @@ app.include_router(advisor_state_router)
 app.include_router(portfolio_router)
 # 資産概要・現金・外部資産（Phase 2）。GET /cash・/external-assets・/asset-overview。
 app.include_router(assets_router)
+# 投資信託（ADR-054）。GET/POST/DELETE /funds・/fund-transactions・/fund-holdings・nav-series。
+app.include_router(funds_router)
 # スクリーニング保存フィルタ（ADR-031）。CRUD /screening-filters（routers/screening_filters.py）。
 app.include_router(screening_filters_router)
 # watchlist（Phase 4／spec §5.1）。GET/POST/DELETE /watchlist（routers/watchlist.py）。

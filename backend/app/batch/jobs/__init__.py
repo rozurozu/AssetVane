@@ -16,6 +16,7 @@ from app.batch.jobs import (
     calc_signals,
     calc_valuation,
     fetch_financials,
+    fetch_fund_navs,
     fetch_general_news,
     fetch_index,
     fetch_quotes,
@@ -42,6 +43,9 @@ NIGHTLY_JOBS = [
     # Phase 5: 学習済みモデルで ai_alpha を焼く。calc_signals の後・run_advisor の前に置き、
     # 夜の分析AI が当日の ai_alpha を読めるようにする（phase5-spec.md §4.4）。
     score_ai_alpha.run,
+    # ADR-054: 投信 NAV（基準価額）を取得。snapshot_assets が当日 NAV から fund_value を焼くため、
+    # その前に置き NAV を揃える（fetch_index と同様の取得→評価の順序）。
+    fetch_fund_navs.run,
     snapshot_assets.run,  # Phase 2: 今日の株価確定後に評価額を焼く（phase2-spec.md §3.3）
     # ADR-034: 夜の分析AI の市況文脈材料として run_advisor の直前で一般ニュースを取得・保存。
     fetch_general_news.run,

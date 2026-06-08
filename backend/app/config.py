@@ -118,6 +118,14 @@ class Settings(BaseSettings):
     # IndexAdapter（Stooq）取得のスロットル間隔（秒）。Stooq は 1.0 で十分（ADR-010）。
     index_min_interval_seconds: float = 1.0
 
+    # --- FundNavAdapter（投信 NAV・基準価額・Phase 2/投信保有管理・ADR-010/054） ---
+    # 投信総合検索ライブラリー（ウエルスアドバイザー運営）の CSV を取得する。
+    # ダウンロード: {base}/FdsWeb/FDST030000/csv-file-download?isinCd=<ISIN>&associFundCd=<協会>。
+    # 文字コードは Shift_JIS（content-type は utf-8 を名乗るが実体 SJIS・2026-06 実機確認）。
+    fund_nav_base_url: str = "https://toushin-lib.fwg.ne.jp"
+    fund_nav_min_interval_seconds: float = 1.0  # 取得スロットル間隔（秒・Free 系に優しく）
+    fund_nav_http_timeout_seconds: float = 30.0  # CSV GET のタイムアウト（秒）
+
     # --- NewsAdapter（fetch_news 実取得・Phase 4・ADR-010/ADR-020） ---
     # httpx 一本（Google News RSS → URL 復元 → trafilatura 本文 → 記事ごと AI 要約 → 本文破棄）。
     # 直結ハードコード禁止（ADR-010）。値は config 経由で渡す。

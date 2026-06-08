@@ -11,6 +11,7 @@
 // DB には触れない。データ取得はすべて lib/api.ts 経由（ADR-005）。
 
 import { BacktestChart } from "@/components/chart/BacktestChart";
+import { FundSection } from "@/components/fund/FundSection";
 import { AssetInputPanel } from "@/components/portfolio/AssetInputPanel";
 import { CorrelationHeatmap } from "@/components/portfolio/CorrelationHeatmap";
 import { OptimizeTable } from "@/components/portfolio/OptimizeTable";
@@ -37,11 +38,11 @@ import { fmtJpy, pct } from "@/lib/format";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
-type Tab = "holdings" | "input" | "history";
+type Tab = "holdings" | "input" | "history" | "funds";
 
 /** ?tab クエリを Tab に解決する（既定は保有）。 */
 function resolveTab(raw: string | null): Tab {
-  if (raw === "input" || raw === "history") return raw;
+  if (raw === "input" || raw === "history" || raw === "funds") return raw;
   return "holdings";
 }
 
@@ -185,6 +186,7 @@ function PortfolioPageInner() {
     { key: "holdings", label: "保有" },
     { key: "input", label: "入力" },
     { key: "history", label: "履歴" },
+    { key: "funds", label: "投資信託" },
   ];
 
   return (
@@ -553,6 +555,14 @@ function PortfolioPageInner() {
               setOptimizeResult(null);
             }}
           />
+        ) : (
+          <div className="text-[13px] text-ink-subtle">ポートフォリオを読み込み中…</div>
+        ))}
+
+      {/* ===== 投資信託タブ（保有＋取引入力＋取引履歴・ADR-054）===== */}
+      {tab === "funds" &&
+        (portfolioId != null ? (
+          <FundSection portfolioId={portfolioId} />
         ) : (
           <div className="text-[13px] text-ink-subtle">ポートフォリオを読み込み中…</div>
         ))}

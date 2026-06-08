@@ -108,7 +108,10 @@ export default function Dashboard() {
     ? (() => {
         const stock = overview.allocation.find((a) => a.name === "株式");
         const cash = overview.allocation.find((a) => a.name === "現金");
-        const ext = overview.allocation.find((a) => a.name === "投信");
+        // external_assets 由来＝金・他口座等の手入力。backend は allocation name を "外部資産" で返す
+        // （NAV 自動取得の "投資信託" とは別系統）。
+        const ext = overview.allocation.find((a) => a.name === "外部資産");
+        const fund = overview.allocation.find((a) => a.name === "投資信託");
         return [
           {
             label: "総資産",
@@ -131,10 +134,17 @@ export default function Dashboard() {
             dot: "var(--color-chart-2)",
           },
           {
-            label: "投信",
+            // 外部資産＝金・他口座等の手入力（external_assets）。NAV 自動取得の「投資信託」とは別系統。
+            label: "外部資産",
             value: fmtJpy(overview.external_value),
             sub: ext ? pct(ext.weight) : "—",
             dot: "var(--color-chart-4)",
+          },
+          {
+            label: "投資信託",
+            value: fmtJpy(overview.fund_value),
+            sub: fund ? pct(fund.weight) : "—",
+            dot: "var(--color-chart-6)",
           },
           {
             label: "評価損益",
@@ -148,18 +158,22 @@ export default function Dashboard() {
         { label: "総資産", value: "—", sub: "データ取得中" },
         { label: "株式", value: "—", sub: "—", dot: "var(--color-chart-1)" },
         { label: "現金", value: "—", sub: "—", dot: "var(--color-chart-2)" },
-        { label: "投信", value: "—", sub: "—", dot: "var(--color-chart-4)" },
+        { label: "外部資産", value: "—", sub: "—", dot: "var(--color-chart-4)" },
+        { label: "投資信託", value: "—", sub: "—", dot: "var(--color-chart-6)" },
         { label: "評価損益", value: "—", sub: "—" },
       ] satisfies KpiItem[]);
 
-  // 配分ドーナツ（allocation.weight × 100 でドーナツ座標を計算）
+  // 配分ドーナツ（allocation.weight × 100 でドーナツ座標を計算）。
+  // 色マップのキーは backend が返す allocation name に一致させる（"外部資産"＝手入力資産・
+  // "投資信託"＝NAV 自動取得の投信。旧 "投信" は backend で廃止済み）。
   type DonutSlice = { name: string; pct: number; color: string; dash: string; offset: number };
   const allocation: DonutSlice[] = overview
     ? (() => {
         const colors: Record<string, string> = {
           株式: "var(--color-chart-1)",
           現金: "var(--color-chart-2)",
-          投信: "var(--color-chart-4)",
+          外部資産: "var(--color-chart-4)",
+          投資信託: "var(--color-chart-6)",
         };
         let cumPct = 0;
         return overview.allocation.map((a) => {
@@ -247,7 +261,7 @@ export default function Dashboard() {
       )}
 
       {/* KPI 行 */}
-      <div className="mb-3 grid grid-cols-5 gap-3 max-[1100px]:grid-cols-2">
+      <div className="mb-3 grid grid-cols-6 gap-3 max-[1100px]:grid-cols-2">
         {kpis.map((k) => (
           <div key={k.label} className="rounded-lg border border-hairline bg-surface-1 p-3">
             <div className="flex items-center gap-1.5 font-medium text-[11px] text-ink-muted uppercase tracking-[0.2px]">
