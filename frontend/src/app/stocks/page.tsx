@@ -9,7 +9,16 @@ import { SavedFilterBar } from "@/components/screener/SavedFilterBar";
 import { ScreenerFilters } from "@/components/screener/ScreenerFilters";
 import { DataTable, Td } from "@/components/ui/DataTable";
 import { StatusBlock } from "@/components/ui/StatusBlock";
-import { type SavedFilter, type ScreenCriteria, getFilters, screenStocks } from "@/lib/api";
+import { WatchlistStar } from "@/components/ui/WatchlistStar";
+import {
+  type SavedFilter,
+  type ScreenCriteria,
+  addWatchlist,
+  getFilters,
+  getWatchlist,
+  removeWatchlist,
+  screenStocks,
+} from "@/lib/api";
 import { fmtMarketCap, fmtRatio, pct } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import Link from "next/link";
@@ -36,6 +45,63 @@ export default function StocksPage() {
       alive = false;
     };
   }, []);
+
+  // watchlist 済み判定はフロントで突き合わせ（ADR-005・backend 変更なし）。
+  // code → watchlist id（null = 追加中で id 未確定）。星トグルの mutation はこのページが持つ。
+  const [watchMap, setWatchMap] = useState<Map<string, number | null>>(new Map());
+  const [busyCodes, setBusyCodes] = useState<Set<string>>(new Set());
+  const [watchErr, setWatchErr] = useState<string | null>(null);
+  // 初回のみ GET /watchlist を読み Map を作る（失敗時は空＝全部アウトライン星でも追加は成立）。
+  useEffect(() => {
+    let alive = true;
+    getWatchlist()
+      .then((r) => {
+        if (alive) setWatchMap(new Map(r.items.map((w) => [w.code, w.id])));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 星トグル（楽観的更新・失敗時ロールバック）。busy 中の連打は弾く。
+  async function onToggleWatch(code: string) {
+    if (busyCodes.has(code)) return;
+    const id = watchMap.get(code);
+    const isAdding = !watchMap.has(code);
+    setWatchErr(null);
+    setBusyCodes((prev) => new Set(prev).add(code));
+    // 楽観的に反転（追加は id 未確定で null を置く）。
+    setWatchMap((prev) => {
+      const next = new Map(prev);
+      if (isAdding) next.set(code, null);
+      else next.delete(code);
+      return next;
+    });
+    try {
+      if (isAdding) {
+        const item = await addWatchlist(code);
+        setWatchMap((prev) => new Map(prev).set(code, item.id)); // 実 id に確定
+      } else if (id != null) {
+        await removeWatchlist(id);
+      }
+    } catch (e) {
+      setWatchErr(e instanceof Error ? e.message : String(e));
+      // ロールバック（楽観的更新を巻き戻す）。
+      setWatchMap((prev) => {
+        const next = new Map(prev);
+        if (isAdding) next.delete(code);
+        else next.set(code, id ?? null);
+        return next;
+      });
+    } finally {
+      setBusyCodes((prev) => {
+        const next = new Set(prev);
+        next.delete(code);
+        return next;
+      });
+    }
+  }
 
   function onSavedFilter(f: SavedFilter) {
     setFilters((prev) => {
@@ -95,6 +161,7 @@ export default function StocksPage() {
             <>
               <DataTable
                 columns={[
+                  { label: "★" },
                   { label: "コード" },
                   { label: "銘柄名" },
                   { label: "33業種" },
@@ -107,6 +174,13 @@ export default function StocksPage() {
               >
                 {rows.map((r) => (
                   <tr key={r.code} className="hover:[&>td]:bg-surface-2">
+                    <Td className="w-7">
+                      <WatchlistStar
+                        active={watchMap.has(r.code)}
+                        busy={busyCodes.has(r.code)}
+                        onClick={() => onToggleWatch(r.code)}
+                      />
+                    </Td>
                     <Td>
                       <Link href={`/stocks/${r.code}`} className="num font-semibold text-accent">
                         {r.code}
@@ -136,8 +210,11 @@ export default function StocksPage() {
                   </tr>
                 ))}
               </DataTable>
-              <div className="border-hairline-soft border-t px-3 py-2 text-[11px] text-ink-subtle">
-                {rows.length} 件（最大 {applied.limit ?? 200} 件）
+              <div className="flex items-center justify-between border-hairline-soft border-t px-3 py-2 text-[11px] text-ink-subtle">
+                <span>
+                  {rows.length} 件（最大 {applied.limit ?? 200} 件）
+                </span>
+                {watchErr && <span className="text-down">★ 更新に失敗: {watchErr}</span>}
               </div>
             </>
           )}
