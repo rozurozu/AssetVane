@@ -34,6 +34,7 @@ def temp_db(tmp_path, monkeypatch) -> Iterator[None]:
 
 - J-Quants 等の取得は**呼ばない**。アダプタの正規化（外部キー→内部列）は**サンプル dict を渡して検証**する（[[backend-adapter-pattern]] の `_first`/`_norm_*` の入出力）。HTTP は実際に飛ばさない。
 - 取得→保存の結合を見たい場合はアダプタを差し替える（モック/フェイク）か、正規化済み行を直接 repo に渡す。
+- **LLM も同じ。`client` フィクスチャは `settings.llm_provider_{chat,nightly,dossier}` を openai に固定**する（開発者の `.env` の `LLM_PROVIDER_*=codex` がテストに漏れるのを断つ）。これがないと `/chat` 等が `codex_engine` へ分岐し、実 `codex app-server` subprocess＋MCP が起動してモックが素通り・teardown で `Event loop is closed` になる（ADR-012/ADR-032）。LLM 応答は `app.advisor.service.complete` を monkeypatch でモックする。codex 経路自体の振り分けは `test_engine_dispatch.py`/`test_codex_engine.py` がモックで別途検証する。
 
 ## quant 純関数は DataFrame 直書き
 
@@ -67,6 +68,7 @@ def test_momentum_basic():
 - [ ] 本物の DB に触れていない（`tmp_path` の一時 SQLite ＋ monkeypatch ＋ `reset_engine`）
 - [ ] スキーマ用意は `temp_db`（create_schema）か `client`（alembic lifespan）のどちらか。併用していない
 - [ ] ネットに出ていない（外部 API はサンプル dict で正規化を検証）
+- [ ] LLM は openai 固定（`client` が provider を pin）＋ `service.complete` をモック。codex 実 subprocess に逸れていない
 - [ ] quant は DataFrame 直書き。dict 戻り値は dict 比較＋数値 `approx`／Series・DataFrame 戻り値のときのみ `assert_series_equal`/`assert_frame_equal`。境界（不足/NaN）の既定もテスト
 - [ ] テストの docstring 冒頭に担保内容＋関連 ADR/spec 参照を日本語で書いた
 - [ ] エンドポイントは `client` でステータス＋JSON 検証

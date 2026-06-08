@@ -33,9 +33,17 @@ def client(tmp_path, monkeypatch) -> Iterator[object]:
     `temp_db`（create_schema）には依存しない。lifespan の `init_db()`（alembic upgrade）が
     スキーマを作るので、create_schema と二重に作ると `op.create_table`（0002/0003）が
     "table already exists" で落ちるため。本番と同じ alembic 経路でスキーマを得る。
+
+    LLM provider は openai に固定する。これがないと開発者の `.env`（LLM_PROVIDER_*=codex）が
+    テストに漏れ、`/chat` 等が codex_engine に分岐して実 `codex app-server` subprocess＋MCP を
+    起動してしまう（モック素通り＋teardown で Event loop is closed）。テストは .env 非依存に保ち、
+    モック可能な openai 経路（service.complete）を通す（ADR-012・docstring「ネットには出ない」）。
     """
     db_file = tmp_path / "test.db"
     monkeypatch.setattr(settings, "database_path", str(db_file))
+    monkeypatch.setattr(settings, "llm_provider_chat", "openai")
+    monkeypatch.setattr(settings, "llm_provider_nightly", "openai")
+    monkeypatch.setattr(settings, "llm_provider_dossier", "openai")
     db_engine.reset_engine()
 
     from fastapi.testclient import TestClient
