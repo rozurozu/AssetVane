@@ -8,6 +8,7 @@
 //           Portfolio 内タブに収める＝screens.md §2）。?tab=input で入力タブに直接着地できる。
 // DB には触れない。データ取得はすべて lib/api.ts 経由（ADR-005）。
 
+import { BacktestChart } from "@/components/chart/BacktestChart";
 import { AssetInputPanel } from "@/components/portfolio/AssetInputPanel";
 import { CorrelationHeatmap } from "@/components/portfolio/CorrelationHeatmap";
 import { OptimizeTable } from "@/components/portfolio/OptimizeTable";
@@ -16,12 +17,14 @@ import { DataTable, Td } from "@/components/ui/DataTable";
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import {
   type AssetOverview,
+  type BacktestResult,
   type HoldingsResponse,
   type OptimizeResult,
   type PortfolioMetrics,
   type Stock,
   getAssetOverview,
   getHoldings,
+  getPortfolioBacktest,
   getPortfolioMetrics,
   getPortfolios,
   getStocks,
@@ -61,6 +64,10 @@ function PortfolioPageInner() {
 
   // 資産概要（スパークライン）
   const [overview, setOverview] = useState<AssetOverview | null>(null);
+
+  // 過去シミュレーション（backtest・現保有 buy&hold vs TOPIX）
+  const [backtest, setBacktest] = useState<BacktestResult | null>(null);
+  const [backtestErr, setBacktestErr] = useState<string | null>(null);
 
   // 最適化
   const [optimizeResult, setOptimizeResult] = useState<OptimizeResult | null>(null);
@@ -102,6 +109,12 @@ function PortfolioPageInner() {
     getPortfolioMetrics(portfolioId)
       .then(setMetrics)
       .catch((e) => setMetricsErr(e instanceof Error ? e.message : String(e)));
+
+    setBacktest(null);
+    setBacktestErr(null);
+    getPortfolioBacktest(portfolioId)
+      .then(setBacktest)
+      .catch((e) => setBacktestErr(e instanceof Error ? e.message : String(e)));
   }, [portfolioId]);
 
   async function handleOptimize() {
@@ -376,6 +389,92 @@ function PortfolioPageInner() {
                 </button>
               </div>
             )}
+          </Card>
+
+          {/* 過去シミュレーション（backtest・現保有 buy&hold vs TOPIX）*/}
+          <Card
+            title="過去シミュレーション（buy&hold vs TOPIX）"
+            meta={
+              backtest?.is_delayed && backtest.as_of
+                ? `12 週遅延・${backtest.as_of} 基準`
+                : (backtest?.as_of ?? undefined)
+            }
+          >
+            <StatusBlock loading={backtest === null} error={backtestErr}>
+              {backtest &&
+                (backtest.portfolio.curve.length < 2 ? (
+                  <div className="py-6 text-center text-[13px] text-ink-muted">
+                    過去シミュレーションに必要な履歴（保有銘柄の日足・TOPIX
+                    指数）が足りないのだ。夜間バッチで指数が取得されると表示されるのだ。
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* サマリ（ポート側＋対 TOPIX 超過リターン）*/}
+                    <div className="grid grid-cols-5 gap-3 max-[800px]:grid-cols-2">
+                      {[
+                        {
+                          label: "累積リターン",
+                          value: pct(backtest.portfolio.cumulative_return),
+                          tone:
+                            backtest.portfolio.cumulative_return >= 0
+                              ? ("up" as const)
+                              : ("down" as const),
+                        },
+                        {
+                          label: "年率リターン",
+                          value: pct(backtest.portfolio.annual_return),
+                          tone:
+                            backtest.portfolio.annual_return >= 0
+                              ? ("up" as const)
+                              : ("down" as const),
+                        },
+                        {
+                          label: "シャープ比",
+                          value:
+                            backtest.portfolio.sharpe != null
+                              ? backtest.portfolio.sharpe.toFixed(2)
+                              : "—",
+                          tone: null,
+                        },
+                        {
+                          label: "最大ドローダウン",
+                          value: pct(backtest.portfolio.max_drawdown),
+                          tone: "down" as const,
+                        },
+                        {
+                          label: "超過リターン（対 TOPIX）",
+                          value: pct(backtest.excess_return),
+                          tone: backtest.excess_return >= 0 ? ("up" as const) : ("down" as const),
+                        },
+                      ].map((c) => (
+                        <div
+                          key={c.label}
+                          className="rounded-lg border border-hairline bg-surface-1 p-3"
+                        >
+                          <div className="text-[11px] text-ink-muted">{c.label}</div>
+                          <div
+                            className={`num mt-1 font-semibold text-[18px] tracking-[-0.2px] ${
+                              c.tone === "up" ? "text-up" : c.tone === "down" ? "text-down" : ""
+                            }`}
+                          >
+                            {c.value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* 凡例 */}
+                    <div className="flex gap-4 text-[11px] text-ink-muted">
+                      <span className="flex items-center gap-1.5">
+                        <span className="inline-block h-[2px] w-4 bg-accent" /> ポートフォリオ
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="inline-block h-[2px] w-4 bg-ink-muted" /> TOPIX
+                      </span>
+                    </div>
+                    <BacktestChart result={backtest} />
+                  </div>
+                ))}
+            </StatusBlock>
           </Card>
 
           {/* 資産推移スパークライン */}

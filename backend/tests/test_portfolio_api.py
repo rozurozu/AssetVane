@@ -526,3 +526,75 @@ def test_portfolio_optimize(client) -> None:
             assert "target_weight" in w
             # target_weight は 0..1
             assert 0 <= w["target_weight"] <= 1
+
+
+# ---------------------------------------------------------------------------
+# GET /portfolio/{id}/backtest（過去シミュレーション・spec §4.4）
+# ---------------------------------------------------------------------------
+
+
+def _seed_index_quotes(symbol: str, prices: list[float], start_date: str = "2025-01-02") -> None:
+    """テスト用の指数水準を seed する（backtest のベンチ用）。"""
+    from datetime import date, timedelta
+
+    base = date.fromisoformat(start_date)
+    rows = [
+        {"symbol": symbol, "date": (base + timedelta(days=i)).isoformat(), "close": p}
+        for i, p in enumerate(prices)
+    ]
+    repo.upsert_index_quotes(rows)
+
+
+def test_portfolio_backtest_empty(client) -> None:
+    """保有なし／ベンチなしでも 200・空 leg（as_of=None / curve=[]）を返す。"""
+    pid = _get_portfolio_id(client)
+    resp = client.get(f"/portfolio/{pid}/backtest")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["portfolio_id"] == pid
+    assert body["is_delayed"] is True
+    assert body["as_of"] is None
+    assert body["portfolio"]["curve"] == []
+    assert body["benchmark"]["curve"] == []
+    assert body["excess_return"] == 0.0
+
+
+def test_portfolio_backtest_404(client) -> None:
+    """存在しないポートフォリオは 404。"""
+    resp = client.get("/portfolio/99999/backtest")
+    assert resp.status_code == 404
+
+
+def test_portfolio_backtest_with_holdings(client) -> None:
+    """保有＋日足＋ベンチ（^TPX）があれば 2 本のカーブと超過リターンが返る。"""
+    repo.upsert_stocks([STOCK_A])
+    # ポートは右肩上がり、ベンチは横ばいにして excess_return > 0 を作る
+    prices = [1000.0 * (1.0 + 0.01 * i) for i in range(30)]
+    bench = [1500.0] * 30
+    _seed_daily_quotes("72030", prices)
+    _seed_index_quotes("^TPX", bench)
+
+    pid = _get_portfolio_id(client)
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1000,
+            "traded_at": "2026-01-10",
+        },
+    )
+
+    resp = client.get(f"/portfolio/{pid}/backtest")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["as_of"] is not None
+    # ポートのカーブは 2 点以上、1 始まりの倍率
+    assert len(body["portfolio"]["curve"]) >= 2
+    assert body["portfolio"]["curve"][0]["value"] > 0
+    # ポートは上昇・ベンチは横ばい → 累積/年率/超過がプラス
+    assert body["portfolio"]["cumulative_return"] > 0
+    assert body["benchmark"]["cumulative_return"] == pytest.approx(0.0, abs=1e-9)
+    assert body["excess_return"] > 0

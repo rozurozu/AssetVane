@@ -13,8 +13,12 @@ import pandas as pd
 from sqlalchemy import Connection
 
 from app.db import repo
-from app.quant import compute_deviations
+from app.quant import backtest_portfolio, compute_deviations
 from app.services.policy import get_policy
+
+# backtest の既定ベンチマーク（TOPIX）。^TPX は JQuantsIndexSource 経由で index_quotes に入る
+# （ADR-040）。マジック値を散らさずモジュール定数にする（ADR-027）。
+DEFAULT_BENCHMARK_SYMBOL = "^TPX"
 
 
 def build_price_panel(conn: Connection, codes: list[str]) -> pd.DataFrame:
@@ -157,3 +161,33 @@ def portfolio_deviations(conn: Connection, portfolio_id: int) -> list[dict[str, 
         policy=get_policy(conn),
         labels=labels,
     )
+
+
+def backtest_portfolio_service(
+    conn: Connection,
+    portfolio_id: int,
+    benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL,
+) -> dict[str, Any]:
+    """保有ポートフォリオの buy&hold バックテストを対指数で計算して返す。
+
+    現在保有ウェイトの買い持ちを benchmark（既定 TOPIX=^TPX）と比較する
+    （phase2-spec.md §4.4・§8）。metrics と同じ下ごしらえ（price_panel・現ウェイト）を
+    再利用し、計算自体は quant 純関数 backtest_portfolio に委ねる（ADR-014/016）。
+
+    保有 0・履歴不足・benchmark 未取得は純関数が空 leg（as_of=None / curve=[]）を
+    返すのでそのまま通す（エラーにしない）。
+    """
+    holdings_rows = repo.list_holdings(conn, portfolio_id)
+    codes = [h["code"] for h in holdings_rows]
+
+    price_panel = build_price_panel(conn, codes)
+    latest_closes = repo.get_latest_closes(conn, codes) if codes else {}
+    weights = current_stock_weights(value_holdings(holdings_rows, latest_closes))
+
+    bench_quotes = repo.get_index_quotes(conn, benchmark_symbol)
+    benchmark = pd.Series(
+        {q["date"]: q["close"] for q in bench_quotes},
+        dtype=float,
+    )
+
+    return backtest_portfolio(price_panel, weights, benchmark, rebalance="none")

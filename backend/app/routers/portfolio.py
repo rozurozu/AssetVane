@@ -22,6 +22,7 @@ from app.quant import compute_portfolio_metrics, optimize_portfolio
 from app.services.holdings import recalc_holdings
 from app.services.policy import get_policy
 from app.services.portfolio import (
+    backtest_portfolio_service,
     build_price_panel,
     current_stock_weights,
     portfolio_deviations,
@@ -158,6 +159,34 @@ class OptimizeResultOut(BaseModel):
     expected_sharpe: float | None = None
     constraints_applied: dict[str, Any]
     infeasible: bool
+
+
+class BacktestCurvePointOut(BaseModel):
+    """spec §4.4 backtest 累積曲線の 1 点（value は 1 始まりの倍率）。"""
+
+    date: str
+    value: float
+
+
+class BacktestLegOut(BaseModel):
+    """spec §4.4 backtest の 1 系列（ポート/ベンチ共通形）。"""
+
+    cumulative_return: float
+    annual_return: float
+    sharpe: float | None = None
+    max_drawdown: float
+    curve: list[BacktestCurvePointOut]
+
+
+class BacktestResultOut(BaseModel):
+    """spec §4.4 backtest 結果（現保有 buy&hold vs 指数）。"""
+
+    portfolio_id: int
+    as_of: str | None = None
+    is_delayed: bool
+    portfolio: BacktestLegOut
+    benchmark: BacktestLegOut
+    excess_return: float
 
 
 # ---------------------------------------------------------------------------
@@ -383,4 +412,33 @@ def post_optimize(
         expected_sharpe=result.get("expected_sharpe"),
         constraints_applied=result.get("constraints_applied", {}),
         infeasible=bool(result.get("infeasible", False)),
+    )
+
+
+@router.get("/portfolio/{portfolio_id}/backtest", response_model=BacktestResultOut)
+def get_portfolio_backtest(
+    portfolio_id: int,
+    conn: Connection = Depends(get_conn),
+) -> BacktestResultOut:
+    """現保有の buy&hold バックテストを対指数（TOPIX）で返す（spec §4.4・§8）。
+
+    backtest_portfolio_service（service→quant 純関数）に委譲する。保有 0・履歴不足・
+    benchmark 未取得は純関数が空 leg（as_of=None / curve=[]）を返すのでそのまま通す
+    （エラーにしない＝ADR-014）。
+    """
+    # portfolio 存在確認（metrics/optimize と同じ）
+    rows = repo.list_portfolios(conn)
+    if not any(r["portfolio_id"] == portfolio_id for r in rows):
+        raise HTTPException(
+            status_code=404, detail=f"ポートフォリオ {portfolio_id} は存在しません。"
+        )
+
+    result = backtest_portfolio_service(conn, portfolio_id)
+    return BacktestResultOut(
+        portfolio_id=portfolio_id,
+        as_of=result.get("as_of"),
+        is_delayed=bool(result.get("is_delayed", True)),
+        portfolio=BacktestLegOut(**result["portfolio"]),
+        benchmark=BacktestLegOut(**result["benchmark"]),
+        excess_return=float(result.get("excess_return", 0.0)),
     )

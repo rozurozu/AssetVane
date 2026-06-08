@@ -207,6 +207,31 @@ export interface OptimizeResult {
   infeasible: boolean;
 }
 
+/** backtest 累積曲線の 1 点（value は 1 始まりの倍率・§4.4）。 */
+export interface BacktestCurvePoint {
+  date: string;
+  value: number;
+}
+
+/** backtest の 1 系列（ポート/ベンチ共通形・§4.4）。 */
+export interface BacktestLeg {
+  cumulative_return: number; // 累積リターン（0..1 基準の比率）
+  annual_return: number; // 年率リターン
+  sharpe: number | null;
+  max_drawdown: number; // 最大DD（負値）
+  curve: BacktestCurvePoint[];
+}
+
+/** `GET /portfolio/{id}/backtest` レスポンス（現保有 buy&hold vs TOPIX・§4.4）。 */
+export interface BacktestResult {
+  portfolio_id: number;
+  as_of: string | null;
+  is_delayed: boolean;
+  portfolio: BacktestLeg;
+  benchmark: BacktestLeg;
+  excess_return: number; // ポート年率 - ベンチ年率
+}
+
 /** 配分ドーナツ用スライス（P2-7）。weight は 0..1（UI で ×100）。 */
 export interface AllocationSlice {
   name: "株式" | "現金" | "投信";
@@ -703,6 +728,14 @@ export function optimizePortfolio(
   body?: OptimizeRequest,
 ): Promise<OptimizeResult> {
   return postJSON<OptimizeResult>(`/portfolio/${portfolioId}/optimize`, body ?? {});
+}
+
+/** 過去シミュレーション（現保有 buy&hold vs TOPIX・§4.4）。 */
+export function getPortfolioBacktest(
+  portfolioId: number,
+  signal?: AbortSignal,
+): Promise<BacktestResult> {
+  return getJSON<BacktestResult>(`/portfolio/${portfolioId}/backtest`, signal);
 }
 
 /** 資産全体像（KPI・配分・逸脱・推移スパークライン・P2-7）。 */

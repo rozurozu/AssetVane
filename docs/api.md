@@ -42,7 +42,25 @@
 | GET/POST/PUT/DELETE | `/external-assets` | 投信等（割合文脈）|
 | GET | `/portfolio/{id}/metrics` | 相関・シャープ・最大ドローダウン |
 | POST | `/portfolio/{id}/optimize` | policy 制約下の最適比率 |
+| GET | `/portfolio/{id}/backtest` | 過去シミュレーション（現保有 buy&hold vs TOPIX） |
 | GET | `/asset-overview` | 保有・現金・割合・資産推移（遅延注記付き）|
+
+### `GET /portfolio/{id}/backtest`
+
+現保有ウェイトの buy&hold を指数（TOPIX=`^TPX`）と比較する（phase2-spec.md §4.4）。計算は quant 純関数 `backtest_portfolio`。保有 0・履歴不足・ベンチ未取得は空 leg（`as_of=null` / `curve=[]`）を 200 で返す。
+
+```ts
+interface BacktestCurvePoint { date: string; value: number } // value は 1 始まりの倍率
+interface BacktestLeg {
+  cumulative_return: number; annual_return: number;
+  sharpe: number | null; max_drawdown: number;
+  curve: BacktestCurvePoint[];
+}
+interface BacktestResult {
+  portfolio_id: number; as_of: string | null; is_delayed: boolean;
+  portfolio: BacktestLeg; benchmark: BacktestLeg; excess_return: number;
+}
+```
 
 ## 4. AI Advisor（Phase 3〜）
 
