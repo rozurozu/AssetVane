@@ -101,8 +101,7 @@ def test_fetch_index_run_idempotent(temp_db, monkeypatch) -> None:
 
         fetch_index.run()
 
-    # 2 回目は fetch_meta が最新日より先の start_date になるため空配列になる（スキップ）
-    # または同日データを再 UPSERT しても行数は 2 のまま
+    # 2 回目は鮮度プローブで重ね窓を取り直すが、同じデータを再 UPSERT しても行数は 2 のまま（冪等）
     with get_engine().connect() as conn:
         rows = repo.get_index_quotes(conn, "^SPX")
     assert len(rows) == 2  # 重複しない
@@ -202,6 +201,44 @@ def test_fetch_index_run_all_fail_returns_failure(temp_db, monkeypatch) -> None:
     assert result.ok is False
     assert "^SPX" in result.detail
     assert "^NKX" in result.detail
+
+
+def test_start_date_for_symbol_overlaps_last_fetched(temp_db) -> None:
+    """meta ありのとき開始日は last_fetched より前（鮮度プローブで重ねる）。"""
+    from datetime import date, timedelta
+
+    from app.batch.jobs.fetch_index import _REFETCH_OVERLAP_DAYS
+
+    repo.upsert_fetch_meta("index_quotes:^SPX", "2026-06-05")
+    start = fetch_index._start_date_for_symbol("^SPX", "2026-06-08")
+    assert start == (date(2026, 6, 5) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
+    assert start <= "2026-06-05"  # 最終取得日に重なる
+
+
+def test_start_date_for_symbol_backfills_when_no_meta(temp_db) -> None:
+    """meta 無し（初回）は backfill 開始（backfill_years 分前）を返す。"""
+    start = fetch_index._start_date_for_symbol("^SPX", "2026-06-08")
+    assert start == f"{2026 - settings.backfill_years}-06-08"
+
+
+def test_fetch_index_run_no_new_data_is_ok(temp_db, monkeypatch) -> None:
+    """重ね窓で最終取得日のバーだけ返る（新規データ無し）→ ok=True・attempt_ok=1・前進なし。"""
+    _pin_symbols(monkeypatch, _TEST_SYMBOL)
+    repo.upsert_fetch_meta("index_quotes:^SPX", "2026-05-29")
+
+    # adapter は最終取得日のバーだけ返す（健全だが新規バー無し）。
+    overlap_rows = [{"symbol": "^SPX", "date": "2026-05-29", "close": 5265.00}]
+    with patch("app.batch.jobs.fetch_index.IndexAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.fetch_index_quotes.return_value = overlap_rows
+
+        result = fetch_index.run()
+
+    assert result.ok is True
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, "index_quotes:^SPX")
+    assert meta["last_attempt_ok"] == 1  # 失敗ではない＝digest に出ない
+    assert meta["last_fetched_date"] == "2026-05-29"  # 新規無しなので前進しない
 
 
 def test_target_symbols_includes_us_sector_etfs(monkeypatch) -> None:

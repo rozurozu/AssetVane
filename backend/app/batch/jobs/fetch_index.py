@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 
 _SOURCE_PREFIX = "index_quotes"  # fetch_meta の source キー接頭辞
 
+# 差分取得の鮮度プローブ用の重ね日数。開始日を最終取得日からこの日数だけ前に戻して取り直す。
+# 健全な指数なら直近営業日のバーが必ず窓に入り ≥1 行返るので、「新規データ無し（週末・連休明け・
+# 当日未掲載）」と「取得不能（シンボル誤り/bot/Free の ^TPX 等）」を区別できる（ADR-018）。
+# 週末＋単発祝日を跨いでも直近営業日が窓に入る余裕。再取得は UPSERT で冪等（ADR-002）。
+_REFETCH_OVERLAP_DAYS = 5
+
 
 def _target_symbols() -> list[str]:
     """取得対象シンボルを返す＝主要指数（config）＋米国業種 ETF 11 本（ADR-010・Phase 7）。
@@ -47,7 +53,10 @@ def _start_date_for_symbol(symbol: str, today: str) -> str:
     """シンボルの取得開始日を fetch_meta から決める（差分取得・ADR-018 部分失敗からの再開）。
 
     fetch_meta 未存在 → BACKFILL_YEARS 分を頭から。
-    fetch_meta あり → last_fetched_date の翌日から today まで。
+    fetch_meta あり → last_fetched_date に _REFETCH_OVERLAP_DAYS 日重ねた地点から today まで
+    （鮮度プローブ）。翌日からではなく重ねて取り直すことで、健全な指数は直近営業日のバーが必ず
+    窓に入り ≥1 行返る → 「新規データ無し」と「取得不能」を区別できる（誤検知防止・ADR-018）。
+    再取得は UPSERT で冪等（ADR-002）。
     """
     last = date.fromisoformat(today)
     with get_engine().connect() as conn:
@@ -57,7 +66,7 @@ def _start_date_for_symbol(symbol: str, today: str) -> str:
     if last_fetched is None:
         return last.replace(year=last.year - settings.backfill_years).isoformat()
 
-    return (date.fromisoformat(last_fetched) + timedelta(days=1)).isoformat()
+    return (date.fromisoformat(last_fetched) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
 
 
 def run() -> JobResult:
