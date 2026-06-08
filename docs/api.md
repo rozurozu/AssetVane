@@ -84,7 +84,7 @@ interface BacktestResult {
 | メソッド | パス | 用途 |
 |---|---|---|
 | GET/POST/DELETE | `/watchlist` | 監視銘柄の管理（一覧は最終調査日つき）|
-| GET | `/dossiers/{code}` | 銘柄の調査レポート（markdown）と要約ソース一覧（未調査時は実装上 200＋空ドシエを返す＝要確認・phase4-spec §5.2）|
+| GET | `/dossiers/{code}` | 銘柄の調査レポート（markdown）と要約ソース一覧（未調査でも 200＋空ドシエ＝`summary_md: ""`＋`last_investigated_at: null`・確定・phase4-spec §5.2）|
 | POST | `/dossiers/{code}/investigate` | その銘柄を調査（`investigate_stock` を起動。チャットの「この銘柄調査して」と共用）|
 | GET | `/general-news` | 銘柄に紐づかない直近の一般ニュース（市況・マクロ・世界情勢）をカテゴリ別に返す（[ADR-034](decisions.md)）|
 | GET | `/news` | 統合ニュースを `level`/`since`/`limit` で一覧（新着順・[ADR-047](decisions.md)）|

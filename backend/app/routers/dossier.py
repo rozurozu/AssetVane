@@ -130,8 +130,9 @@ def get_dossier(code: str, conn: Connection = Depends(get_conn)) -> Dossier:
     """指定銘柄のドシエを返す（未調査でも空ドシエを 200 で返す・spec §5.2）。
 
     未調査の区別は last_investigated_at=None で表す（UI は「調査する」ボタンを出せる）。
-    spec §5.2 は「404 または空ドシエ」の二択だが、frontend の DossierSection が常に描画
-    （調査ボタン込み）するため空ドシエ（200）を採用する。
+    当初 spec §5.2 は「404 または空ドシエ」の二択を残していたが、frontend の DossierSection が
+    未調査銘柄でも常に描画（調査ボタン込み）する設計と素直に噛み合う 200 固定で確定した
+    （2026-06-08 判断・404 は採らない）。
     """
     return _build_dossier(conn, code)
 
