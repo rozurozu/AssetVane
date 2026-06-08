@@ -2,8 +2,11 @@
 
 testing-strategy: 外部 API は叩かず、NewsAdapter の内部関数（_fetch_rss_items / _decode_google_url
 / _fetch_html / _summarize_article）と config 定数（業種クエリ・lookback・件数上限）を monkeypatch
-する。担保すること（ADR-044 確定事項）:
+する。担保すること（ADR-044・ADR-053 確定事項）:
   - 各記事に統合タグ（level='sector'・sector17_code・category・source='news'）が付く
+  - sector17_code は J-Quants S17 体系 "1".."17"（ADR-053。stocks と直接一致）。category は
+    reference.sector17_label(s17) 由来の和名。
+  - SECTOR_NEWS_QUERIES は `dict[str, str]`（キー=S17・値=query のみ・label 廃止・ADR-053）。
   - 業種数ぶんループする
   - lookback（since）フィルタ・業種あたり件数キャップ
   - known_urls に含む url は要約スキップ＋出力除外（ADR-044 要約前 dedup の逆輸入）
@@ -36,13 +39,14 @@ def _enable_news(monkeypatch: pytest.MonkeyPatch) -> None:
         return None
 
     monkeypatch.setattr(news, "_throttle", _no_throttle)
-    # 2 業種だけに絞って検証（コードと和名は本物に倣う）。
+    # 2 業種だけに絞って検証（ADR-053: キー=S17 "1".."17"・値=query 文字列のみ。
+    # 和名は adapter 側が reference.sector17_label(s17) で引く＝"1"=食品 / "6"=自動車・輸送機）。
     monkeypatch.setattr(
         general_news_config,
         "SECTOR_NEWS_QUERIES",
         {
-            "1617": {"label": "食品", "query": "食品クエリ"},
-            "1622": {"label": "自動車・輸送機", "query": "自動車クエリ"},
+            "1": "食品クエリ",
+            "6": "自動車クエリ",
         },
     )
     monkeypatch.setattr(general_news_config, "SECTOR_NEWS_MAX_PER_SECTOR", 3)
@@ -100,18 +104,22 @@ def test_disabled_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_sector_tags_assigned_and_looped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """各記事に level='sector'・sector17_code・category・source が付き、業種数ぶんループする。"""
+    """各記事に level='sector'・sector17_code(S17)・category(和名)・source が付きループする。
+
+    sector17_code は S17 体系 "1".."17"（ADR-053）。category は reference.sector17_label(s17)
+    由来の和名（"1"→食品 / "6"→自動車・輸送機）。adapter は config の label を写さない。
+    """
     _patch_pipeline(monkeypatch)
     result = _run(news.fetch_sector_news())
     assert len(result) == 2
     assert all(a["level"] == "sector" for a in result)
     assert all(a["source"] == "news" for a in result)
-    assert {a["sector17_code"] for a in result} == {"1617", "1622"}
+    assert {a["sector17_code"] for a in result} == {"1", "6"}
     assert {a["category"] for a in result} == {"食品", "自動車・輸送機"}
-    # sector17_code と category（label）が同じ記事内で対応している。
+    # sector17_code(S17) と category（reference 由来の和名）が同じ記事内で対応している。
     by_code = {a["sector17_code"]: a["category"] for a in result}
-    assert by_code["1617"] == "食品"
-    assert by_code["1622"] == "自動車・輸送機"
+    assert by_code["1"] == "食品"
+    assert by_code["6"] == "自動車・輸送機"
 
 
 def test_per_sector_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -197,6 +205,6 @@ def test_one_sector_failure_continues(monkeypatch: pytest.MonkeyPatch) -> None:
     """1 業種の RSS 取得失敗でも他業種は継続する（ADR-018）。"""
     _patch_pipeline(monkeypatch, fail_queries={"食品クエリ"})
     result = _run(news.fetch_sector_news())
-    # 食品は失敗で 0 件、自動車のみ 1 件。
+    # 食品は失敗で 0 件、自動車のみ 1 件（S17 "6"）。
     assert len(result) == 1
-    assert result[0]["sector17_code"] == "1622"
+    assert result[0]["sector17_code"] == "6"

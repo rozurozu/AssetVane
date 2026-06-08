@@ -261,7 +261,7 @@ def test_handle_get_news_context_bridges(monkeypatch: pytest.MonkeyPatch) -> Non
         return {
             "code": code,
             "company_name": "トヨタ自動車",
-            "sector17_code": "1622",
+            "sector17_code": "6",  # S17 体系（ADR-053・現実値に揃える）
             "sector_label": "自動車・輸送機",
             "stock": [
                 {

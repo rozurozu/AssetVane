@@ -51,7 +51,7 @@ J-Quants V2 `/v2/equities/master` 由来。
 | `code` | TEXT PK | 銘柄コード |
 | `company_name` | TEXT | 銘柄名 |
 | `sector33_code` | TEXT | 33 業種コード |
-| `sector17_code` | TEXT | 17 業種コード |
+| `sector17_code` | TEXT | S17 業種コード（J-Quants S17＝"1".."17"・ETF/REIT は "99"・[ADR-053](decisions.md)）|
 | `market_code` | TEXT | 市場区分 |
 | `is_etf` | INTEGER | ETF/REIT 判別フラグ |
 | `updated_at` | TEXT | 取得日時 |
@@ -305,7 +305,7 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 | `id` | INTEGER PK | |
 | `level` | TEXT | 階層タグ `'stock'`／`'sector'`／`'market'`／`'user'`（**必須**）|
 | `code` | TEXT | 銘柄（FK→stocks）＝`stock` 層の紐付け（他層は NULL）|
-| `sector17_code` | TEXT | TOPIX-17 業種コード＝`sector` 層の紐付け（他層は NULL）|
+| `sector17_code` | TEXT | `sector` 層の J-Quants S17 業種コード "1".."17"（`stocks.sector17_code` と同体系・変換なしで直接一致＝[ADR-053](decisions.md)。他層は NULL）|
 | `category` | TEXT | 表示ラベル（市況／マクロ／世界情勢 等）＝`market` 層（他層は NULL）|
 | `source` | TEXT | `news` / `user` / `disclosure` / `twitter` 等（旧 `source_type` を改名）|
 | `url` | TEXT | ソース URL（**UNIQUE**＝重複防止）|
@@ -317,7 +317,7 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 
 - インデックス: `url`（UNIQUE）、`level`、`code`、`sector17_code`。`url` UNIQUE ＋ `on_conflict_do_nothing` で冪等。
 - **3 層の使い分け**: `level='stock'`（銘柄自身・旧 `dossier_sources`）／`level='sector'`（その銘柄の TOPIX-17 業種）／`level='market'`（市況・マクロ・旧 `general_news`）／`level='user'`（ユーザー入力＝[ADR-046](decisions.md)・将来）。`get_news_context(code)` がこの 3 層（銘柄／セクター／市況）を**必ず構造的に揃えて**返す。
-- **取り込みジョブ**: ① `fetch_general_news`（`run_advisor` 直前）が市況ニュースを `level='market'` に UPSERT。② 新ジョブ `fetch_sector_news`（`fetch_general_news` の直後・`run_advisor` の前）が TOPIX-17 全業種を毎晩取得し `level='sector'`／`sector17_code` に UPSERT。③ 調査パイプライン（`investigate_stock`／`fetch_news`）が銘柄ニュースを `level='stock'`／`code` に取り込む。いずれも**要約前 dedup**（既存 URL は本文取得・要約をスキップ）で冪等・省コスト。
+- **取り込みジョブ**: ① `fetch_general_news`（`run_advisor` 直前）が市況ニュースを `level='market'` に UPSERT。② 新ジョブ `fetch_sector_news`（`fetch_general_news` の直後・`run_advisor` の前）が TOPIX-17 全業種を毎晩取得し `level='sector'`／`sector17_code` に UPSERT。**タグ付けは `stocks` と同じ J-Quants S17（"1".."17"）でそろえる**（`build_news_context` の等値 JOIN が直接一致するため＝[ADR-053](decisions.md)）。③ 調査パイプライン（`investigate_stock`／`fetch_news`）が銘柄ニュースを `level='stock'`／`code` に取り込む。いずれも**要約前 dedup**（既存 URL は本文取得・要約をスキップ）で冪等・省コスト。
 - **定数モジュール**: カテゴリ／セクターの検索クエリ・件数上限・lookback は `app/adapters/general_news_config.py`（`SECTOR_NEWS_QUERIES`／`SECTOR_NEWS_MAX_PER_SECTOR=3`／`SECTOR_NEWS_LOOKBACK_DAYS=3` 等・env 化しない＝[ADR-034](decisions.md)）。
 - **消費先**: `GET /general-news`（Dashboard widget）・Tool `get_general_news`（市況のみ）・新 Tool `get_news_context`（3 層構造）・`investigate_stock`／`GET /dossiers/{code}`（銘柄層）。既存 API のレスポンス形は不変（`source` を `source_type` にマップ）。UI 変更なし（`/news` 画面・セクター可視化は [ADR-047](decisions.md) へ繰り延べ）。
 - 適時開示（TDnet）は有料アドオンのため後付け。`source='disclosure'` でこのコーパスに入れる（構造が複雑になれば専用テーブルに分離）。

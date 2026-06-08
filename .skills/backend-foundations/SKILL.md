@@ -19,7 +19,10 @@ db/repo.py SQLAlchemy Core のクエリ。戻り値は素の dict               
 db/schema.py  Table 定義（スキーマの一元管理）                               → [[backend-repo-pattern]]
 adapters/  外部 API。外部キー名→内部列名の対応を閉じ込める                  → [[backend-adapter-pattern]]
 batch/     夜間バッチのジョブ・ロック・通知                                  → [[batch-pattern]]
+reference/ IO 無し・副作用無しの参照テーブル＋純関数（コード体系の対応表・ラベル等）。全層から import 可・序列の外（config/logging_config と同じ中立横断）。reference → 他層への依存は禁止
 ```
+
+序列の各層は**下位のみに依存**する（逆流しない）。`reference/` はこの序列の**外**に立つ中立横断の置き場で、`config` / `logging_config` と同じく**誰からでも import 可**だが、**自身は標準ライブラリ以外（他層を含む）に依存してはならない**。
 
 不変条件（ADR・破らない）:
 - **AI も router も数値計算しない**。計算は quant の純関数（ADR-014/016）。

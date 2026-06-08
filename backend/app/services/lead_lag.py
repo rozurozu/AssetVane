@@ -29,6 +29,7 @@ from app.quant.lead_lag import (
     compute_lead_lag_signal,
     validate_lead_lag,
 )
+from app.reference.sector_codes import S17_TO_TOPIX17_ETF, SECTOR17_LABELS_JA
 
 
 # ── JP 業種 ETF コードの桁マッピング（確定済み契約）──────────────────────────
@@ -42,25 +43,12 @@ def _to_db_code(jp4: str) -> str:
 
 _JP_DB_CODES: list[str] = [_to_db_code(s) for s in JP_SYMBOLS]
 
-# ── JP 業種 ETF（TOPIX-17）の業種和名（payload.label・指示の定数）─────────────
+# ── JP 業種 ETF（TOPIX-17）の業種和名（payload.label）──────────────────────────
+# 和名の SSOT は app/reference/sector_codes に集約した（ADR-053）。lead_lag は instrument 空間
+# （ETF ティッカー "1617".."1633"）でキーを持つので、reference の S17 和名を ETF キーへ導出する
+# （値も挙動も従来の写経マップと不変）。
 JP_SECTOR_LABELS: dict[str, str] = {
-    "1617": "食品",
-    "1618": "エネルギー資源",
-    "1619": "建設・資材",
-    "1620": "素材・化学",
-    "1621": "医薬品",
-    "1622": "自動車・輸送機",
-    "1623": "鉄鋼・非鉄",
-    "1624": "機械",
-    "1625": "電機・精密",
-    "1626": "情報通信・サービスその他",
-    "1627": "電力・ガス",
-    "1628": "運輸・物流",
-    "1629": "商社・卸売",
-    "1630": "小売",
-    "1631": "銀行",
-    "1632": "金融（除く銀行）",
-    "1633": "不動産",
+    etf: SECTOR17_LABELS_JA[s17] for s17, etf in S17_TO_TOPIX17_ETF.items()
 }
 
 # ── base_end（Cfull 固定用ベース期間の終端）の決め方 ─────────────────────────

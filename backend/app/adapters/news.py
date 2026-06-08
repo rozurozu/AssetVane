@@ -246,12 +246,13 @@ async def fetch_general_news(known_urls: set[str] | None = None) -> list[dict]:
 # 公開境界: fetch_sector_news（セクターニュース・ADR-044 (ii) セクター層・level='sector'）
 # ---------------------------------------------------------------------------
 async def fetch_sector_news(known_urls: set[str] | None = None) -> list[dict]:
-    """TOPIX-17 業種別のセクターニュースを取得して返す（ADR-044 (ii) セクター層）。
+    """S17 業種別のセクターニュースを取得して返す（ADR-044 (ii) セクター層・ADR-053）。
 
     統合ニュースコーパスの 3 階層（銘柄/セクター/市況）のうち「セクター」層を埋める。業種別の
-    Google News キーワード検索（SECTOR_NEWS_QUERIES）を回し、一般ニュースと同じパイプライン
+    Google News キーワード検索（SECTOR_NEWS_QUERIES。キーは J-Quants S17 業種コード "1".."17"
+    ＝stocks.sector17_code と同体系・ADR-053）を回し、一般ニュースと同じパイプライン
     （_fetch_keyword_news）を再利用する。各記事に統合タグ `level="sector"`・
-    `sector17_code=<業種コード>`・`category=<業種 label>`・`source="news"` を付与して返す。
+    `sector17_code=<S17 業種コード>`・`category=<S17 和名ラベル>`・`source="news"` を付与して返す。
 
     アダプタは DB 非依存（ADR-010）。`known_urls` は呼び出し側（夜間ジョブ）が DB から渡す既存
     url 集合で、要約前 dedup（既存分を再要約しない）に使う。
@@ -280,16 +281,17 @@ async def fetch_sector_news(known_urls: set[str] | None = None) -> list[dict]:
         SECTOR_NEWS_MAX_PER_SECTOR,
         SECTOR_NEWS_QUERIES,
     )
+    from app.reference.sector_codes import sector17_label
 
     known = known_urls or set()
     since = (datetime.now(UTC) - timedelta(days=SECTOR_NEWS_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
 
     results: list[dict] = []
-    for sector17_code, entry in SECTOR_NEWS_QUERIES.items():
-        label = entry["label"]
+    for s17, query in SECTOR_NEWS_QUERIES.items():
+        label = sector17_label(s17)
         try:
             articles = await _fetch_keyword_news(
-                entry["query"],
+                query,
                 since=since,
                 max_n=SECTOR_NEWS_MAX_PER_SECTOR,
                 known_urls=known,
@@ -297,14 +299,14 @@ async def fetch_sector_news(known_urls: set[str] | None = None) -> list[dict]:
         except NewsAdapterError as exc:
             # 1 業種の源失敗は握って次へ（他業種を巻き込まない・ADR-018）。
             logger.warning(
-                "fetch_sector_news: 業種「%s」(%s) の取得に失敗: %s", label, sector17_code, exc
+                "fetch_sector_news: 業種「%s」(S17=%s) の取得に失敗: %s", label, s17, exc
             )
             continue
 
         for article in articles:
-            # ADR-044: 統合コーパスのセクター層タグ。sector17_code で (ii) セクター層を引く。
+            # ADR-044/053: 統合コーパスのセクター層タグ。sector17_code は S17 体系で (ii) を引く。
             article["level"] = "sector"
-            article["sector17_code"] = sector17_code
+            article["sector17_code"] = s17
             article["category"] = label
             article["source"] = "news"
         results.extend(articles)

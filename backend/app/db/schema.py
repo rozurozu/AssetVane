@@ -393,7 +393,8 @@ news = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("level", String, nullable=False),  # 'stock'/'sector'/'market'/'user' の階層タグ
     Column("code", String, ForeignKey("stocks.code")),  # stock 層の銘柄 FK（他層は NULL）
-    Column("sector17_code", String),  # sector 層の TOPIX-17 業種コード '1617'..'1633'
+    # sector 層の J-Quants S17 業種コード '1'..'17'（stocks.sector17_code と同体系・ADR-053）
+    Column("sector17_code", String),
     Column("category", String),  # market 層の表示ラベル（市況/マクロ/世界情勢・他層は NULL）
     Column("source", String),  # 'news'/'user'/'disclosure'/'twitter' 等（旧 source_type を改名）
     Column("url", String, nullable=False),  # 取り込み元 URL（本文は保存しない）

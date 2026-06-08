@@ -1,8 +1,9 @@
-"""夜間ジョブ fetch_sector_news を検証する（ADR-044 (ii) セクター層・batch-pattern）。
+"""夜間ジョブ fetch_sector_news を検証する（ADR-044 (ii) セクター層・ADR-053・batch-pattern）。
 
 担保すること:
 - adapter（fetch_sector_news）をモックして DB に書く（LLM/ネットに出ない＝testing-strategy）。
 - 取得記事が統合コーパス（news・level='sector'）へ UPSERT され JobResult.ok=True・rows が件数。
+  sector17_code は J-Quants S17 体系 "1".."17"（ADR-053。stocks.sector17_code と同体系）。
 - adapter には DB から集めた known_urls（既存 url 集合・level='sector'）が渡る（ADR-044 dedup）。
 - 記事ゼロでも ok=True（好機が無い日もある）。
 - adapter が例外でもジョブ境界で握り JobResult.ok=False（後続ジョブを止めない・ADR-018）。
@@ -41,8 +42,8 @@ def test_run_upserts_articles(temp_db, monkeypatch: pytest.MonkeyPatch) -> None:
 
     async def _fake(known_urls: set[str] | None = None) -> list[dict]:
         return [
-            _article("https://a.example/1", "1617", "食品"),
-            _article("https://a.example/2", "1622", "自動車・輸送機"),
+            _article("https://a.example/1", "1", "食品"),
+            _article("https://a.example/2", "6", "自動車・輸送機"),
         ]
 
     monkeypatch.setattr(job, "fetch_sector_news", _fake)
@@ -52,7 +53,7 @@ def test_run_upserts_articles(temp_db, monkeypatch: pytest.MonkeyPatch) -> None:
     with get_engine().connect() as conn:
         rows = repo.list_news(conn, level="sector")
     assert len(rows) == 2
-    assert {r["sector17_code"] for r in rows} == {"1617", "1622"}
+    assert {r["sector17_code"] for r in rows} == {"1", "6"}  # S17 体系（ADR-053）
     assert all(r["level"] == "sector" for r in rows)
 
 
@@ -71,7 +72,7 @@ def test_run_passes_known_urls(temp_db, monkeypatch: pytest.MonkeyPatch) -> None
                     "summary": "要約。",
                     "published_at": today,
                     "level": "sector",
-                    "sector17_code": "1617",
+                    "sector17_code": "1",
                     "category": "食品",
                     "source": "news",
                     "extraction_status": "summarized",

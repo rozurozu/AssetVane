@@ -1,4 +1,4 @@
-"""ニュース3層文脈の下ごしらえ＋組み立て（ADR-044・ADR-014）。
+"""ニュース3層文脈の下ごしらえ＋組み立て（ADR-044・ADR-014・ADR-053）。
 
 設計の真実: docs/decisions.md ADR-044（ニュースを統合コーパスと階層タグに集約し
 get_news_context で3層を必ず揃える）。
@@ -6,6 +6,10 @@ get_news_context で3層を必ず揃える）。
 1 銘柄を語るには (i) その銘柄自身／(ii) その銘柄のセクター／(iii) マーケット全体、の
 **3 階層の文脈**が要る。統合コーパス（news 表・level タグ付き）から 3 層をタグフィルタで
 構造的に取り出し、(iii) のマクロ層が意味検索で埋もれる問題を回避する。
+
+セクター層は stocks.sector17_code（J-Quants S17 業種コード "1".."17"・ETF/REIT は "99"）で
+news.sector17_code（同体系・ADR-053）と直接一致させる。和名ラベルは reference に集約した
+SSOT（app.reference.sector_codes）から引く。
 
 AI は受け取った事実を解釈するだけ（ADR-014）。ここは repo（list_news/get_stock）と
 LLM の間に立つ軽量オーケストレーションで、数値計算も判定も持たない。本文は持たず
@@ -20,7 +24,7 @@ from typing import Any
 from sqlalchemy import Connection
 
 from app.db import repo
-from app.services.lead_lag import JP_SECTOR_LABELS
+from app.reference.sector_codes import normalize_sector17, sector17_label
 
 # 各層の取得窓（日）と件数上限（ADR-044 のタスク指定）。銘柄層は履歴を広めに、
 # セクター/市況層は直近のみ。3 層キーは常に揃える（データが無くても空配列）。
@@ -49,12 +53,15 @@ def _article(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_news_context(conn: Connection, code: str) -> dict[str, Any]:
-    """銘柄 code の3層ニュース文脈（銘柄/セクター/市況）を必ず揃えて返す（ADR-044・ADR-014）。
+    """銘柄 code の3層ニュース文脈（銘柄/セクター/市況）を必ず揃えて返す（ADR-044/014/053）。
 
-    銘柄の sector17_code を get_stock で解決し、TOPIX-17 業種和名（JP_SECTOR_LABELS）で
-    sector_label を補う。3 層を list_news のタグフィルタで個別に引く:
+    銘柄の sector17_code を get_stock で解決し、S17 業種和名（reference.sector17_label）で
+    sector_label を補う。sector17_code は J-Quants S17 体系 "1".."17"（ETF/REIT は "99"）で、
+    normalize_sector17 で正規化（"99"/None/不正→None でセクター層を空にする・ADR-053）。3 層を
+    list_news のタグフィルタで個別に引く:
       - 銘柄層 = level='stock', code=code（直近 30 日・最大 8 件）
-      - セクター層 = level='sector', sector17_code=<解決値>（直近 7 日・最大 5 件・不明なら空）
+      - セクター層 = level='sector', sector17_code=<正規化値>（直近 7 日・最大 5 件・不明なら空）。
+        news.sector17_code も同じ S17 体系なので変換なしで直接一致する（ADR-053）。
       - マーケット層 = level='market'（直近 7 日・最大 6 件）
 
     3 層キー（stock/sector/market）は**常に存在**させる（データが無くても空配列）。未追跡/未上場の
@@ -62,8 +69,8 @@ def build_news_context(conn: Connection, code: str) -> dict[str, Any]:
     """
     stock = repo.get_stock(conn, code)
     company_name = (stock or {}).get("company_name")
-    sector17_code = (stock or {}).get("sector17_code")
-    sector_label = JP_SECTOR_LABELS.get(sector17_code) if sector17_code else None
+    sector17_code = normalize_sector17((stock or {}).get("sector17_code"))
+    sector_label = sector17_label(sector17_code)
 
     stock_rows = repo.list_news(
         conn, level="stock", code=code, since=_since(_STOCK_SINCE_DAYS), limit=_STOCK_LIMIT
