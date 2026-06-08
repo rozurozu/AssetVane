@@ -25,6 +25,10 @@ services:
       # マウント先は /app/data ではなく symlink の解決先 /data にする（symlink の上に重ねると
       # バインドマウントが潰れて壊れた symlink になり起動が落ちる＝2026-06-04 に判明）。
       - ./data:/data
+      # codex provider（ADR-032）用。ホストの login 済み auth.json を共有する。codex が
+      # トークンリフレッシュで auth.json を書き換えるため read-write（ro にすると更新できず詰む）。
+      # コンテナ root の HOME は /root なので codex は /root/.codex/auth.json を見る。
+      - ${HOME}/.codex:/root/.codex
     # ⚠️ env_file はあえて使わない。compose の env_file はコンテナ「作成時」に env を注入し、
     # それが pydantic の .env 読みを上書きするため、.env を変えても --force-recreate しないと
     # 反映されない（切り替えが激重）。代わりに backend/.env はバインドマウント（/app/.env）越しに

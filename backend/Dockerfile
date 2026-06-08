@@ -6,13 +6,35 @@
 # （ADR-006/021・ARM ネイティブビルド回避＝scripts/deploy.sh・docs/deploy.md・ADR-035）。
 FROM python:3.12-slim AS base
 
+# buildx が渡すターゲットアーキ（arm64 / amd64）。下の codex バイナリの arch 出し分けに使う。
+ARG TARGETARCH
+
 # uv（パッケージ/venv 管理・ADR-023）を公式イメージからコピー。
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # pyright（型チェック・ADR-023）は内部で Node ランタイムを取得して動く。slim には
 # libatomic が無く Node が起動できないため入れておく（lint/型チェックを通すための土台）。
+# あわせて codex CLI（AI Advisor の provider="codex"・ADR-032）を同梱する。codex は PATH 上の
+# `codex` を `codex app-server` として spawn する前提なので、コンテナ内に置く必要がある（dev/prod
+# 双方で codex を使えるよう base に焼く）。Node 不要のネイティブ musl static バイナリを GitHub
+# releases から取得（slim=glibc でも static なので追加ランタイム依存なし）。バージョンは app-server
+# protocol に要る 0.136.0 以上を満たす rust-v0.137.0 にピン。ca-certificates は codex 実行時の
+# HTTPS（OpenAI/ChatGPT）に要るので残す。curl は取得用なので使い終わったら purge する。
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libatomic1 \
+    && apt-get install -y --no-install-recommends libatomic1 ca-certificates curl \
+    && case "${TARGETARCH}" in \
+         arm64) CODEX_ARCH=aarch64 ;; \
+         amd64) CODEX_ARCH=x86_64 ;; \
+         *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL "https://github.com/openai/codex/releases/download/rust-v0.137.0/codex-${CODEX_ARCH}-unknown-linux-musl.tar.gz" \
+       -o /tmp/codex.tar.gz \
+    && tar -xzf /tmp/codex.tar.gz -C /usr/local/bin \
+    && mv "/usr/local/bin/codex-${CODEX_ARCH}-unknown-linux-musl" /usr/local/bin/codex \
+    && chmod +x /usr/local/bin/codex \
+    && rm -f /tmp/codex.tar.gz \
+    && apt-get purge -y curl \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
