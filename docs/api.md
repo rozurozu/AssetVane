@@ -211,3 +211,74 @@ Free プラン時も `ranking` は返す（ハード無効化しない）。`met
 ### ページネーション
 
 - `/quotes`・`/journal` の**ページネーションは当面なし**。期間は `from`/`to` の範囲指定で代替する（[DOC-6]）。データ量が問題になった段階で導入を検討する。
+
+---
+
+## 8. 米国株スクリーナー（Phase 7(B-1)・提示専用・[ADR-055](decisions.md)）
+
+日本株（§1・§7 のスクリーナー）と**別ルート・別テーブル**（`us_stocks`/`us_daily_quotes`/`us_valuation_snapshots`・市場分離＝[ADR-031](decisions.md)）。すべて読み取り専用で、取得は夜間バッチ（`sync_us_universe`/`fetch_us_quotes`/`fetch_us_fundamentals`/`calc_us_valuation`）が担う。数値は USD（ドル）。**`currency` 列・FX 換算は持たない**（提示専用・(B-2) 送り）。派生比率・市場内ランクは読み取り時に Python 計算（[ADR-014](decisions.md)）。
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| GET | `/us-stocks?q=` | 米株マスタ一覧（symbol/銘柄名の部分一致）|
+| GET | `/us-stocks/screen?...` | バリュエーションで絞り込み（下記スキーマ）|
+| GET | `/us-stocks/{symbol}` | 米株詳細（マスタ＋valuation snapshot）|
+| GET | `/us-quotes/{symbol}?from=&to=` | 米株日足（チャート用・date 昇順）|
+
+- `/us-stocks/{symbol}`: **マスタ未取得は 404**、マスタはあるが valuation 未焼成なら **200＋`valuation: null`**（日本株 `/stocks/{code}` 同型・「あるものを返す」流儀）。
+- ルータは `/us-stocks/{symbol}` より `/us-stocks/screen` を先に宣言する（"screen" が `{symbol}` に食われないため）。
+
+### `GET /us-stocks/screen` のクエリと行（確定）
+
+クエリは `UsScreenCriteria`（router の Pydantic を正本）。比率系は 0..1（×100 は UI 側）。`gics_sector` は文字列完全一致。各 `*_growth_yoy` は素データ都合で NULL になり得るが min/max 比較で自然に除外される。
+
+```jsonc
+GET /us-stocks/screen?
+  per_min= per_max= pbr_min= pbr_max=
+  market_cap_min= market_cap_max=                  // USD
+  dividend_yield_min= dividend_yield_max=          // 0..1
+  roe_min= roe_max=
+  operating_margin_min/max= net_margin_min/max=    // 0..1
+  revenue_growth_yoy_min/max= op_growth_yoy_min/max=
+  profit_growth_yoy_min/max= eps_growth_yoy_min/max=
+  gics_sector=                                      // GICS 相当セクター（完全一致）
+  exclude_etf=                                      // bool
+  gics_sector_pctile_max=                           // GICS 内で安い割合（0..1）
+  market_cap_rank_max=                              // 時価総額 上位 N
+  sort_by=                                          // per|pbr|market_cap|dividend_yield|roe|
+                                                    // operating_margin|net_margin|*_growth_yoy|
+                                                    // gics_sector_pctile|market_cap_rank|symbol
+  sort_dir=asc|desc  limit=200  offset=0
+->
+  [ {
+      symbol, company_name, gics_sector, industry, is_etf,
+      as_of_date, close, eps, bps, dividend_per_share,
+      per, pbr, market_cap, dividend_yield, roe,
+      operating_margin, net_margin,
+      revenue_growth_yoy, op_growth_yoy, profit_growth_yoy, eps_growth_yoy,
+      gics_sector_pctile,  // GICS 業種内パーセンタイル（読み取り時 window 算出）
+      market_cap_rank      // 時価総額 市場内順位（同上）
+  } ]
+  // op_growth_yoy / eps_growth_yoy は素が無く null（捏造しない）。
+```
+
+### `GET /us-stocks/{symbol}` のレスポンス（確定）
+
+```jsonc
+GET /us-stocks/{symbol} ->
+  {
+    symbol, company_name, gics_sector, industry, is_etf,
+    valuation: {          // 未焼成なら null
+      symbol, company_name, gics_sector, industry, is_etf, as_of_date,
+      close, eps, bps, dividend_per_share,
+      per, pbr, market_cap, dividend_yield, roe,
+      operating_margin, net_margin,
+      revenue_growth_yoy, op_growth_yoy, profit_growth_yoy, eps_growth_yoy,
+      gics_sector_pctile, market_cap_rank
+    } | null
+  }
+```
+
+`GET /us-quotes/{symbol}` は `[{ date, open, high, low, close, volume, adj_close }]`（date 昇順）。
+
+> **AI Tool**: `get_us_valuation`／`screen_us_valuation`（`min_phase=7`・返り値に `market:"US"`/`currency:"USD"` 明示・verdict なし＝[ADR-048](decisions.md) 契約をミラー）。日本株は `get_valuation`/`screen_valuation`（JPY・[advisor.md](advisor.md)）。

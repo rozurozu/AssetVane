@@ -22,6 +22,8 @@ export const nav: NavSection[] = [
     items: [
       { label: "Dashboard", icon: "▦", href: "/" },
       { label: "Stocks", icon: "≣", href: "/stocks" },
+      // 米国株スクリーナー（Phase 7(B-1)・提示専用・ADR-039(B)/ADR-055）。日本株とは別ルート（市場分離・ADR-031）。
+      { label: "US Stocks", icon: "≣", href: "/us-stocks" },
     ],
   },
   {

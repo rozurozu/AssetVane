@@ -14,6 +14,7 @@ from __future__ import annotations
 from app.batch.jobs import (
     calc_lead_lag,
     calc_signals,
+    calc_us_valuation,
     calc_valuation,
     embed_news,
     fetch_financials,
@@ -22,6 +23,8 @@ from app.batch.jobs import (
     fetch_index,
     fetch_quotes,
     fetch_sector_news,
+    fetch_us_fundamentals,
+    fetch_us_quotes,
     investigate_dossier,
     notify_cost_warn,
     notify_digest,
@@ -29,6 +32,7 @@ from app.batch.jobs import (
     score_ai_alpha,
     snapshot_assets,
     sync_master,
+    sync_us_universe,
 )
 
 NIGHTLY_JOBS = [
@@ -48,6 +52,15 @@ NIGHTLY_JOBS = [
     # その前に置き NAV を揃える（fetch_index と同様の取得→評価の順序）。
     fetch_fund_navs.run,
     snapshot_assets.run,  # Phase 2: 今日の株価確定後に評価額を焼く（phase2-spec.md §3.3）
+    # Phase 7(B-1) 米株ブロック・日本株フローと独立（ADR-031/039）。米市場のユニバース/OHLCV/
+    # fundamentals/valuation を 1 ブロックで回す（提示専用・JPY コア無改変）。順序は日本株フロー
+    # （マスタ→価格→財務→valuation）をミラー: ユニバース同期 → OHLCV 取得 → 財務ローテ巡回 →
+    # その後に valuation を焼く（業種/財務/価格が揃ってから・ADR-031）。各ジョブ部分失敗は握って
+    # 後続継続（ADR-018）。
+    sync_us_universe.run,
+    fetch_us_quotes.run,
+    fetch_us_fundamentals.run,
+    calc_us_valuation.run,
     # ADR-034: 夜の分析AI の市況文脈材料として run_advisor の直前で一般ニュースを取得・保存。
     fetch_general_news.run,
     # ADR-044: 統合コーパスのセクター層を埋める。一般ニュースの直後・run_advisor の前に置き、

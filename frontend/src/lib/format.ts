@@ -54,3 +54,18 @@ export function toNum(s: string): number | undefined {
   const n = Number(t);
   return Number.isNaN(n) ? undefined : n;
 }
+
+/** ドル整形（米株・ADR-055・B-1 は USD 表示）。null/undefined は "—"。例: 1234.5 → "$1,235"。 */
+export function fmtUsd(v: number | null | undefined): string {
+  if (v == null) return "—";
+  return `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+}
+
+/** 米株時価総額（USD）を T/B/M で簡潔表示（米株・ADR-055）。null は "—"。例: 2.5e12 → "$2.5T"・5e9 → "$5.0B"。 */
+export function fmtMarketCapUsd(v: number | null | undefined): string {
+  if (v == null) return "—";
+  if (v >= 1e12) return `$${(v / 1e12).toFixed(1)}T`;
+  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+  return `$${Math.round(v).toLocaleString("en-US")}`;
+}

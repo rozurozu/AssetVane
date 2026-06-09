@@ -84,6 +84,9 @@ def test_registry_handlers_are_registered() -> None:
         "search_news",
         # Phase 7: 日米業種リードラグ（min_phase=7）。
         "get_lead_lag",
+        # Phase 7(B-1): 米国株バリュエーション（min_phase=7・ADR-039/048/055）。
+        "get_us_valuation",
+        "screen_us_valuation",
     }
     assert set(REGISTRY) == expected
 

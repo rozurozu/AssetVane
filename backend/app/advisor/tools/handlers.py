@@ -35,10 +35,12 @@ from app.advisor.tools.schemas import (
     GetNewsContextArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
+    GetUsValuationArgs,
     GetValuationArgs,
     InvestigateStockArgs,
     OptimizePortfolioArgs,
     ScreenStocksArgs,
+    ScreenUsValuationArgs,
     ScreenValuationArgs,
     SearchNewsArgs,
     SubmitJournalArgs,
@@ -387,6 +389,94 @@ async def handle_screen_valuation(args: dict[str, object]) -> dict[str, Any]:
     except Exception as exc:
         logger.exception("handle_screen_valuation 失敗")
         return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Phase 7(B-1) Tool（米国株バリュエーション・ADR-039/048/055）
+# ---------------------------------------------------------------------------
+
+
+async def handle_get_us_valuation(args: dict[str, object]) -> dict[str, Any]:
+    """get_us_valuation（Phase 7(B-1)・ADR-039/048/055）。米株 1 銘柄のファンダ事実を返す。
+
+    handle_get_valuation（日本株）のミラー。差分は ① 識別子 code→symbol（ティッカー）②
+    market/currency を US/USD で明示 ③ 業種が sector33_code→gics_sector（Yahoo .info.sector≒
+    GICS・ADR-055）④ 業種内パーセンタイルが per_sector_pctile→gics_sector_pctile。数値は夜間
+    calc_us_valuation が焼いた事実のみで、verdict（割安/割高の判定）は返さず解釈は LLM に委ねる
+    （ADR-014）。未焼成/未上場は found=False で返す（市場/通貨は契約として常に明示）。
+    """
+    try:
+        symbol = GetUsValuationArgs.model_validate(args).symbol
+        with get_engine().connect() as conn:
+            row = repo.get_us_valuation_snapshot(conn, symbol)
+        if row is None:
+            return {
+                "symbol": symbol,
+                "market": "US",
+                "currency": "USD",
+                "found": False,
+                "is_delayed": _IS_DELAYED,
+            }
+        return {
+            "symbol": symbol,
+            "company_name": row.get("company_name"),
+            "gics_sector": row.get("gics_sector"),
+            "industry": row.get("industry"),
+            "market": "US",
+            "currency": "USD",
+            "as_of": row.get("as_of_date"),
+            "is_delayed": _IS_DELAYED,
+            "found": True,
+            "per": row.get("per"),
+            "pbr": row.get("pbr"),
+            "roe": row.get("roe"),
+            "operating_margin": row.get("operating_margin"),
+            "net_margin": row.get("net_margin"),
+            "dividend_yield": row.get("dividend_yield"),
+            "market_cap": row.get("market_cap"),
+            "market_cap_rank": row.get("market_cap_rank"),
+            "gics_sector_pctile": row.get("gics_sector_pctile"),
+            "revenue_growth_yoy": row.get("revenue_growth_yoy"),
+            "op_growth_yoy": row.get("op_growth_yoy"),
+            "profit_growth_yoy": row.get("profit_growth_yoy"),
+            "eps_growth_yoy": row.get("eps_growth_yoy"),
+        }
+    except Exception as exc:
+        logger.exception("handle_get_us_valuation 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_screen_us_valuation(args: dict[str, object]) -> dict[str, Any]:
+    """screen_us_valuation（Phase 7(B-1)・ADR-039/048/055）。米株をファンダ条件で絞り込む。
+
+    handle_screen_valuation（日本株）のミラー。差分は ① repo.screen_us_stocks を叩く（partition は
+    gics_sector・ADR-055）② market/currency を US/USD で明示 ③ 業種絞りが gics_sector。しきい値は
+    AI が criteria で渡す（コードは破壊的ゲートを持たない＝ADR-026/031）。verdict は付けず事実だけを
+    列挙する（ADR-014）。limit 既定は日本株 screen_valuation と同じ 50。
+    """
+    try:
+        c = ScreenUsValuationArgs.model_validate(args)
+        criteria = c.model_dump(exclude_none=True)
+        criteria.setdefault("limit", 50)
+        with get_engine().connect() as conn:
+            rows = repo.screen_us_stocks(conn, criteria)
+        as_of = rows[0].get("as_of_date") if rows else None
+        return {
+            "market": "US",
+            "currency": "USD",
+            "as_of": as_of,
+            "is_delayed": _IS_DELAYED,
+            "count": len(rows),
+            "items": rows,
+        }
+    except Exception as exc:
+        logger.exception("handle_screen_us_valuation 失敗")
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 Tool（続き）
+# ---------------------------------------------------------------------------
 
 
 async def handle_get_asset_overview(args: dict[str, object]) -> dict[str, Any]:

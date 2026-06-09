@@ -155,6 +155,25 @@ class Settings(BaseSettings):
     # 直下・prod コンテナ=/app/models）。本番（compose.prod.yaml）は ./backend/models を mount。
     ml_model_dir: str = "./models"
 
+    # --- UsEquityAdapter（米国株・Phase 7(B-1)・ADR-010/039/048/055） ---
+    # 米株はソース別フォールバック連鎖の素地を残しつつ当面 yahoo（yfinance）一本（grill 確定）。
+    # 名前は adapters/us_equity.py の _REGISTRY が解決（未知名はスキップ）。index_sources と同型の
+    # CSV・優先順。fetch_quotes（OHLCV）/ fetch_fundamentals（`.info`）/ fetch_universe（NASDAQ
+    # Trader directory）をこのアダプタに閉じ込める。秘密情報は不要（yfinance は無認証）。
+    us_equity_source: str = "yahoo"
+    # yfinance のリクエスト間隔（秒）。`.info` は重く NASDAQ も Free 系なので軽くあける（ADR-010）。
+    us_equity_min_interval_seconds: float = 1.0
+    # NASDAQ Trader directory（nasdaqlisted/otherlisted）取得のベース URL（HTTP・パイプ区切り）。
+    us_universe_base_url: str = "https://www.nasdaqtrader.com"
+    us_equity_http_timeout_seconds: float = 30.0  # directory/`.info` GET のタイムアウト（秒）
+    # fundamentals 低頻度ローテ巡回の夜あたり処理本数の天井（ADR-033 同型・約 6000 銘柄を約 7 夜で
+    # 一周。`.info` が重いので暴走防止の上限として持つ）。後続ウェーブの fetch_us_fundamentals 用。
+    us_fundamentals_nightly_max: int = 900
+    # OHLCV 取得（fetch_us_quotes）でティッカーを何銘柄ずつまとめて取得→UPSERT するかの分割幅。
+    # yf.download をシンボル単位で回しつつ、一定数ごとに UPSERT を区切ることで巨大トランザクション
+    # と長時間メモリ滞留を避ける（差分カーソルは全銘柄共通＝fetch_quotes 同型・ADR-018）。
+    us_quotes_batch_size: int = 50
+
     # --- 銘柄別調査 cadence（夜の巡回・ADR-033） ---
     # watchlist の interval_days で各銘柄の調査間隔を持ち、夜あたりの処理本数は天井で抑える。
     # 固定 N=3 を廃し、暴走防止の上限として残す（投資 dossier 巡回ジョブが消費する）。
@@ -181,6 +200,11 @@ class Settings(BaseSettings):
     def index_source_list(self) -> list[str]:
         """カンマ区切りの指数ソース名を優先順リストにする（フォールバック連鎖・ADR-010）。"""
         return [s.strip() for s in self.index_sources.split(",") if s.strip()]
+
+    @property
+    def us_equity_source_list(self) -> list[str]:
+        """カンマ区切りの米株ソース名を優先順リストにする（index_source_list 同型・ADR-039）。"""
+        return [s.strip() for s in self.us_equity_source.split(",") if s.strip()]
 
     def env_status(self) -> dict[str, dict[str, object]]:
         """各キーの充足状況を「どの Phase で要るか」付きで返す（/health 用）。

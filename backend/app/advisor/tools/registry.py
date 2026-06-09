@@ -27,10 +27,12 @@ from app.advisor.tools.schemas import (
     GetNewsContextArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
+    GetUsValuationArgs,
     GetValuationArgs,
     InvestigateStockArgs,
     OptimizePortfolioArgs,
     ScreenStocksArgs,
+    ScreenUsValuationArgs,
     ScreenValuationArgs,
     SearchNewsArgs,
     SubmitJournalArgs,
@@ -277,6 +279,35 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(GetLeadLagArgs),
         handler=handlers.handle_get_lead_lag,
+        min_phase=7,
+    ),
+    # --- Phase 7(B-1)（米国株バリュエーション・ADR-039/048/055）---
+    "get_us_valuation": ToolDef(
+        name="get_us_valuation",
+        description=(
+            "指定**米国株**（ティッカー symbol）のバリュエーション/ファンダ事実を取得する"
+            "（PER・PBR・ROE・営業/純利益率・配当利回り・売上/利益/EPS の YoY 成長率・時価総額と"
+            "GICS 業種内パーセンタイル/順位）。割安・割高や収益性・成長性を語る前に必ず呼ぶ。"
+            "数値は事実のみで判定は付かない＝PER 単体で結論せず、成長率・業種比較と併せて解釈する"
+            "（手法カード『バリュエーション』参照）。米国株のバリュエーション/ファンダ事実取得"
+            "（USD・GICS／market:US・currency:USD）。日本株は get_valuation（JPY）。"
+        ),
+        parameters=_schema(GetUsValuationArgs),
+        handler=handlers.handle_get_us_valuation,
+        min_phase=7,
+    ),
+    "screen_us_valuation": ToolDef(
+        name="screen_us_valuation",
+        description=(
+            "バリュエーション/ファンダ条件で**米国株**を絞り込み、候補を指標付きで列挙する"
+            "（per/pbr/roe/利益率/配当利回り/YoY 成長率のレンジ・GICS 業種・時価総額順位など）。"
+            "『割安な米国株を探して』『高 ROE で割安を探して』等の候補探しのときに呼ぶ。"
+            "しきい値は手法カードの作法に基づき自分で criteria に渡す（例: 割安≈PER<15 や PBR<1 を"
+            "起点に、成長率・業種で調整）。米国株のバリュエーション/ファンダ事実取得（USD・GICS）・"
+            "ランクは市場内（market:US・currency:USD）。日本株は screen_valuation（JPY）。"
+        ),
+        parameters=_schema(ScreenUsValuationArgs),
+        handler=handlers.handle_screen_us_valuation,
         min_phase=7,
     ),
 }

@@ -133,6 +133,48 @@ class ScreenValuationArgs(_ToolArgs):
     limit: int | None = None
 
 
+class GetUsValuationArgs(_ToolArgs):
+    """get_us_valuation の引数（Phase 7(B-1)・ADR-039/048/055）。
+
+    GetValuationArgs（日本株）のミラー。識別子は米株流儀の `symbol`（ティッカー）に置換する
+    （日本株は `code`・市場分離＝ADR-031）。指定銘柄のバリュエーション事実を取得する。
+    """
+
+    symbol: str
+
+
+class ScreenUsValuationArgs(_ToolArgs):
+    """screen_us_valuation の criteria（Phase 7(B-1)・ADR-039/048/055・キーは内部列名）。
+
+    ScreenValuationArgs（日本株）のミラー。バリュエーション/ファンダ指標で米国株を絞り込む。
+    日本株との差分は ① 業種が `sector33_code`→`gics_sector`（Yahoo `.info.sector`≒GICS 11 分類の
+    文字列・ADR-055）② 業種内パーセンタイル上限が `per_sector_pctile_max`→`gics_sector_pctile_max`
+    （GICS 内で安い割合・0..1）。それ以外（per/pbr/roe/利益率/配当利回り/YoY 成長率のレンジ・
+    時価総額順位・sort・limit）は日本株と同型。すべて任意（省略時は無条件）。しきい値は AI が手法
+    カードの作法を見て explicit に渡す（コードは破壊的ゲートを持たない＝ADR-014/026/031）。
+    """
+
+    per_min: float | None = None
+    per_max: float | None = None
+    pbr_min: float | None = None
+    pbr_max: float | None = None
+    roe_min: float | None = None
+    roe_max: float | None = None
+    dividend_yield_min: float | None = None  # 0..1
+    operating_margin_min: float | None = None  # 0..1
+    net_margin_min: float | None = None  # 0..1
+    revenue_growth_yoy_min: float | None = None  # 0..1 基準の比率
+    profit_growth_yoy_min: float | None = None
+    market_cap_min: float | None = None  # USD
+    gics_sector: str | None = None  # Yahoo .info.sector（GICS 相当の文字列・ADR-055）
+    gics_sector_pctile_max: float | None = None  # 業種内で安い割合（0..1）
+    market_cap_rank_max: int | None = None  # 時価総額 上位 N
+    exclude_etf: bool | None = None
+    sort_by: str | None = None  # per/pbr/roe/market_cap/dividend_yield/*_growth_yoy 等
+    sort_dir: Literal["asc", "desc"] | None = None
+    limit: int | None = None
+
+
 class GetFundHoldingsArgs(_ToolArgs):
     """get_fund_holdings の引数（ADR-054）。省略時は先頭ポートフォリオ（portfolio_id 既定 1）。"""
 

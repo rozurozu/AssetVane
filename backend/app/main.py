@@ -34,6 +34,7 @@ from app.routers.portfolio import router as portfolio_router
 from app.routers.screening_filters import router as screening_filters_router
 from app.routers.signals import router as signals_router
 from app.routers.stocks import router as stocks_router
+from app.routers.us_stocks import router as us_stocks_router
 from app.routers.watchlist import router as watchlist_router
 
 # import 時に 1 回だけログ基盤を構成する（ADR-038）。uvicorn は app import 前に自前の
@@ -103,6 +104,8 @@ app = FastAPI(
 
 # 銘柄・株価（Phase 0／docs/api.md §1）。GET /stocks・/quotes（routers/stocks.py）。
 app.include_router(stocks_router)
+# 米国株（Phase 7(B-1)／提示専用＝ADR-039(B)・ADR-055）。GET /us-stocks・/us-quotes。
+app.include_router(us_stocks_router)
 # シグナル一覧（Phase 1／spec §5.1）。GET /signals（routers/signals.py）。
 app.include_router(signals_router)
 # 手動バッチ起動（Phase 1／spec §3.8）。POST /batch/run（routers/batch.py）。

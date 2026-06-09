@@ -155,13 +155,28 @@
 
 **留意点（A）**: 論文は取引コスト控除後の超過収益の有無を明示していない。提示用途では軽視できるが、将来の実弾運用では検証必須。
 
-### Phase 7(B): 米国株拡張 — 未着手（繰り延べ・[ADR-039](decisions.md)）
+**さらなる分割（[ADR-055](decisions.md)）**: (B) は「スクリーナー（提示）」と「FX/保有波及（重い・JPY 資産評価コアを全面的に触る）」で重さが桁違いなため、**(B-1) 米株スクリーナー（提示専用）を先行**・**(B-2) FX/保有波及を分離**した。
 
-- `UsEquityAdapter` を新設し米国個別株（数千・OHLCV）・米国ファンダ源を取得（[architecture.md 4](architecture.md)）。
-- **米株スクリーナー `/us-stocks`（[ADR-031](decisions.md)）**: 日本株スクリーナー（`/stocks`・PER/PBR/時価総額/配当利回り）と同型を米株でも作る。ただし**別ルート・別 `valuation_snapshots` 相当**にする（通貨が ¥↔$、業種分類が 33業種↔GICS、財務ソースが J-Quants↔別ソースで市場を跨げないため）。
-- 通貨列・`FxAdapter`・FX 換算と holdings/cash/asset_snapshots への波及・GICS 分類はここで導入する。
+### Phase 7(B-1): 米株スクリーナー — 実装済み（[ADR-055](decisions.md)）
 
-**完了条件（B）**: 米国株データを扱え、米株スクリーナー `/us-stocks` が日本株版と同等に動く。通貨/FX 換算が資産評価に反映される。
+**状況（2026-06-09・実装完了）**: 提示専用＝既存 JPY 資産評価コア（holdings/cash/asset_snapshots/portfolio metrics/`/optimize`）に一切触れず、米株を AI と相談できる軸を先に通した。
+
+- **データ源は yfinance 一本**。[ADR-039](decisions.md)(B) が明言した `UsEquityAdapter` を新設（`adapters/us_equity.py`・`UsEquitySource` ABC ＋ `YahooUsEquitySource` ＋ファサード＝[IndexAdapter](architecture.md) 同型のフォールバック連鎖・[ADR-010](decisions.md)）。ユニバースは NASDAQ Trader directory（普通株のみ・ETF は `is_etf` フラグ保持）。
+- **市場は別テーブル**（[ADR-031](decisions.md) 市場分離・migration `0017_us_equity`）: `us_stocks`／`us_daily_quotes`（全履歴）／`us_valuation_snapshots`。日本株コアと列はミラーするが `code→symbol`・`sector33_code→gics_sector` に読み替える。**currency 列は持たない**（(B-2) 送り）。
+- **業種は Yahoo `.info.sector`（GICS 相当 11 分類の英語ラベル）を文字列で保持**（厳密 GICS コードは追わない・和訳表 `backend/app/reference/gics_sectors.py`）。
+- **夜間 4 ジョブ**（`snapshot_assets` の後・通知系の前）: `sync_us_universe`→`fetch_us_quotes`→`fetch_us_fundamentals`（`.info` を [ADR-033](decisions.md) 同型でローテ巡回・夜天井 900）→`calc_us_valuation`。派生比率・市場内ランクは日本株と同じ `quant/valuation.py` 純関数で読み取り時に Python 計算（[ADR-014](decisions.md)/[ADR-016](decisions.md)）。
+- **AI Tool 2 つ**: `get_us_valuation`／`screen_us_valuation`（`min_phase=7`・`market:"US"`/`currency:"USD"` 明示・verdict なし＝[ADR-048](decisions.md) 契約をミラー）。日本株 Tool（JPY）は無改変。`CURRENT_PHASE` は 7 のまま。
+- **REST/画面**: `GET /us-stocks`・`/us-stocks/screen`・`/us-stocks/{symbol}`・`/us-quotes/{symbol}`（[api.md](api.md)）＋ frontend `/us-stocks` スクリーナー＋ `/us-stocks/[symbol]` 詳細（$ 表示・GICS フィルタ・ローソク足）。
+- **YoY の割り切り**: `.info` 提供の率を実値中継（売上 YoY←`revenueGrowth`・純利益 YoY←`earningsGrowth`）。`op_growth_yoy`/`eps_growth_yoy` は素が無く None（捏造しない）。`operating_profit` は `operatingMargins × totalRevenue` で近似。
+
+**完了条件（B-1・達成）**: 米株スクリーナー `/us-stocks` ＋ AI Tool ＋ チャートが日本株版と同等に動く（提示専用・JPY 資産評価コア無改変）。
+
+### Phase 7(B-2): FX/保有波及 — 未着手（繰り延べ・[ADR-039](decisions.md)/[ADR-055](decisions.md)）
+
+- 通貨列・`FxAdapter`・FX 換算と holdings/cash/asset_snapshots への波及（米株保有管理）をここで導入する。日米横断の "both" バランスは portfolio/資産概要レイヤ（FX 換算）で見る。
+- repo/handler/service の日米 DRY 共通化（(B-1) は日本株無改変のため重複を許容した）・米株版 25 指標フル充足・`op_growth_yoy`/`eps_growth_yoy` を活かす財務履歴源の追加（[ADR-055](decisions.md) TODO）。
+
+**完了条件（B-2）**: 通貨/FX 換算が資産評価に反映され、米株保有が JPY 資産概要に合算される。
 
 ---
 
@@ -171,7 +186,7 @@ Phase をまたぐ機能なのでここに TODO を集約する。**日本株の
 
 - **25 指標フル充足（要 J-Quants 実機確認）**: ROA/ROIC/自己資本比率/D-E/流動比率/EBITDA は総資産・負債を要するが、現 `financials`（売上/営業利益/純利益/EPS/BPS/配当/株数）に無い。J-Quants `fins/summary` の総資産系フィールド有無を確認し、財務取得を拡張してから後付けする。
 - **カードローダ機構（近接の planned）**: 今は全カード常時注入。カードが増える前に、メタデータだけ常時露出・本文は選ばれた時にロードする on-demand 機構（progressive disclosure）を用意する（[ADR-048](decisions.md)）。
-- **米株バリュエーション**: 上記 Phase 7(B) の `/us-stocks` 別スナップショットで ROE 等も含めて拡張し、通貨/業種（GICS）を跨がず市場内ランクにする。日米横断の "both" バランスは portfolio/資産概要レイヤ（FX 換算）で見る。
+- **米株バリュエーション**: Phase 7(B-1) で `/us-stocks` 別スナップショット（`us_valuation_snapshots`）に ROE/利益率/各 YoY も含めて**実装済み**（[ADR-055](decisions.md)）。通貨/業種（GICS）を跨がず市場内ランクにする方針どおり。日米横断の "both" バランスは portfolio/資産概要レイヤ（FX 換算）＝Phase 7(B-2) で見る。
 
 ---
 

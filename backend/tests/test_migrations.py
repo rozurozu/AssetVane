@@ -50,6 +50,10 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
             "notifications",
             # ADR-044（0013_news_corpus）。旧 general_news/dossier_sources を統合コーパスへ。
             "news",
+            # Phase 7(B-1)（0017_us_equity・ADR-031/039）。米株 3 テーブル（提示専用・別系統）。
+            "us_stocks",
+            "us_daily_quotes",
+            "us_valuation_snapshots",
             "alembic_version",
         } <= names
 

@@ -1246,3 +1246,182 @@ export function getFundNavSeries(
   const qs = limit != null ? `?limit=${limit}` : "";
   return getJSON<FundNavPoint[]>(`/funds/${encodeURIComponent(isin)}/nav-series${qs}`, signal);
 }
+
+// --- Phase 7(B-1) 米国株スクリーナー（ADR-039(B)/ADR-055・提示専用）---
+// backend routers/us_stocks.py の Pydantic（UsScreenCriteria/UsScreenRow/UsStockDetail/UsQuote）と 1:1。
+// 日本株（ScreenCriteria/ScreenRow）のミラーだが、市場分離（ADR-031）で別型・別関数。
+// code→symbol・sector33_code→gics_sector に読み替える。数値は USD（ドル）。
+// 比率系（dividend_yield/roe/各 margin/各 growth_yoy/各 pctile）は内部 0..1（UI でのみ ×100・ADR-008）。
+
+/** 米株スクリーニング条件（UsScreenCriteria と 1:1）。全フィールド任意。市場跨ぎはしない。 */
+export type UsScreenCriteria = {
+  per_min?: number;
+  per_max?: number;
+  pbr_min?: number;
+  pbr_max?: number;
+  market_cap_min?: number; // USD
+  market_cap_max?: number;
+  dividend_yield_min?: number; // 0..1（UI で ×100）
+  dividend_yield_max?: number;
+  roe_min?: number; // 0..1
+  roe_max?: number;
+  operating_margin_min?: number; // 0..1
+  operating_margin_max?: number;
+  net_margin_min?: number; // 0..1
+  net_margin_max?: number;
+  revenue_growth_yoy_min?: number; // 0..1 基準の比率
+  revenue_growth_yoy_max?: number;
+  op_growth_yoy_min?: number;
+  op_growth_yoy_max?: number;
+  profit_growth_yoy_min?: number;
+  profit_growth_yoy_max?: number;
+  eps_growth_yoy_min?: number;
+  eps_growth_yoy_max?: number;
+  gics_sector?: string; // GICS 相当セクター（Yahoo 英語ラベルの完全一致）
+  exclude_etf?: boolean;
+  gics_sector_pctile_max?: number; // GICS 内で安い割合 0..1
+  market_cap_rank_max?: number; // 時価総額 上位 N
+  sort_by?:
+    | "per"
+    | "pbr"
+    | "market_cap"
+    | "dividend_yield"
+    | "roe"
+    | "operating_margin"
+    | "net_margin"
+    | "revenue_growth_yoy"
+    | "op_growth_yoy"
+    | "profit_growth_yoy"
+    | "eps_growth_yoy"
+    | "gics_sector_pctile"
+    | "market_cap_rank"
+    | "symbol";
+  sort_dir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+};
+
+/** 米株スクリーナー 1 行（us_valuation_snapshots × us_stocks ＋ 読み取り時ランク・UsScreenRow と 1:1）。 */
+export type UsScreenRow = {
+  symbol: string;
+  company_name: string | null;
+  gics_sector: string | null;
+  industry: string | null;
+  is_etf: number | null;
+  as_of_date: string | null;
+  close: number | null; // USD
+  eps: number | null;
+  bps: number | null;
+  dividend_per_share: number | null;
+  per: number | null;
+  pbr: number | null;
+  market_cap: number | null; // USD
+  dividend_yield: number | null; // 0..1
+  roe: number | null; // 0..1
+  operating_margin: number | null; // 0..1
+  net_margin: number | null; // 0..1
+  revenue_growth_yoy: number | null; // 0..1 基準の比率
+  op_growth_yoy: number | null;
+  profit_growth_yoy: number | null;
+  eps_growth_yoy: number | null;
+  gics_sector_pctile: number | null; // 0..1
+  market_cap_rank: number | null;
+};
+
+/** 米株マスタ 1 件（GET /us-stocks・UsStock と 1:1）。 */
+export type UsStock = {
+  symbol: string;
+  company_name: string | null;
+  gics_sector: string | null;
+  industry: string | null;
+  is_etf: number | null;
+};
+
+/** 米株 1 銘柄のバリュエーション事実（UsValuationSnapshot と 1:1・未焼成は null で返る）。 */
+export type UsValuationSnapshot = {
+  symbol: string;
+  company_name: string | null;
+  gics_sector: string | null;
+  industry: string | null;
+  is_etf: number | null;
+  as_of_date: string | null;
+  close: number | null; // USD
+  eps: number | null;
+  bps: number | null;
+  dividend_per_share: number | null;
+  per: number | null;
+  pbr: number | null;
+  market_cap: number | null; // USD
+  dividend_yield: number | null; // 0..1
+  roe: number | null; // 0..1
+  operating_margin: number | null; // 0..1
+  net_margin: number | null; // 0..1
+  revenue_growth_yoy: number | null; // 0..1
+  op_growth_yoy: number | null;
+  profit_growth_yoy: number | null;
+  eps_growth_yoy: number | null;
+  gics_sector_pctile: number | null; // 0..1
+  market_cap_rank: number | null;
+};
+
+/** 米株詳細（GET /us-stocks/{symbol}・UsStockDetail と 1:1）。マスタは取れたが未焼成なら valuation=null。 */
+export type UsStockDetail = {
+  symbol: string;
+  company_name: string | null;
+  gics_sector: string | null;
+  industry: string | null;
+  is_etf: number | null;
+  valuation: UsValuationSnapshot | null;
+};
+
+/** 米株日足 1 本（GET /us-quotes/{symbol}・UsQuote と 1:1）。Quote と同型だが市場分離で別型。 */
+export type UsQuote = {
+  date: string; // 'YYYY-MM-DD'
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
+  adj_close: number | null;
+};
+
+/** 米株スクリーニング（GET /us-stocks/screen・ADR-031/055）。criteria を query にして読み取り時計算結果を得る。
+ * boolean は true のときだけ送る（既定 false は送らない・日本株 screenStocks と同じ流儀）。 */
+export function screenUsStocks(
+  criteria: UsScreenCriteria,
+  signal?: AbortSignal,
+): Promise<UsScreenRow[]> {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(criteria)) {
+    if (v === undefined || v === null || v === "") continue;
+    if (typeof v === "boolean") {
+      if (v) p.set(k, "true");
+    } else {
+      p.set(k, String(v));
+    }
+  }
+  const qs = p.toString();
+  return getJSON<UsScreenRow[]>(`/us-stocks/screen${qs ? `?${qs}` : ""}`, signal);
+}
+
+/** 米株詳細（マスタ＋valuation snapshot）を取得（GET /us-stocks/{symbol}）。未取得は 404。 */
+export function getUsStock(symbol: string, signal?: AbortSignal): Promise<UsStockDetail> {
+  return getJSON<UsStockDetail>(`/us-stocks/${encodeURIComponent(symbol)}`, signal);
+}
+
+/** 米株チャート用の日足（GET /us-quotes/{symbol}）。date 昇順。 */
+export function getUsQuotes(
+  symbol: string,
+  from?: string,
+  to?: string,
+  signal?: AbortSignal,
+): Promise<UsQuote[]> {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const qs = params.toString();
+  return getJSON<UsQuote[]>(
+    `/us-quotes/${encodeURIComponent(symbol)}${qs ? `?${qs}` : ""}`,
+    signal,
+  );
+}

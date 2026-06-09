@@ -484,3 +484,89 @@ news = Table(
     Index("ix_news_code", "code"),  # 銘柄層（get_news_context の (i)）
     Index("ix_news_sector17", "sector17_code"),  # セクター層（get_news_context の (ii)）
 )
+
+# ===== Phase 7(B-1): 米国株スクリーナー（提示専用・ADR-031/039/048/055・0017_us_equity） =====
+# 米株は日本株コア（stocks/daily_quotes/valuation_snapshots）と**物理的に別テーブル**で持つ
+# （ADR-031 市場分離）。JPY 単一前提の資産評価コア（holdings/cash/asset_snapshots/portfolio
+# metrics）には一切触れず、提示専用に閉じる（FX 換算・保有登録は Phase 7(B-2) 送り＝currency 列も
+# 持たない）。データ源は yfinance 一本＝UsEquityAdapter（ADR-039(B)）。業種は Yahoo `.info.sector`
+# （GICS 相当 11 分類の英語ラベル）を gics_sector 文字列で保持し industry を補助に持つ（ADR-055）。
+# valuation 派生比率は日本株と同じ quant 純関数で読み取り時に Python 計算する（AI に計算させない
+# ＝ADR-014/016）。
+
+# 米株マスタ（stocks 相当）。ユニバースは NASDAQ Trader directory 由来＝当面普通株のみ巡回・
+# is_etf フラグを持つ（ETF 拡張はフラグを外すだけ＝grill 確定）。財務素（eps/bps/株数/配当/
+# 売上/営業利益/純利益）は yfinance `.info` を低頻度ローテ巡回（ADR-033 同型）で焼く。
+# 業種/名称はここに持つ（日本株は stocks JOIN で補うが、米株は別系統で stocks に存在しない）。
+us_stocks = Table(
+    "us_stocks",
+    metadata,
+    Column("symbol", String, primary_key=True),  # 例 'AAPL'（NASDAQ Trader/yfinance のティッカー）
+    Column("company_name", String),
+    Column("gics_sector", String),  # Yahoo `.info.sector`（GICS 相当 11 分類・英語ラベル）
+    Column("industry", String),  # Yahoo `.info.industry`（補助・細分類）
+    Column("is_etf", Integer),  # ETF 判別フラグ（0/1・NASDAQ Trader の ETF 列由来）
+    # 財務素（valuation 派生の素・読み取り時 Python 計算用＝ADR-014/048）。yfinance `.info` 由来。
+    Column("eps", Float),  # EPS（PER = close / eps の素・`.info.trailingEps`）
+    Column("bps", Float),  # BPS（PBR = close / bps の素・`.info.bookValue`）
+    Column("shares_net", Float),  # 発行済株式数（時価総額の素・`.info.sharesOutstanding`）
+    Column("dividend_per_share", Float),  # 年間配当（利回りの素・`.info.dividendRate`）
+    Column("net_sales", Float),  # 売上高（利益率の素・`.info.totalRevenue`）
+    Column("operating_profit", Float),  # 営業利益（営業利益率の素・近似＝adapter docstring 参照）
+    Column("profit", Float),  # 純利益（純利益率の素・`.info.netIncomeToCommon`）
+    # YoY 中継列（ADR-055）。yfinance `.info` 提供の YoY 率の中継器・実値（捏造ではない）。
+    # `.info` は前期 FY 値を持たないため growth_yoy 純関数の素にはできないが、`.info` 自身が提供する
+    # 率（revenueGrowth/earningsGrowth）はそのまま実値として us_valuation_snapshots へ転記する。
+    Column("revenue_growth_yoy", Float),  # 売上 YoY（`.info.revenueGrowth`・実値）の中継
+    Column("earnings_growth_yoy", Float),  # 純利益 YoY（`.info.earningsGrowth`・実値）の中継
+    Column("fin_disclosed_date", String),  # 採用財務の基準日（監査・どの時点の `.info` か）
+    Column("updated_at", String),  # 取得日時（ISO8601 文字列）
+)
+
+# 米株日足四本値（daily_quotes 相当・チャート用＝全履歴）。最大行数になるテーブル。
+# (symbol, date) を複合主キーにし UPSERT で冪等（ADR-002）。FK は張らない（生データ流儀＝
+# daily_quotes/index_quotes と同方針・マスタ未登録でも取り込める）。
+us_daily_quotes = Table(
+    "us_daily_quotes",
+    metadata,
+    Column("symbol", String, nullable=False),
+    Column("date", String, nullable=False),  # 営業日 'YYYY-MM-DD'
+    Column("open", Float),
+    Column("high", Float),
+    Column("low", Float),
+    Column("close", Float),
+    Column("volume", Float),
+    Column("adj_close", Float),  # 調整後終値（配当・分割調整）
+    PrimaryKeyConstraint("symbol", "date", name="pk_us_daily_quotes"),
+    Index("ix_us_daily_quotes_symbol", "symbol"),
+    Index("ix_us_daily_quotes_date", "date"),
+)
+
+# 米株バリュエーション・スナップショット（valuation_snapshots 相当・1 銘柄最新 1 行）。
+# 派生比率（per/pbr/market_cap/dividend_yield/roe/各 margin/各 YoY）＋根拠の素（close/eps/bps/
+# 配当/株数）を持つ。symbol PK＋FK→us_stocks.symbol（自分データ＝マスタ済み銘柄のみ焼く）。
+# 列は valuation_snapshots（L364-388）を踏襲。ウェーブ1では書き込まない（calc はウェーブ2）。
+us_valuation_snapshots = Table(
+    "us_valuation_snapshots",
+    metadata,
+    Column("symbol", String, ForeignKey("us_stocks.symbol"), primary_key=True),
+    Column("as_of_date", String, nullable=False),  # 採用した株価の営業日 'YYYY-MM-DD'
+    Column("close", Float),  # 採用終値（adj 前の素の終値）
+    Column("eps", Float),  # 採用財務の EPS
+    Column("bps", Float),  # 採用財務の BPS
+    Column("dividend_per_share", Float),  # 採用財務の年間配当
+    Column("shares_net", Float),  # 発行済株式数（時価総額の素）
+    Column("per", Float),  # close / eps
+    Column("pbr", Float),  # close / bps
+    Column("market_cap", Float),  # close * shares_net
+    Column("dividend_yield", Float),  # dividend_per_share / close（0..1）
+    Column("roe", Float),  # eps / bps（純利益/自己資本・0..1）
+    Column("operating_margin", Float),  # 営業利益 / 売上高（0..1）
+    Column("net_margin", Float),  # 純利益 / 売上高（0..1）
+    Column("revenue_growth_yoy", Float),  # 売上高 YoY 成長率（0..1 基準の比率）
+    Column("op_growth_yoy", Float),  # 営業利益 YoY 成長率
+    Column("profit_growth_yoy", Float),  # 純利益 YoY 成長率
+    Column("eps_growth_yoy", Float),  # EPS YoY 成長率
+    Column("fin_disclosed_date", String),  # 採用した財務の基準日（監査）
+    Column("updated_at", String),  # ISO8601（この行を焼いた時刻）
+)
