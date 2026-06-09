@@ -40,6 +40,7 @@ from app.advisor.tools.schemas import (
     OptimizePortfolioArgs,
     ScreenStocksArgs,
     ScreenValuationArgs,
+    SearchNewsArgs,
     SubmitJournalArgs,
     coerce_policy_change,
 )
@@ -51,7 +52,7 @@ from app.quant import (
     optimize_portfolio,
 )
 from app.services.fund_holdings import value_fund_holdings
-from app.services.news import build_news_context
+from app.services.news import build_news_context, search_news_corpus
 from app.services.policy import get_policy
 from app.services.portfolio import (
     build_price_panel,
@@ -698,6 +699,31 @@ async def handle_get_news_context(args: dict[str, object]) -> dict[str, Any]:
             return build_news_context(conn, code)
     except Exception as exc:
         logger.exception("handle_get_news_context 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_search_news(args: dict[str, object]) -> dict[str, Any]:
+    """search_news（ADR-045）。貯めた統合コーパスを意味（embedding 余弦距離）で過去横断検索する。
+
+    直近窓を越えた曖昧・過去のクエリ（「あの利上げ観測」「先週の決算」等）に使う。組み立ては
+    services.news.search_news_corpus に委ね、本 handler は橋渡しのみ（ADR-010/014）。機能オフ/
+    sqlite-vec 未ロードなどは service が items 空＋reason で返す（落とさない・ADR-018）。
+    """
+    try:
+        a = SearchNewsArgs.model_validate(args)
+        with get_engine().connect() as conn:
+            return await search_news_corpus(
+                conn,
+                a.query,
+                level=a.level,
+                code=a.code,
+                sector17_code=a.sector17_code,
+                since=a.since,
+                until=a.until,
+                limit=a.limit if a.limit is not None else 20,
+            )
+    except Exception as exc:
+        logger.exception("handle_search_news 失敗")
         return {"error": str(exc)}
 
 

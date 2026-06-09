@@ -15,6 +15,7 @@ from app.batch.jobs import (
     calc_lead_lag,
     calc_signals,
     calc_valuation,
+    embed_news,
     fetch_financials,
     fetch_fund_navs,
     fetch_general_news,
@@ -54,6 +55,9 @@ NIGHTLY_JOBS = [
     fetch_sector_news.run,
     run_advisor.run,  # Phase 3: 事実が揃ってから夜の分析AI を回す（phase3-spec.md §5）
     investigate_dossier.run,  # Phase 4: watchlist を古い順に巡回しドシエ調査（phase4-spec.md §6）
+    # ADR-045: 全ニュース書込後に embedding が null/モデル不一致の行を埋める（意味検索の素地）。
+    # investigate_dossier の後・通知系の前に置き、当夜貯めた要約まで含めて意味検索に乗せる。
+    embed_news.run,
     # ADR-028: warn 超過時、その月最初の夜に 1 通だけ警告（通知系を digest と並べる）。
     notify_cost_warn.run,
     notify_digest.run,  # Phase 6: ⑦⑧＋夜AI 提案を 1 通の Discord digest に束ねる（phase6-spec §3）

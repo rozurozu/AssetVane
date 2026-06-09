@@ -22,8 +22,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Connection
 
 from app.db import repo
-from app.db.engine import get_conn
-from app.services.news import ingest_user_news
+from app.db.engine import get_conn, get_engine
+from app.services.news import ingest_user_news, search_news_corpus
 
 router = APIRouter(tags=["news"])
 
@@ -56,6 +56,17 @@ class NewsListResponse(BaseModel):
     """GET /news のレスポンス。台帳が空でも items=[]。"""
 
     items: list[NewsItem] = []
+
+
+class NewsSearchResponse(BaseModel):
+    """GET /news/search のレスポンス（ADR-045・意味検索）。
+
+    items は NewsListResponse と同型（NewsItem）。機能オフ/sqlite-vec 未ロード等で検索できない
+    ときは items=[] ＋ reason に理由を載せる（200 で返す＝UI を壊さない・ADR-018）。
+    """
+
+    items: list[NewsItem] = []
+    reason: str | None = None
 
 
 class NewsIngestInput(BaseModel):
@@ -114,6 +125,37 @@ def list_news(
     )
     rows = repo.list_news(conn, level=level, since=eff_since, limit=limit)
     return NewsListResponse(items=[_to_item(r) for r in rows])
+
+
+@router.get("/news/search", response_model=NewsSearchResponse)
+async def search_news(
+    q: str = Query(min_length=1, description="自然言語の検索クエリ（必須）"),
+    level: str | None = Query(default=None, description="階層タグ（stock/sector/market/user）"),
+    code: str | None = Query(default=None, description="銘柄コードで絞る（任意）"),
+    sector17_code: str | None = Query(default=None, description="S17 業種コードで絞る（任意）"),
+    since: str | None = Query(default=None, description="発行日下限 'YYYY-MM-DD'（任意）"),
+    until: str | None = Query(default=None, description="発行日上限 'YYYY-MM-DD'（任意）"),
+    limit: int = Query(default=20, description="件数上限"),
+) -> NewsSearchResponse:
+    """貯めた統合コーパスを意味（embedding 余弦距離）で過去横断検索する（ADR-045）。
+
+    クエリの埋め込み（LLM）を await するため async。機能オフ/sqlite-vec 未ロード等は service が
+    items 空＋reason を返すので 200 のまま（エラーにしない・ADR-018）。読み取り接続は async の
+    ため dep に頼らず関数内で短く開閉する（backend-router-pattern）。
+    """
+    with get_engine().connect() as conn:
+        result = await search_news_corpus(
+            conn,
+            q,
+            level=level,
+            code=code,
+            sector17_code=sector17_code,
+            since=since,
+            until=until,
+            limit=limit,
+        )
+    items = [_to_item(r) for r in result.get("items", [])]
+    return NewsSearchResponse(items=items, reason=result.get("reason"))
 
 
 @router.post("/news", response_model=NewsItem)

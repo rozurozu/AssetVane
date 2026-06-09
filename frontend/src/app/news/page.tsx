@@ -7,8 +7,9 @@
 
 import { NewsList } from "@/components/news/NewsList";
 import { NewsPasteForm } from "@/components/news/NewsPasteForm";
+import { inputCls } from "@/components/ui/Field";
 import { StatusBlock } from "@/components/ui/StatusBlock";
-import { type NewsItem, deleteNews, getNews } from "@/lib/api";
+import { type NewsItem, deleteNews, getNews, searchNews } from "@/lib/api";
 import { useEffect, useState } from "react";
 
 // level 切替タブ（全 / 銘柄 / セクター / 市場）。値 undefined は全 level（検索ボックスは作らない）。
@@ -46,9 +47,21 @@ export default function NewsPage() {
   // 削除中の id 集合（行ボタンを無効化）。
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
 
+  // 意味検索（ADR-045）。入力中の文字列と、確定（Enter/ボタン）した検索語を分ける。
+  // query が空でない間は検索結果リストへ切替、空に戻すと従来のフィルタ一覧へ戻る。
+  const [searchText, setSearchText] = useState("");
+  const [query, setQuery] = useState(""); // 確定済みの検索語（これが発火トリガ）
+  const [searchItems, setSearchItems] = useState<NewsItem[] | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchReason, setSearchReason] = useState<string | null>(null);
+
+  const isSearching = query.trim().length > 0;
   const since = sinceFromDays(sinceDays);
 
+  // 従来のフィルタ一覧（level/期間）。検索中は取得しない（結果リストへ切替済み）。
   useEffect(() => {
+    if (isSearching) return;
     let ignore = false;
     const ctrl = new AbortController();
     setLoading(true);
@@ -68,16 +81,51 @@ export default function NewsPage() {
       ignore = true;
       ctrl.abort();
     };
-  }, [level, since]);
+  }, [level, since, isSearching]);
+
+  // 意味検索（query 確定時に発火）。level/期間フィルタも引き継いで絞る。
+  // 検索不能時も 200＋reason なので reason を控えめに表示する（ADR-018）。
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setSearchItems(null);
+      setSearchReason(null);
+      return;
+    }
+    let ignore = false;
+    const ctrl = new AbortController();
+    setSearchLoading(true);
+    setSearchError(null);
+    searchNews({ q, level, since }, ctrl.signal)
+      .then((r) => {
+        if (ignore) return;
+        setSearchItems(r.items);
+        setSearchReason(r.reason ?? null);
+      })
+      .catch((e) => {
+        if (ignore || ctrl.signal.aborted) return;
+        setSearchError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (!ignore) setSearchLoading(false);
+      });
+    return () => {
+      ignore = true;
+      ctrl.abort();
+    };
+  }, [query, level, since]);
 
   // 削除（source='user' のみ・楽観的に行を除去）。
   async function handleDelete(id: number) {
     setBusyIds((prev) => new Set(prev).add(id));
     try {
       await deleteNews(id);
+      // 一覧・検索結果のどちらに居ても行を消す（楽観的）。
       setItems((prev) => prev?.filter((n) => n.id !== id) ?? prev);
+      setSearchItems((prev) => prev?.filter((n) => n.id !== id) ?? prev);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isSearching) setSearchError(e instanceof Error ? e.message : String(e));
+      else setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusyIds((prev) => {
         const next = new Set(prev);
@@ -102,7 +150,7 @@ export default function NewsPage() {
         <NewsPasteForm onDone={(item) => setItems((prev) => [item, ...(prev ?? [])])} />
       </div>
 
-      {/* level 切替タブ＋期間プリセット。アクティブは surface-2 へ lift（DESIGN.md）。 */}
+      {/* level 切替タブ＋期間プリセット＋意味検索ボックス。アクティブは surface-2 へ lift（DESIGN.md）。 */}
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className="flex gap-1">
           {LEVEL_TABS.map((t) => (
@@ -136,19 +184,68 @@ export default function NewsPage() {
             </button>
           ))}
         </div>
+
+        {/* 意味検索（ADR-045）。Enter or 虫眼鏡ボタンで確定。空にして確定すると一覧へ戻る。 */}
+        <form
+          className="ml-auto flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setQuery(searchText);
+          }}
+        >
+          <input
+            type="search"
+            value={searchText}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSearchText(v);
+              // 入力を空に戻したら即座に一覧へ戻す（確定操作を待たない）。
+              if (v.trim() === "") setQuery("");
+            }}
+            placeholder="意味で検索（例: 半導体の需給）"
+            className={`${inputCls} w-56`}
+          />
+          <button
+            type="submit"
+            className="rounded-md bg-surface-2 px-2.5 py-1.5 text-[12px] text-ink-muted hover:text-ink"
+          >
+            検索
+          </button>
+        </form>
       </div>
 
       <section className="rounded-lg border border-hairline bg-surface-1">
-        <StatusBlock
-          loading={loading}
-          error={error}
-          empty={items?.length === 0}
-          className="p-4"
-          errorHint="backend 起動を確認するのだ。"
-          emptyText="この条件のニュースはまだ無いのだ。"
-        >
-          <NewsList items={items ?? []} busyIds={busyIds} onDelete={handleDelete} />
-        </StatusBlock>
+        {isSearching ? (
+          <>
+            {/* reason がある（機能オフ/未ロード等）ときは控えめに理由を表示。 */}
+            {searchReason && (
+              <div className="border-hairline-soft border-b px-4 py-2 text-[12px] text-ink-subtle">
+                意味検索は利用できないのだ（{searchReason}）。
+              </div>
+            )}
+            <StatusBlock
+              loading={searchLoading}
+              error={searchError}
+              empty={searchItems?.length === 0}
+              className="p-4"
+              errorHint="backend 起動を確認するのだ。"
+              emptyText="該当するニュースは見つからなかったのだ。"
+            >
+              <NewsList items={searchItems ?? []} busyIds={busyIds} onDelete={handleDelete} />
+            </StatusBlock>
+          </>
+        ) : (
+          <StatusBlock
+            loading={loading}
+            error={error}
+            empty={items?.length === 0}
+            className="p-4"
+            errorHint="backend 起動を確認するのだ。"
+            emptyText="この条件のニュースはまだ無いのだ。"
+          >
+            <NewsList items={items ?? []} busyIds={busyIds} onDelete={handleDelete} />
+          </StatusBlock>
+        )}
       </section>
     </>
   );

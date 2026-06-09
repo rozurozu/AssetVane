@@ -21,6 +21,7 @@ dependencies = [
     "mcp>=1.27.2",
     "trafilatura>=2.0.0",
     "yfinance>=1.4.1",
+    "sqlite-vec>=0.1.9",
 ]
 
 # アプリケーション（ライブラリではない）なので非パッケージモードで扱う。

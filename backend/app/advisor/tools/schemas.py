@@ -179,6 +179,23 @@ class GetNewsContextArgs(_ToolArgs):
     code: str
 
 
+class SearchNewsArgs(_ToolArgs):
+    """search_news の引数（ADR-045・ニュース意味検索）。
+
+    貯めた統合コーパスを意味（embedding 余弦距離）で過去横断検索する。query は必須、ほかは任意の
+    絞り込み。level は階層タグ（stock/sector/market/user）、since/until は発行日範囲 'YYYY-MM-DD'、
+    limit は件数上限。任意引数の "None"/"null" 等は _ToolArgs が実 None に正規化する。
+    """
+
+    query: str
+    level: str | None = None
+    code: str | None = None
+    sector17_code: str | None = None
+    since: str | None = None
+    until: str | None = None
+    limit: int | None = None
+
+
 class GetGeneralNewsArgs(_ToolArgs):
     """get_general_news の引数（ADR-034・引数なし）。
 

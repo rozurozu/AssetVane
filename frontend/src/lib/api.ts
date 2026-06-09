@@ -1041,6 +1041,40 @@ export function getNews(
   return getJSON<NewsListResponse>(`/news${qs ? `?${qs}` : ""}`, signal);
 }
 
+/** `GET /news/search` レスポンス（ADR-045・意味検索）。
+ * items は NewsItem と同型。機能オフ/sqlite-vec 未ロード等で検索できないときは items=[] ＋
+ * reason に理由が入る（200・UI を壊さない＝backend NewsSearchResponse と 1:1）。 */
+export interface NewsSearchResponse {
+  items: NewsItem[];
+  reason?: string | null;
+}
+
+/** ニュース意味検索（ADR-045・GET /news/search・q 必須）。
+ * level/since/until/limit は指定時のみ query に付与（code/sector17_code も契約上は受けるが今回 UI 未使用）。
+ * 検索不能時も 200 で items=[] ＋ reason が返る（呼び出し側は reason を控えめに表示）。 */
+export function searchNews(
+  params: {
+    q: string;
+    level?: string;
+    code?: string;
+    sector17_code?: string;
+    since?: string;
+    until?: string;
+    limit?: number;
+  },
+  signal?: AbortSignal,
+): Promise<NewsSearchResponse> {
+  const p = new URLSearchParams();
+  p.set("q", params.q);
+  if (params.level) p.set("level", params.level);
+  if (params.code) p.set("code", params.code);
+  if (params.sector17_code) p.set("sector17_code", params.sector17_code);
+  if (params.since) p.set("since", params.since);
+  if (params.until) p.set("until", params.until);
+  if (params.limit != null) p.set("limit", String(params.limit));
+  return getJSON<NewsSearchResponse>(`/news/search?${p.toString()}`, signal);
+}
+
 /** ニュースを手入力で取り込む（ADR-047・本文を AI 要約。失敗時 502 が detail 付きで throw）。 */
 export function ingestNews(input: NewsIngestInput): Promise<NewsItem> {
   return postJSON<NewsItem>("/news", {

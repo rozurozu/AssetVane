@@ -58,6 +58,7 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
         assert "dossier_sources" not in names, "dossier_sources は 0013 で drop 済みのはず"
 
         # news は ADR-044（0013）の統合コーパス。url UNIQUE・level/code/sector17 索引・階層タグ列。
+        # ADR-045（0016）で意味検索用の embedding/embed_model/embedded_at 3 列を追加。
         news_cols = {c["name"] for c in inspect(conn).get_columns("news")}
         assert news_cols == {
             "id",
@@ -72,7 +73,11 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
             "published_at",
             "fetched_at",
             "extraction_status",
-        }, "news のカラムが ADR-044 と不一致（0013 が当たっていない）"
+            # ADR-045（0016_news_embedding）: ニュース意味検索 段階A。
+            "embedding",
+            "embed_model",
+            "embedded_at",
+        }, "news のカラムが ADR-044/045 と不一致（0013/0016 が当たっていない）"
         news_uniques = {u["name"] for u in inspect(conn).get_unique_constraints("news")}
         assert "uq_news_url" in news_uniques, "news に url UNIQUE が無い（0013 未適用）"
 

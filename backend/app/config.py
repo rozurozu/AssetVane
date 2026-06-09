@@ -57,6 +57,18 @@ class Settings(BaseSettings):
     llm_provider_nightly: str = "openai"
     llm_provider_dossier: str = "openai"
 
+    # --- Embedding（ニュース意味検索・Phase 4〜・ADR-045/012/006/018） ---
+    # ニュース意味検索の段階A 基盤。embedding プロバイダは OpenAI 互換 1 本のみ（chat と同型・
+    # ADR-012）。base_url / api_key / model を差し替えれば openai 直 / localllm を吸収する
+    # （Anthropic/Voyage ブランチは作らない）。3 キーのいずれかが未設定なら静かに機能オフ
+    # （llm_api_key 未設定と同じ作法・ADR-006/018）。
+    embedding_base_url: str = ""  # OpenAI 互換 /v1（例 https://api.openai.com/v1）
+    embedding_api_key: str = ""
+    embedding_model: str = ""  # 例 text-embedding-3-small
+    # 0=未設定。格納は次元非依存（BLOB＋vec_distance_cosine）だが、将来の検証/ログ用に保持する。
+    embedding_dim: int = 0
+    embedding_timeout_seconds: float = 30.0  # embeddings API のタイムアウト（秒）
+
     # --- codex app-server（provider="codex" のとき使う） ---
     # codex CLI を常駐 app-server（stdio JSON-RPC）として駆動し、自前 Tool は MCP 越しに呼ばせる
     # （plans / ADR-012）。exec は MCP がキャンセルされる既知不具合のため app-server を使う。
@@ -181,6 +193,13 @@ class Settings(BaseSettings):
             "discord_webhook_url": {
                 "set": bool(self.discord_webhook_url),
                 "required_from_phase": 6,
+            },
+            # ニュース意味検索（ADR-045）。3 キーが揃って初めて有効＝未設定なら機能オフ。
+            "embedding": {
+                "set": bool(
+                    self.embedding_base_url and self.embedding_api_key and self.embedding_model
+                ),
+                "required_from_phase": 4,
             },
         }
 

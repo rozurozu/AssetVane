@@ -96,6 +96,11 @@
 
 **留意点**: 無料の安定した JP ニュース API は不確実なため当面 AI の Web 取得で代替。MCP は無人 cron では使えないことがあるため夜は軽め。
 
+**ニュース系の発展（統合コーパス上の山）**: 統合コーパス（[ADR-044](decisions.md)）・ユーザー投入（[ADR-046](decisions.md)）・`/news` 画面（[ADR-047](decisions.md)）に続き、**ニュース意味検索 [ADR-045](decisions.md) 段階A（embedding＋`sqlite-vec` の `vec_distance_cosine`・夜間 `embed_news`＋貼付即時・Tool/REST/UI の 3 面）は実装済み（2026-06-09・migration `0016`）**。残るニュース系の将来項目:
+- **意味検索の vec0 索引昇格**（[ADR-045](decisions.md)）＝コーパスが育ったら BLOB 全件スキャンから vec0 仮想テーブルへ。発火条件の叩き台＝概ね 5 万行 or 検索レイテンシ >200ms（`embedding` 列はそのまま活きる）。
+- **意味検索の段階C＝FTS5 キーワード索引ハイブリッド**（[ADR-045](decisions.md)）＝キーワードで広く拾い embedding で意味順に並べ替え。
+- **RAG 活用の線引き・テーマタグ・能動配信・売買アイデア起票**（[ADR-049](decisions.md)〜[ADR-052](decisions.md)・docs 確定／実装は別タスク）。
+
 ---
 
 ## Phase 5: AI Alpha Scorer（決算スコアリング）— 機能③

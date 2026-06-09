@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
+import struct
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, Table, and_, func, select
+from sqlalchemy import Connection, Table, and_, func, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.engine import get_engine
@@ -1359,6 +1360,121 @@ def get_news_by_url(conn: Connection, url: str) -> dict[str, Any] | None:
     """
     row = conn.execute(select(news).where(news.c.url == url).limit(1)).mappings().first()
     return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# ADR-045（ニュース意味検索 段階A）: embedding 生成・更新・意味検索
+# ---------------------------------------------------------------------------
+
+# news.embedding に貯めた要約＋検索クエリは、ともに float32 little-endian の BLOB として扱う。
+# sqlite-vec の vec_distance_cosine は float32 BLOB をベクトルとして受ける（ADR-045）。
+
+# search_news / list_news_needing_embedding が返す列（本文は持たない＝ADR-020）。
+_NEWS_EMBED_COLS = (
+    "id, level, code, sector17_code, category, source, url, title, summary, "
+    "published_at, fetched_at, extraction_status, embed_model"
+)
+
+
+def pack_embedding(vector: list[float]) -> bytes:
+    """embedding（list[float]）を float32 little-endian の BLOB に詰める（ADR-045）。
+
+    sqlite-vec の vec_distance_cosine が読む格納形式。検索クエリのベクトル化にも同じ関数を使い、
+    格納側と問い合わせ側のバイト表現を一致させる（次元非依存スキャン）。
+    """
+    return struct.pack(f"<{len(vector)}f", *vector)
+
+
+def list_news_needing_embedding(
+    conn: Connection, *, current_model: str, limit: int
+) -> list[dict[str, Any]]:
+    """埋め込みが未生成 or モデル不一致の news 行を limit 件返す（ADR-045）。
+
+    対象は「embedding IS NULL（未埋め込み）」または「embed_model がモデル不一致」の行。
+    SQLite に IS DISTINCT FROM は無いため `embed_model IS NULL OR embed_model != :m` で表現する
+    （未埋め込み行は embed_model も NULL なので OR の左で拾う）。summary が空の行は埋め込む
+    テキストが無いので除外する（embed_news ジョブが summary を埋め込む前提）。id 昇順で安定。
+    """
+    stmt = text(
+        f"SELECT {_NEWS_EMBED_COLS} FROM news "  # noqa: S608 — 列名は定数・ユーザー入力を含まない
+        "WHERE summary IS NOT NULL AND summary != '' "
+        "AND (embedding IS NULL OR embed_model IS NULL OR embed_model != :m) "
+        "ORDER BY id ASC LIMIT :lim"
+    )
+    rows = conn.execute(stmt, {"m": current_model, "lim": limit}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def update_news_embedding(
+    conn: Connection, news_id: int, embedding_blob: bytes, model: str
+) -> None:
+    """news 1 行の embedding/embed_model/embedded_at を更新する（ADR-045）。
+
+    embedding_blob は pack_embedding 済みの float32 LE BLOB。embedded_at は UTC now の ISO8601。
+    commit はしない＝呼び出し側（ジョブ/service）が `with get_engine().begin() as conn:` で
+    境界を所有する（W2・複数行を 1 トランザクションに束ねられる）。
+    """
+    conn.execute(
+        text(
+            "UPDATE news SET embedding = :emb, embed_model = :model, embedded_at = :at "
+            "WHERE id = :id"
+        ),
+        {
+            "emb": embedding_blob,
+            "model": model,
+            "at": datetime.now(UTC).isoformat(),
+            "id": news_id,
+        },
+    )
+
+
+def search_news(
+    conn: Connection,
+    query_blob: bytes,
+    *,
+    level: str | None = None,
+    code: str | None = None,
+    sector17_code: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """意味（embedding 余弦距離）でニュースを近い順に返す（ADR-045）。
+
+    vec_distance_cosine(embedding, :qvec) を距離**昇順**（近い順）に並べる。query_blob は
+    pack_embedding 済みの float32 LE BLOB。embedding が NULL の行は除外する。任意フィルタ
+    （level/code/sector17_code）と発行日範囲（since=published_at>=・until=published_at<=）を
+    AND で絞る。返す行は list_news と同じ列構成＋距離（distance）。本文は持たない（ADR-020）。
+
+    sqlite-vec 未ロード等で vec_distance_cosine が無いと SQL が失敗するが、ここでは握らず投げる
+    （呼び出し側 service が握って空＋理由に翻訳する＝ADR-018）。
+    """
+    conds = ["embedding IS NOT NULL"]
+    params: dict[str, Any] = {"qvec": query_blob, "lim": limit}
+    if level is not None:
+        conds.append("level = :level")
+        params["level"] = level
+    if code is not None:
+        conds.append("code = :code")
+        params["code"] = code
+    if sector17_code is not None:
+        conds.append("sector17_code = :sector17_code")
+        params["sector17_code"] = sector17_code
+    if since is not None:
+        conds.append("published_at >= :since")
+        params["since"] = since
+    if until is not None:
+        conds.append("published_at <= :until")
+        params["until"] = until
+    where = " AND ".join(conds)
+    stmt = text(
+        f"SELECT {_NEWS_EMBED_COLS}, "  # noqa: S608 — 列名・WHERE 句は定数組み立て（値は bind）
+        "vec_distance_cosine(embedding, :qvec) AS distance "
+        f"FROM news WHERE {where} "
+        "ORDER BY distance ASC LIMIT :lim"
+    )
+    rows = conn.execute(stmt, params).mappings().all()
+    return [dict(r) for r in rows]
 
 
 def delete_user_news(news_id: int) -> int:

@@ -368,8 +368,12 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 | `published_at` | TEXT | 発行日 |
 | `fetched_at` | TEXT | 取り込んだ日時 |
 | `extraction_status` | TEXT | 取得レベル `summarized`/`description`/`headline` |
+| `embedding` | BLOB | 意味検索用ベクトル（[ADR-045](decisions.md)・段階A）。`sqlite-vec` の `vec_distance_cosine` が読む **float32 little-endian** 形式・**null 可**（未埋め込み/機能オフ）。**`summary` のみ**を埋め込む（本文は持たない＝[ADR-020](decisions.md)）|
+| `embed_model` | TEXT | 埋め込みに使ったモデル名（差替検知用）。現行 `embed_model` と不一致の行は `embed_news` ジョブが再埋め込み対象にする |
+| `embedded_at` | TEXT | 埋め込み時刻（ISO8601 UTC）|
 
 - インデックス: `url`（UNIQUE）、`level`、`code`、`sector17_code`。`url` UNIQUE ＋ `on_conflict_do_nothing` で冪等。
+- **意味検索（[ADR-045](decisions.md) 段階A・`0016_news_embedding`・`down_revision=0015`）**: 上記 3 列を追加（すべて nullable・未埋め込み/機能オフでも既存運用を壊さない）。検索は `vec_distance_cosine` で `embedding` BLOB を**直接スキャン**＝**vec0 仮想テーブルは使わず次元非依存**。生成は夜間ジョブ `embed_news`（null/モデル不一致行を一括）＋貼付 `ingest_user_news` の best-effort 即時埋め込み。embedding 設定（OpenAI 互換 1 本＝[ADR-012](decisions.md)）未設定時は機能オフ。**【明示 TODO】規模が育ったら vec0 仮想テーブルへ昇格**（`embedding` 列はそのまま活きる・発火条件の叩き台＝概ね 5 万行 or 検索レイテンシ >200ms）。段階C（FTS5 ハイブリッド）は将来。
 - **3 層の使い分け**: `level='stock'`（銘柄自身・旧 `dossier_sources`）／`level='sector'`（その銘柄の TOPIX-17 業種）／`level='market'`（市況・マクロ・旧 `general_news`）／`level='user'`（ユーザー入力＝[ADR-046](decisions.md)・schema 上許容）。`get_news_context(code)` がこの 3 層（銘柄／セクター／市況）を**必ず構造的に揃えて**返す。
 - **`user` 層（ユーザー投入・[ADR-046](decisions.md)）**: 貼付テキストを要約して `source='user'` で投入する（`ingest_user_news`）。**タグ v1 はユーザー明示**＝銘柄コードありで `level='stock'`＋`code`、無しで `level='market'`＋`category="ユーザー投入"`（`GET /general-news` にも出る）。`level='user'` 値は schema 上許容だが**本実装は未使用**。**URL 未入力時は合成キー `user://`＋`sha256(text)` 先頭 16 桁**を `url`（NOT NULL UNIQUE）に詰め、`on_conflict_do_nothing` で冪等化する。削除は `source='user'` のみ可（`delete_user_news`・自動取得分は 404）。**migration なし**（既存 `news` 列で表現）。
 - **取り込みジョブ**: ① `fetch_general_news`（`run_advisor` 直前）が市況ニュースを `level='market'` に UPSERT。② 新ジョブ `fetch_sector_news`（`fetch_general_news` の直後・`run_advisor` の前）が TOPIX-17 全業種を毎晩取得し `level='sector'`／`sector17_code` に UPSERT。**タグ付けは `stocks` と同じ J-Quants S17（"1".."17"）でそろえる**（`build_news_context` の等値 JOIN が直接一致するため＝[ADR-053](decisions.md)）。③ 調査パイプライン（`investigate_stock`／`fetch_news`）が銘柄ニュースを `level='stock'`／`code` に取り込む。いずれも**要約前 dedup**（既存 URL は本文取得・要約をスキップ）で冪等・省コスト。

@@ -32,6 +32,7 @@ from app.advisor.tools.schemas import (
     OptimizePortfolioArgs,
     ScreenStocksArgs,
     ScreenValuationArgs,
+    SearchNewsArgs,
     SubmitJournalArgs,
 )
 
@@ -250,6 +251,19 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(GetGeneralNewsArgs),
         handler=handlers.handle_get_general_news,
+        min_phase=4,
+    ),
+    "search_news": ToolDef(
+        name="search_news",
+        description=(
+            "貯めた台帳を**意味で過去横断検索**する（embedding 余弦距離・ADR-045）。"
+            "直近窓を越えて『あの利上げ観測の話』『先週の決算』のような曖昧・過去のクエリに使う。"
+            "level/code/sector17_code・発行日範囲（since/until）で絞れる。"
+            "最新を新規取得したいときは fetch_news。"
+            "3 層の構造文脈（銘柄＋セクター＋市況）が要るときは get_news_context。"
+        ),
+        parameters=_schema(SearchNewsArgs),
+        handler=handlers.handle_search_news,
         min_phase=4,
     ),
     # --- Phase 7（日米業種リードラグ・SIG-FIN-036-13）---

@@ -17,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     PrimaryKeyConstraint,
     String,
@@ -473,6 +474,11 @@ news = Table(
     Column("fetched_at", String),  # 取り込み時刻 ISO8601 UTC
     # 取得レベル 'summarized'/'description'/'headline'（本文取得の成否・ADR-020）
     Column("extraction_status", String),
+    # ADR-045（ニュース意味検索 段階A）。意味検索用の埋め込みベクトル。格納は float32 LE の BLOB で
+    # vec_distance_cosine が次元非依存にスキャンする（vec0 仮想表は使わない＝規模が育てば昇格）。
+    Column("embedding", LargeBinary),  # float32 little-endian の BLOB（未埋め込み/機能オフは NULL）
+    Column("embed_model", String),  # 埋め込みに使ったモデル名（不一致行を再埋め込み対象にするキー）
+    Column("embedded_at", String),  # 埋め込み時刻 ISO8601 UTC
     UniqueConstraint("url", name="uq_news_url"),  # URL 重複排除（冪等 UPSERT のキー）
     Index("ix_news_level", "level"),  # 階層タグ別の取り出しを速くする
     Index("ix_news_code", "code"),  # 銘柄層（get_news_context の (i)）

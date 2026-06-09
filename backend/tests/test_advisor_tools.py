@@ -80,6 +80,8 @@ def test_registry_handlers_are_registered() -> None:
         "get_general_news",
         # ADR-044: ニュース3層文脈（min_phase=4）。
         "get_news_context",
+        # ADR-045: ニュース意味検索（min_phase=4）。
+        "search_news",
         # Phase 7: 日米業種リードラグ（min_phase=7）。
         "get_lead_lag",
     }
