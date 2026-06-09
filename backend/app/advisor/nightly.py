@@ -22,12 +22,12 @@ from datetime import UTC, datetime
 from sqlalchemy import Connection
 
 from app.advisor.engine import run_turn
+from app.advisor.journaling import persist_journal_from_tool_runs
 from app.advisor.method_cards import METHOD_CARDS
 from app.advisor.prompt_builder import Message, build_messages
 from app.advisor.router import _CORE
 from app.advisor.tools import handlers
 from app.advisor.tools.registry import CURRENT_PHASE
-from app.advisor.tools.schemas import coerce_policy_change
 from app.config import settings
 from app.db import repo
 
@@ -102,79 +102,30 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
     # LLM 失敗（②ハード失敗）は握らず上位（run_advisor ジョブ）へ伝播させる（ADR-018）。
     reply, tool_runs = await run_turn(messages, phase=CURRENT_PHASE, source="nightly")
 
-    # tool_runs から submit_journal の最終 args を拾う（複数回呼ばれたら最後を採用）。
-    submitted = _extract_submit_journal(tool_runs)
-    if submitted is not None:
-        observations = str(submitted.get("observations") or reply or "")
-        proposal = submitted.get("proposal")
-        raw_change = submitted.get("proposed_policy_change")
-    else:
-        # submit_journal 不呼び出しでも reply 非空なら正常（フォールバックを否定しない・ADR-018）。
-        observations = reply or ""
-        proposal = None
-        raw_change = None
+    # tool_runs → journal/proposal の橋渡しは共通サービスへ一本化（軸2 /chat と同じ真実）。
+    # 戻り値 None＝observations 空（縮退）。journal_id（int）＝記録成功（ADR-018/029）。
+    journal_id = persist_journal_from_tool_runs(
+        conn,
+        tool_runs=tool_runs,
+        reply=reply,
+        source="nightly",
+        date=today,
+        situation_briefing=json.dumps(briefing, ensure_ascii=False),
+        policy=policy,
+        llm_model=settings.llm_model,
+    )
 
     # 縮退した晩（例外なし・observations 空＝実質何もしなかった）は journal を書かず理由を返す。
     # submit_journal 未呼び出しでも reply 非空なら到達しない（フォールバック健全＝ADR-018）。
-    if not observations.strip():
+    # 既存契約（test_nightly）の理由文面を保つため、切り分け材料を nightly 側で組む。
+    if journal_id is None:
+        submit_called = any(r.get("name") == "submit_journal" for r in tool_runs)
         reason = (
             f"夜AI が無応答（observations 空）: submit_journal="
-            f"{'有' if submitted is not None else '無'}・reply長={len(reply or '')}"
+            f"{'有' if submit_called else '無'}・reply長={len(reply or '')}"
             f"・tool_runs={len(tool_runs)} 件。当日 journal をスキップ（ADR-018）。"
         )
         logger.warning(reason)
         return reason
 
-    # 変更案を単一 {field,to} に正規化（多列 patch 等は None＝適用不能な提案を起票しない）。
-    # 正規化済み dict は apply_policy_change がそのまま食える形（ADR-013/018・U-10 裁定①）。
-    proposed_change = coerce_policy_change(raw_change)
-    if raw_change is not None and proposed_change is None:
-        logger.warning(
-            "夜の分析AI: proposed_policy_change が単一 {field,to} 形でない。"
-            "提案は起票せず journal のみ記録する（ADR-013/018）。"
-        )
-
-    proposed_change_json = (
-        json.dumps(proposed_change, ensure_ascii=False) if proposed_change else None
-    )
-
-    journal_id = repo.insert_journal(
-        conn,
-        date=today,
-        source="nightly",
-        situation_briefing=json.dumps(briefing, ensure_ascii=False),
-        observations=observations,
-        proposal=proposal if isinstance(proposal, str) else None,
-        proposed_policy_change=proposed_change_json,
-        policy_snapshot=json.dumps(policy, ensure_ascii=False) if policy is not None else None,
-        llm_model=settings.llm_model,
-    )
-
-    # 方針変更案があれば承認制の提案として起票する（kind=policy_change・pending・§6.5）。
-    # proposed_change は正規化済み（None なら起票せず＝適用不能な提案を回避）。
-    if proposed_change:
-        reason = proposed_change.get("reason")
-        repo.insert_proposal(
-            conn,
-            created_date=today,
-            kind="policy_change",
-            body=proposed_change_json,
-            rationale=str(reason) if reason else None,
-            status="pending",
-            journal_id=journal_id,
-        )
-
     return None  # observations 非空で journal を記録できた＝成功（ADR-018）
-
-
-def _extract_submit_journal(
-    tool_runs: list[dict[str, object]],
-) -> dict[str, object] | None:
-    """tool_runs から submit_journal の args を取り出す（最後の呼び出しを採用・spec §5）。"""
-    submitted: dict[str, object] | None = None
-    for run in tool_runs:
-        if run.get("name") == "submit_journal":
-            args = run.get("args")
-            if isinstance(args, dict):
-                submitted = args
-    return submitted

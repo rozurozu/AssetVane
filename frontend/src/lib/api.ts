@@ -385,6 +385,7 @@ export interface ToolRun {
 export interface ChatResponse {
   reply: string;
   tool_runs: ToolRun[];
+  journal_id?: number | null; // journal に残せたら id（ADR-029・残せなければ null）
 }
 
 export type Stock = {

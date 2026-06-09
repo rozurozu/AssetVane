@@ -9,7 +9,7 @@
 // - ドラッグ／リサイズ／最小化: 依存を増やさず自前 pointer ハンドル（OPEN-H）。
 
 import { onOpenAdvisorChat } from "@/lib/advisor-bus";
-import { type ChatMessage, type ToolRun, sendChat } from "@/lib/api";
+import { type ChatMessage, type ChatResponse, type ToolRun, sendChat } from "@/lib/api";
 import { contextLabel, pathnameToContext } from "@/lib/chat-context";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -79,10 +79,12 @@ export function AdvisorChat() {
   }, [messages.length, busy]);
 
   // 1 ターン送信（context を載せる・数値は載せない＝ADR-025）。
+  // 応答 ChatResponse を return する（promoteToJournal が journal_id を読むため・ADR-029）。
+  // 送信できなかった/失敗した場合は null。既存呼び出し元（send 等）は戻り値を無視しても壊れない。
   const sendText = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<ChatResponse | null> => {
       const t = text.trim();
-      if (!t || busy) return;
+      if (!t || busy) return null;
       const next: Msg[] = [...messages, { role: "user", content: t }];
       setMessages(next);
       setInput("");
@@ -101,12 +103,14 @@ export function AdvisorChat() {
           ...m,
           { role: "assistant", content: data.reply, tool_runs: data.tool_runs },
         ]);
+        return data;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setMessages((m) => [
           ...m,
           { role: "assistant", content: `⚠ Advisor に繋がらなかった: ${msg}` },
         ]);
+        return null;
       } finally {
         setBusy(false);
       }
@@ -117,11 +121,23 @@ export function AdvisorChat() {
   const send = useCallback(() => sendText(input), [sendText, input]);
 
   // 会話を journal に残す（承認後のみ＝黙って自動保存しない・ADR-029/ADR-014）。
-  // TODO(phase3+): 専用の昇格 API 接続は後続。当面は定型メッセージを sendChat に送る簡易実装。
-  const promoteToJournal = useCallback(() => {
+  // 定型文を /chat に送り、AI が submit_journal Tool を呼べば journal に残る。
+  // 応答 ChatResponse.journal_id（number=成功 / null=未昇格）を読んで成否をインラインで表示する。
+  const promoteToJournal = useCallback(async () => {
     if (busy || messages.length === 0) return;
     if (!window.confirm("この会話を要約して journal に残すのだ？（AI が要約を作る）")) return;
-    void sendText("この会話を要約して journal（投資日記）に残してほしいのだ。");
+    const data = await sendText("この会話を要約して投資日記（journal）に残してほしいのだ。");
+    if (!data) return; // 送信失敗時は sendText 内で⚠バブルを出済みなので何もしない。
+    const ok = typeof data.journal_id === "number";
+    setMessages((m) => [
+      ...m,
+      {
+        role: "assistant",
+        content: ok
+          ? "📓 この会話を投資日記に残したのだ（Journal 画面で確認できる）。"
+          : "⚠ 投資日記に残せなかった（所見が空、またはAIが要約を提出しなかった）。",
+      },
+    ]);
   }, [busy, messages.length, sendText]);
 
   const clearChat = useCallback(() => {
