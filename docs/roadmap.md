@@ -99,7 +99,8 @@
 **ニュース系の発展（統合コーパス上の山）**: 統合コーパス（[ADR-044](decisions.md)）・ユーザー投入（[ADR-046](decisions.md)）・`/news` 画面（[ADR-047](decisions.md)）に続き、**ニュース意味検索 [ADR-045](decisions.md) 段階A（embedding＋`sqlite-vec` の `vec_distance_cosine`・夜間 `embed_news`＋貼付即時・Tool/REST/UI の 3 面）は実装済み（2026-06-09・migration `0016`）**。残るニュース系の将来項目:
 - **意味検索の vec0 索引昇格**（[ADR-045](decisions.md)）＝コーパスが育ったら BLOB 全件スキャンから vec0 仮想テーブルへ。発火条件の叩き台＝概ね 5 万行 or 検索レイテンシ >200ms（`embedding` 列はそのまま活きる）。
 - **意味検索の段階C＝FTS5 キーワード索引ハイブリッド**（[ADR-045](decisions.md)）＝キーワードで広く拾い embedding で意味順に並べ替え。
-- **RAG 活用の線引き・テーマタグ・能動配信・売買アイデア起票**（[ADR-049](decisions.md)〜[ADR-052](decisions.md)・docs 確定／実装は別タスク）。
+- **RAG 活用の線引き・能動配信・売買アイデア起票**（[ADR-049](decisions.md)/[ADR-051](decisions.md)/[ADR-052](decisions.md)・docs 確定／実装は別タスク）。
+- **テーマタグ**は [ADR-050](decisions.md) 改訂＋[ADR-056](decisions.md) で「全ユニバース grounded 事前タグ（EDINET/longBusinessSummary 信号源）」へ方針転換し独立化（上記「テーマタグ」段階 A/B/C を参照）。
 
 ---
 
@@ -177,6 +178,28 @@
 - repo/handler/service の日米 DRY 共通化（(B-1) は日本株無改変のため重複を許容した）・米株版 25 指標フル充足・`op_growth_yoy`/`eps_growth_yoy` を活かす財務履歴源の追加（[ADR-055](decisions.md) TODO）。
 
 **完了条件（B-2）**: 通貨/FX 換算が資産評価に反映され、米株保有が JPY 資産概要に合算される。
+
+---
+
+## テーマタグ（全ユニバース grounded 事前タグ）— 設計確定・未着手（[ADR-050](decisions.md) 改訂・[ADR-056](decisions.md)）
+
+業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で **JP＋US の全ユニバースを実在テキストに grounded で事前タグ付け**し、「テーマで引く」（未調査銘柄・米株も）を実現する。**名前推測は禁止・`code`/`symbol` を同一性として渡す・根拠が無ければタグを付けない**（[ADR-050](decisions.md)）。重さが桁違いなので段階化する。
+
+### 段階 A: 米株テーマ（最速で価値・EDINET 不要）
+- 米株の `.info.longBusinessSummary` を `company_descriptions` に保存（信号源）。
+- `themes` 目録＋`stock_themes` 台帳＋grounded タガー（compact プロフィール＋code 同一性で LLM 判定）＋語彙 reconcile（プロンプト照合＋embedding 近接＝[ADR-045](decisions.md) 流用）＋夜間 `embed_themes`。
+- 種テーマを `app/reference/` に seed（[ADR-053](decisions.md) 参照知識層）。
+- 消費 Tool 3 本（`list_themes`/`get_stock_themes`/`screen_by_theme`・[advisor.md](advisor.md)）。
+- **完了条件（A）**: 米株を `screen_by_theme("AI需要")` 等でテーマ横断に引け、各タグが実在の事業概要に grounded（名前推測でない）。
+
+### 段階 B: JP 調査済みのオーバーレイ
+- `investigate_stock` の JP 調査済み銘柄に、ドシエ/ニュースを根拠としたリッチなテーマを**オーバーレイ**（UPSERT＋`last_seen_at`・ユニバースタガーとクロバーしない）。
+- **完了条件（B）**: 調査済み JP 銘柄が、ユニバースタグより詳しいテーマを併せ持つ。
+
+### 段階 C: EDINET → JP 全ユニバース
+- `EdinetAdapter`（[ADR-056](decisions.md)）＝有報「事業の内容」を取得→要約→`company_descriptions`。
+- バックフィル一括スクリプト（`app.scripts` 流）＋日次差分（新規/変化銘柄＋古い順ローテ＝[ADR-033](decisions.md) cadence）＋`/settings` トリガー＋時間窓 prune。
+- **完了条件（C）**: 未調査 JP 銘柄も `screen_by_theme` で引け、EDINET の事業の内容に grounded。`/settings` から一括/差分タグ付けを起動できる。
 
 ---
 

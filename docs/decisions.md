@@ -663,20 +663,31 @@
 - **段階**: docs 確定（線引き）。実装は別タスク＝採用ユースケースは `get_news_context`/`search_news` の活用であり新規 schema を要さない（`polarity` タグは [ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)の統合コーパス移行で追加）。[advisor.md](advisor.md) にユースケースを反映する。
 - **関連**: [ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)（活用の器）・[ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)（意味検索）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（AI は数値を作らない＝活用面で具体化）・[ADR-026](#adr-026-signals-は連続スコアの材料ai-が主消費者で閾値は破壊的ゲートにしない)（signals は連続スコア・AI スコアを混ぜない）・[ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用）・[ADR-050](#adr-050-銘柄とニュースにテーマタグを持たせ語彙揺れをプロンプト照合と-embedding-近接で抑える)/[ADR-051](#adr-051-ニュースとシグナルと保有を結ぶ能動配信を-notify_digest-に拡張する)/[ADR-052](#adr-052-ニュース起点の売買アイデアは-proposals-の-buysell-に承認制で起票する)（派生）。
 
-## ADR-050: 銘柄とニュースにテーマタグを持たせ語彙揺れをプロンプト照合と embedding 近接で抑える
+## ADR-050: 銘柄テーマは「実在テキストに grounded な全ユニバース事前タグ」で持つ（改訂・名前推測を禁じ EDINET/longBusinessSummary を信号源にする）
 
-- **状況/問題**: 活用案④（銘柄比較・テーマ株スクリーニング・競合比較）は、業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねたい。だが DB に theme 概念は無く、グルーピングは `sector17_code`/`sector33_code`（[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)）だけ。セクター横断のテーマは拾えない。
+> **改訂（2026-06-10）**。初版（下記「旧決定（superseded）」）は「付与口を `investigate_stock` に寄せ・JP のみ・調査済みのみ・常時ジョブを増やさない」だった。だが**「未調査銘柄も米株もテーマで引きたい」**という確定要件が初版の中核決定と衝突したため、付与アーキテクチャを全面的に置き換える。語彙 reconcile（プロンプト照合＋embedding 近接）の骨子だけは存続させる。
+
+- **状況/問題**: 活用案④（銘柄比較・テーマ株スクリーニング・競合比較）は、業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねたい。初版は付与口を `investigate_stock`（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）に寄せたが、これだと**テーマが付くのは調査済みの JP 銘柄だけ**になり、「未調査も米株も `screen_by_theme` で引きたい」要件を満たせない。全ユニバースをテーマ付けするには「銘柄を語る実在テキスト」が要るが、未調査銘柄に手元の信号は社名＋セクターしかない。
+- **旧決定（superseded・初版 2026-06-07）**: 銘柄テーマを `investigate_stock` 時に AI が定性付与し銘柄×theme 台帳に持つ／付与口を `investigate_stock` に寄せ「新たな常時ジョブを増やさない」／JP のみ・調査済みのみ。→ **本改訂で置換**（全ユニバース事前タグへ）。「常時ジョブを増やさない」は付与口限定の理由付けだったが、要件を優先して撤回する。
 - **検討して却下した案**:
-  - **theme を作らず sector17/33 だけで代用** → 却下。同業種比較はできるが「半導体製造装置とソフトウェアの AI 関連を横串」のようなセクター跨ぎを拾えない。
-  - **テーマ語彙を自由放任（付与のたび新語）** → 却下。"AI需要"/"AI関連"/"生成AI" が乱立しタグが爆発、検索が割れる。
-  - **新規 theme を毎回人手承認制（pending lane）** → 却下。単一ユーザー（[ADR-001](#adr-001-単一ユーザー前提で作る)）に承認の手間を毎調査で課すのは過剰。
+  - **社名＋セクターだけを軽量 LLM に渡して全銘柄タグ付け** → 却下。**名前の字面（"日本〇〇"・"〇〇電機"）に引きずられハルシネーション地獄**になり使えないタグの山になる。タグは必ず実在テキストの根拠に当て、判定時は `code`/`symbol`（同一性）を渡し名前推測させない。
+  - **embedding 近接だけで自動割り当て** → 却下。薄い JP 信号（社名＋セクター）の近接はノイズが多く誤タグが増える。
+  - **未調査銘柄に ad-hoc web search を都度かけてタグ** → 却下。全銘柄分の検索は重く遅く、検索結果自体のノイズも残る。権威ある事業説明テキスト（EDINET/`longBusinessSummary`）を直接与えるほうが堅い。
+  - **`stock_themes` に `source` 列＋source 別置換で書き手衝突を解く** → 却下（複雑）。UPSERT＋`last_seen_at` 時間窓 prune で source 列なしに「クロバー回避＋freshness」を両立する（下記）。
+  - **テーマ語彙を自由放任／毎回人手承認制（pending lane）** → 却下（初版同様）。乱立はタグ爆発、承認は単一ユーザー（[ADR-001](#adr-001-単一ユーザー前提で作る)）に過剰。
 - **決定**:
-  - **銘柄とニュースに定性 `theme` タグ**を持たせる。銘柄テーマは `investigate_stock`（ドシエ生成＝[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)）の時に AI が定性付与し、**銘柄×theme 台帳**として持つ。ニュースにも `theme` タグ（[ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)の統合コーパスのタグ集合に追加）。**数値ではない**ので [ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) を侵さない。
-  - **語彙揺れ防止を二段**で持つ＝(1) 付与時に既存テーマ一覧を AI に文脈注入し「該当があれば再用・無ければ新規」と指示（プロンプト照合）＋(2) [ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)の embedding を流用し、候補テーマと既存テーマの類似度が閾値を超えたら**重複候補としてフラグ**（自動マージはせず候補提示に留める）。語彙照合は軽量タスクなので弱モデルでも足り、[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可) の将来ルーティング余地と合う。
-  - テーマ株スクリーニング・競合比較は、この銘柄×theme 台帳＋既存 sector で実現する（競合は同 theme かつ近 sector で近似）。
-- **理由**: theme を「数値でない定性タグ＋語彙 reconcile 付き」で持てば、AI 解釈の柔軟さ（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け) の範囲）を保ちつつタグ爆発を抑えられる。付与口を `investigate_stock` に寄せることで既存パイプラインに乗り、新たな常時ジョブを増やさない。
-- **段階**: docs 確定。実装は別タスク＝`theme` タグ（銘柄×theme 台帳・news タグ）・`investigate_stock` への付与ステップ・embedding 近接チェック。[data-model.md](data-model.md)/[advisor.md](advisor.md) に同期。
-- **関連**: [ADR-044](#adr-044-ニュースを統合コーパスと階層タグに集約し-get_news_context-で3層を必ず揃える)（タグ集合に theme 追加）・[ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)（embedding 流用）・[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（sector17/33）・[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)（ドシエ生成時に付与）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（定性付与・数値でない）・[ADR-049](#adr-049-ニュース-rag-の活用を線引きするai-は事実を解釈するだけで数値スコアは作らない)（④の親）・[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)（語彙照合は弱モデル可）。
+  - **全ユニバース（JP＋US）を実在テキストに grounded で事前タグ付けする**。付与は `investigate_stock` 限定をやめ、専用のタガー（バックフィル一括＋日次差分）が担う。**名前推測は禁止・`code`/`symbol` を同一性として必ず渡す・根拠が無ければタグを付けない**。
+  - **信号源は compact プロフィールに統一**＝米株は `.info.longBusinessSummary` をそのまま（既に短い・[ADR-055](#adr-055-米株スクリーナーphase-7b-1は-yfinance-一本gics-は-yahoo-infosector-の文字列保持提示専用で-jpy-資産評価コアに触れない)）、JP 未調査は **EDINET 有報「事業の内容」**（[ADR-056](#adr-056-edinet-を-jp-の事業説明テキスト源にする有報事業の内容-を要約して-company_descriptions-に持つ)）を**まず要約**して compact 化（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける) の「取得→要約→本文捨てる」イディオム流用）。JP 調査済みは `investigate_stock` のドシエ/ニュースを**リッチなオーバーレイ**にする。保存・embedding・タガーは全て compact 版を読む。
+  - **タガー＝grounded LLM 判定**＝入力（`code`/`symbol`＋compact プロフィール＋既存テーマ語彙）→出力（テキストが支持するテーマだけ・根拠引用付き）。実在テキストの定性分類であり数値を作らない（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)）。安いモデルで可（[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)）。
+  - **データモデル**（[data-model.md](data-model.md)）: `themes` 目録（JP＋US 横断のグローバル語彙・`name` PK・`embedding`・`embed_model`・`first_seen_at`・`near_duplicate_of`）＋ `stock_themes` 台帳（`market`/`code`/`theme_name`/`first_assigned_at`/`last_seen_at`・`UNIQUE(market,code,theme_name)`・**cross-FK なし**＝`signals` と同じ生データ流儀・**source 列なし**）＋ `company_descriptions`（compact 実在テキスト・`source`/`doc_id`/`disclosed_date` は**テキストの provenance**）。
+  - **書き込みは UPSERT＋`last_seen_at` bump（削除しない＝クロバーしない）**、古いタグは**時間窓 prune**（一定期間どの再タグにも再確認されなかった行だけ枯らす＝特定書き手基準でないのでクロバーにならない）。これでユニバースタガーと investigate オーバーレイの2書き手が共存する。
+  - **語彙 reconcile は目録層で**（表記揺れは `stock_themes` でなく `themes` で吸収）＝(1) 付与プロンプトに既存テーマ語彙を注入「該当あれば exact 再用」＋(2) embedding 近接（[ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド) の `vec_distance_cosine` 流用）で重複候補を `near_duplicate_of` にフラグ（**自動マージはせず候補提示**）。閾値は定数・保守的既定・tunable。`embedding_enabled()` が False なら第二段 skip し embedding=NULL で degrade（[ADR-006](#adr-006-ml-学習は別pcラズパイは-pkl-で推論のみ)/[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)）。embedding 生成は夜間 `embed_themes`（`embed_news` 同型）に分離。
+  - **コールドスタート**＝種テーマ（防衛・AI需要・半導体・円安メリット…30〜50 個）を `app/reference/`（[ADR-053](#adr-053-sector17-の二体系分類-s17--銘柄-etf-ティッカーの境界を固定し業種コード参照知識を-appreference-に集約する) の参照知識層）に置き初回に目録へ仕込む。有機的な新テーマ追加は種の上に育つ。
+  - **差分の「変化」定義**＝即時（未タグ＋説明テキストが前回タグ以降に変化した銘柄だけ再タグ）＋緩やか（最終タグが古い順に夜あたり N 件のローテ＝[ADR-033](#adr-033-銘柄ごとの調査-cadence-は-interval_days-夜あたり天井で律速する) cadence 流用で語彙ドリフトを eventual 追従）＋手動フル再タグ（script/`/settings`）。
+  - **消費 Tool 3 本**（[advisor.md](advisor.md)）: `list_themes`（語彙＋件数＋near_dup フラグ）・`get_stock_themes(market, code)`・`screen_by_theme(theme, market?, sector17_code?, limit?)`。**競合比較は専用 Tool を作らず合成**（get_stock_themes→screen_by_theme(theme, 同セクター)）。戻り値はテーマ所属の事実のみ＝バリュエーション数値を持たせない（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)）。
+- **理由**: テーマを「実在テキストに grounded な定性タグ＋目録での語彙 reconcile」で持てば、名前推測のハルシネーションを断ちつつ全ユニバースを覆える。UPSERT＋時間窓 prune は「source を持たない／freshness／2書き手のクロバー回避」の三択トレードオフを同時に満たす唯一解。付与口を `investigate_stock` に限定しないことで未調査・米株も引けるようになり、初版の制約を解く。
+- **段階**: **docs 確定（改訂）**。実装は段階で別タスク＝**A**: 米株を `longBusinessSummary` で grounded タグ＋目録＋reconcile＋Tool（EDINET 不要・最速で「テーマで引く」完成）／**B**: investigate_stock の JP 調査済みにオーバーレイ／**C**: EDINET アダプタ→JP 全ユニバース＋backfill＋差分＋`/settings`。[data-model.md](data-model.md)/[advisor.md](advisor.md)/[roadmap.md](roadmap.md) に同期。
+- **関連**: [ADR-056](#adr-056-edinet-を-jp-の事業説明テキスト源にする有報事業の内容-を要約して-company_descriptions-に持つ)（JP 信号源）・[ADR-055](#adr-055-米株スクリーナーphase-7b-1は-yfinance-一本gics-は-yahoo-infosector-の文字列保持提示専用で-jpy-資産評価コアに触れない)（米株 `longBusinessSummary`）・[ADR-045](#adr-045-ニュース意味検索は段階導入する初手は-embedding-と-sqlite-vec最終は-fts5-ハイブリッド)（embedding 流用）・[ADR-053](#adr-053-sector17-の二体系分類-s17--銘柄-etf-ティッカーの境界を固定し業種コード参照知識を-appreference-に集約する)（reference 層に種テーマ）・[ADR-033](#adr-033-銘柄ごとの調査-cadence-は-interval_days-夜あたり天井で律速する)（差分ローテ cadence）・[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)（要約イディオム・調査オーバーレイ）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（定性付与・数値でない）・[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)（タガーは安いモデル可）・[ADR-049](#adr-049-ニュース-rag-の活用を線引きするai-は事実を解釈するだけで数値スコアは作らない)（④の親）。
 
 ## ADR-051: ニュースとシグナルと保有を結ぶ能動配信を notify_digest に拡張する
 
@@ -774,3 +785,23 @@
   - **op/eps の YoY を活かす**: `op_growth_yoy`/`eps_growth_yoy` を None でなく実値にするには、財務履歴源（前期 FY 値）を追加して `growth_yoy` 純関数の素を揃える必要がある。`.info` のスナップショット中継では出せない。
 - **段階**: **実装済み（2026-06-09）**。`adapters/us_equity.py`・schema `0017_us_equity`・夜間 4 ジョブ・`routers/us_stocks.py`・AI Tool 2 つ・frontend `/us-stocks` ＋ `/us-stocks/[symbol]`。pytest green。(B-2) は未着手。
 - **関連**: [ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（Phase 7(B)・`UsEquityAdapter` 新設の明言）・[ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離)（市場分離・読み取り時ランク・通貨ポリシー）・[ADR-048](#adr-048-銘柄バリュエーションroeperpbr基準を-tool事実参照知識カードで持たせる)（valuation 列・Tool 契約 market/currency・verdict なし）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し・フォールバック連鎖）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（事実は Python・捏造しない）・[ADR-033](#adr-033-銘柄ごとの調査-cadence-は-interval_days-夜あたり天井で律速する)（財務ローテ巡回）・[ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用）・[data-model.md](data-model.md)・[api.md](api.md)・[roadmap.md Phase 7](roadmap.md)。
+
+---
+
+## ADR-056: EDINET を JP の事業説明テキスト源にする（有報「事業の内容」を要約して company_descriptions に持つ）
+
+- **状況/問題**: [ADR-050](#adr-050-銘柄テーマは実在テキストに-grounded-な全ユニバース事前タグで持つ改訂名前推測を禁じ-edinetlongbusinesssummary-を信号源にする) 改訂で「全ユニバースを実在テキストに grounded で事前タグ付け」を決めたが、**JP の未調査銘柄には銘柄を語る権威ある実在テキストが無い**。J-Quants（[ADR-008](#adr-008-j-quants-は-v2x-api-key-を使うv1-は使わない)）は価格・財務・銘柄マスタ（社名/業種）を返すが、事業内容の説明文は提供しない。米株は `.info.longBusinessSummary`（[ADR-055](#adr-055-米株スクリーナーphase-7b-1は-yfinance-一本gics-は-yahoo-infosector-の文字列保持提示専用で-jpy-資産評価コアに触れない)）で賄えるが、JP に等価の信号源が欠けている。
+- **検討して却下した案**:
+  - **社名＋セクターから推測** → [ADR-050](#adr-050-銘柄テーマは実在テキストに-grounded-な全ユニバース事前タグで持つ改訂名前推測を禁じ-edinetlongbusinesssummary-を信号源にする) で却下済み（ハルシネーション）。
+  - **企業 HP/Wikipedia をスクレイプ** → 出典が不安定・ノイズが多く、権威性に欠ける。却下。
+  - **dexter-jp 型の EDINET ベース外部 SaaS に判断を委ねる** → [ADR-048](#adr-048-銘柄バリュエーションroeperpbr基準を-tool事実参照知識カードで持たせる) が「バリュエーション判断の外部委譲」を却下済み。本 ADR はその轍を踏まない（下記・非衝突）。
+- **決定**:
+  - **EDINET API v2 を「事業の内容」テキスト専用の追加ソースにする**。価格・財務・銘柄マスタは [ADR-008](#adr-008-j-quants-は-v2x-api-key-を使うv1-は使わない) どおり J-Quants を継続し、**EDINET は additive（置換でない）**。
+  - **`EdinetAdapter`（[ADR-010](#adr-010-データソースはアダプタ越しにする) 境界）** を新設＝銘柄コード→最新有報 docID を書類一覧 API（`docTypeCode=120`・`secCode` 絞り）で解決→書類取得 API（`type` で CSV/XBRL）→ `DescriptionOfBusinessTextBlock`（事業の内容）を抽出。adapter は DB に触らない（外部 IO のみ）。
+  - **取得した「事業の内容」は要約して compact 化**してから保存する（[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける) の「取得→要約→本文捨てる」と同イディオム）。保存先は市場横断の `company_descriptions`（[data-model.md](data-model.md)・`market`/`code`/`source='edinet'`/`description_text`/`disclosed_date`/`doc_id`/`fetched_at`）。米株の `longBusinessSummary`（`source='yfinance'`）も同テーブルに同居する。
+  - **API キーは backend `.env`（`EDINET_API_KEY`・無料登録）**。秘密は backend のみ（[ADR-005](#adr-005-db-に触るのは-fastapi-だけnextjs-は-ui-専用)）。
+  - **cadence**＝バックフィル一括（全 JP 銘柄の最新有報を巡回取得）＋差分（新規有報＝年次・低 churn を `disclosed_date` で検知）。書類一覧 API は提出日でクロールするため、初回は実質ミニ・バックフィル巡回になる（[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない) で部分失敗を握る）。
+- **理由**: 有報「事業の内容」は金融庁提出の**権威ある実在テキスト**で、grounded テーマ付け（[ADR-050](#adr-050-銘柄テーマは実在テキストに-grounded-な全ユニバース事前タグで持つ改訂名前推測を禁じ-edinetlongbusinesssummary-を信号源にする)）の JP 信号源として最適。価格・財務を J-Quants に残し EDINET をテキスト専用に限定することで、データ源の責務が混ざらない（[ADR-010](#adr-010-データソースはアダプタ越しにする)）。
+- **ADR-048 との非衝突**: [ADR-048](#adr-048-銘柄バリュエーションroeperpbr基準を-tool事実参照知識カードで持たせる) が却下したのは「バリュエーション**判断**の外部 SaaS 委譲」。本 ADR は EDINET を**生テキスト源**として使うだけで、数値判断は引き続き quant 純関数が持つ（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)）。判断の委譲ではないため衝突しない。
+- **段階**: **docs 確定**。実装は [ADR-050](#adr-050-銘柄テーマは実在テキストに-grounded-な全ユニバース事前タグで持つ改訂名前推測を禁じ-edinetlongbusinesssummary-を信号源にする) 段階 C（JP 全ユニバース）で別タスク。[data-model.md](data-model.md) に `company_descriptions` を同期。
+- **関連**: [ADR-050](#adr-050-銘柄テーマは実在テキストに-grounded-な全ユニバース事前タグで持つ改訂名前推測を禁じ-edinetlongbusinesssummary-を信号源にする)（信号源として消費）・[ADR-008](#adr-008-j-quants-は-v2x-api-key-を使うv1-は使わない)（JP=J-Quants を価格/財務で継続・EDINET は追加）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し）・[ADR-048](#adr-048-銘柄バリュエーションroeperpbr基準を-tool事実参照知識カードで持たせる)（非衝突）・[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)（要約イディオム）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（数値は quant）・[ADR-005](#adr-005-db-に触るのは-fastapi-だけnextjs-は-ui-専用)（秘密は backend）。
