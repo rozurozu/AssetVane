@@ -17,6 +17,7 @@ from app.batch.jobs import (
     calc_us_valuation,
     calc_valuation,
     embed_news,
+    embed_themes,
     fetch_financials,
     fetch_fund_navs,
     fetch_general_news,
@@ -33,6 +34,7 @@ from app.batch.jobs import (
     snapshot_assets,
     sync_master,
     sync_us_universe,
+    tag_us_themes,
 )
 
 NIGHTLY_JOBS = [
@@ -61,6 +63,9 @@ NIGHTLY_JOBS = [
     fetch_us_quotes.run,
     fetch_us_fundamentals.run,
     calc_us_valuation.run,
+    # ADR-050 段階A: US テーマの grounded タグ付け。fetch_us_fundamentals が company_descriptions
+    # を更新した直後・run_advisor の前に置き、夜の分析AI が当夜のタグを Tool で読めるようにする。
+    tag_us_themes.run,
     # ADR-034: 夜の分析AI の市況文脈材料として run_advisor の直前で一般ニュースを取得・保存。
     fetch_general_news.run,
     # ADR-044: 統合コーパスのセクター層を埋める。一般ニュースの直後・run_advisor の前に置き、
@@ -71,6 +76,9 @@ NIGHTLY_JOBS = [
     # ADR-045: 全ニュース書込後に embedding が null/モデル不一致の行を埋める（意味検索の素地）。
     # investigate_dossier の後・通知系の前に置き、当夜貯めた要約まで含めて意味検索に乗せる。
     embed_news.run,
+    # ADR-050: tag_us_themes が当夜増やしたテーマ語彙を埋め込み near_duplicate_of を判定する
+    # （embed_news の直後＝embedding 系をまとめて回す・語彙 reconcile の第二段）。
+    embed_themes.run,
     # ADR-028: warn 超過時、その月最初の夜に 1 通だけ警告（通知系を digest と並べる）。
     notify_cost_warn.run,
     notify_digest.run,  # Phase 6: ⑦⑧＋夜AI 提案を 1 通の Discord digest に束ねる（phase6-spec §3）

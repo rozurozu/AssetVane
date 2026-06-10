@@ -431,7 +431,7 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 - 適時開示（TDnet）は有料アドオンのため後付け。`source='disclosure'` でこのコーパスに入れる（構造が複雑になれば専用テーブルに分離）。
 
 ### テーマタグ — `themes`／`stock_themes`／`company_descriptions`（[ADR-050](decisions.md) 改訂・[ADR-056](decisions.md)）
-業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねる。**全ユニバース（JP＋US）を実在テキストに grounded で事前タグ付け**する（名前推測禁止・[ADR-050](decisions.md)）。テーマは**定性タグで数値でない**（[ADR-014](decisions.md)）。実装は未着手（段階 A/B/C・[roadmap.md](roadmap.md)）＝以下は計画スキーマ。
+業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねる。**全ユニバース（JP＋US）を実在テキストに grounded で事前タグ付け**する（名前推測禁止・[ADR-050](decisions.md)）。テーマは**定性タグで数値でない**（[ADR-014](decisions.md)）。**段階 A（米株）は実装済み（migration `0018_themes`・2026-06-10）**＝US は `fetch_us_fundamentals` 相乗りで `longBusinessSummary` を取り込み、夜間 `tag_us_themes`／`embed_themes` がタグ付け・語彙 reconcile する。段階 B/C（JP オーバーレイ／EDINET）は未着手（[roadmap.md](roadmap.md)）。
 
 **`themes`** — テーマ語彙の目録（JP＋US 横断のグローバル語彙・"AI需要" は市場を跨いで 1 語）。
 
@@ -472,7 +472,7 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 | `doc_id` | TEXT | EDINET 書類管理番号（provenance・US は null）|
 | `fetched_at` | TEXT | 取得日時 |
 
-- `source`/`doc_id`/`disclosed_date` は**テキストの provenance**（タグの provenance ではない＝`stock_themes` とは役割が別）。差分タガーは `tagged_at` と `disclosed_date`/`fetched_at` を比較して「変化した銘柄」だけ再タグする。
+- `source`/`doc_id`/`disclosed_date` は**テキストの provenance**（タグの provenance ではない＝`stock_themes` とは役割が別）。`fetched_at` は **UPSERT 時に `description_text` が実際に変化したときだけ更新**される＝「テキスト最終変化時刻」の意味（`repo.upsert_company_description`）。差分タガーは銘柄ごとのタグ時刻カーソル（`fetch_meta` の source キー `us_themes:<symbol>`・ISO datetime）と `fetched_at` を比較し、「未タグ → 説明変化 → 古い順ローテ」の優先順で夜あたり天井（`theme_tagging_nightly_max`）まで再タグする（[ADR-033](decisions.md) 流用）。
 - UNIQUE `(market, code)`（1 銘柄 1 行・最新を UPSERT）。
 
 ---

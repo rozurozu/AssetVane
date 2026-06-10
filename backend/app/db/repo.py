@@ -10,7 +10,7 @@ import struct
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, Table, and_, func, select, text
+from sqlalchemy import Connection, Table, and_, case, func, or_, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.engine import get_engine
@@ -18,6 +18,7 @@ from app.db.schema import (
     advisor_journal,
     asset_snapshots,
     cash,
+    company_descriptions,
     daily_quotes,
     external_assets,
     fetch_meta,
@@ -37,7 +38,9 @@ from app.db.schema import (
     screening_filters,
     signals,
     stock_dossiers,
+    stock_themes,
     stocks,
+    themes,
     transactions,
     us_daily_quotes,
     us_stocks,
@@ -1938,3 +1941,293 @@ def screen_us_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[st
         stmt = stmt.offset(int(criteria["offset"]))
 
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+# ===== テーマタグ（ADR-050 改訂・ADR-056・段階A・data-model.md「テーマタグ」節） =====
+# 全ユニバース（JP＋US）を実在テキストに grounded で事前タグ付けする。書き込みは
+# UPSERT＋last_seen_at bump（削除しない）＋時間窓 prune で 2 書き手（ユニバースタガー／
+# investigate オーバーレイ）が共存する。テーマは定性タグで数値を持たない（ADR-014）。
+
+
+def upsert_company_description(row: dict[str, Any]) -> int:
+    """company_descriptions を (market, code) で冪等 UPSERT する（ADR-050/056・W1）。
+
+    **description_text が既存と同一なら何も更新しない**（DO UPDATE の WHERE 条件で弾く）。
+    これにより `fetched_at` は「テキスト最終変化時刻」の意味になり、差分タガーが
+    fetch_meta（'us_themes:<code>'）の last_fetched_date と比較して「説明が変化した銘柄」
+    だけを再タグできる（設計の肝・list_us_codes_for_theme_tagging の優先順②の判定材料）。
+    同一判定は NULL 安全（is_distinct_from＝SQLite では `IS NOT`。既存が NULL でも新テキストで
+    更新できる）。fetched_at 未指定なら UTC now を補完する。
+    返り値は影響行数（1=新規 or テキスト変化で更新／0=同一テキストで据え置き）。
+    """
+    values = dict(row)
+    values.setdefault("fetched_at", datetime.now(UTC).isoformat())
+    stmt = sqlite_insert(company_descriptions).values(**values)
+    update_cols = ("source", "description_text", "disclosed_date", "doc_id", "fetched_at")
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["market", "code"],
+        set_={c: stmt.excluded[c] for c in update_cols if c in values},
+        where=company_descriptions.c.description_text.is_distinct_from(
+            stmt.excluded.description_text
+        ),
+    )
+    with get_engine().begin() as conn:
+        result = conn.execute(stmt)
+    return result.rowcount or 0
+
+
+def get_company_description(conn: Connection, market: str, code: str) -> dict[str, Any] | None:
+    """company_descriptions の 1 行を (market, code) で引く（無ければ None・ADR-050/056）。"""
+    stmt = select(company_descriptions).where(
+        and_(company_descriptions.c.market == market, company_descriptions.c.code == code)
+    )
+    row = conn.execute(stmt).mappings().first()
+    return dict(row) if row else None
+
+
+def insert_themes_if_absent(names: list[str], first_seen_at: str) -> int:
+    """themes 目録へ新出テーマだけを追加する（on_conflict_do_nothing・冪等・W1・ADR-050）。
+
+    語彙は単調増加で消さない（reconcile の資産）。既存名は素通しし first_seen_at を潰さない。
+    embedding/near_duplicate_of は夜間 embed_themes（後続ウェーブ）が付けるためここでは NULL。
+    返り値は実際に挿入された件数（再実行で 0＝冪等）。
+    """
+    if not names:
+        return 0
+    # 入力内の重複は 1 行に畳む（順序維持・同一文内の二重 VALUES で衝突させない）。
+    unique_names = list(dict.fromkeys(names))
+    rows = [{"name": n, "first_seen_at": first_seen_at} for n in unique_names]
+    stmt = sqlite_insert(themes).values(rows).on_conflict_do_nothing(index_elements=["name"])
+    with get_engine().begin() as conn:
+        result = conn.execute(stmt)
+    return result.rowcount or 0
+
+
+def list_theme_names(conn: Connection) -> list[str]:
+    """themes の全テーマ名を name 昇順で返す（タガーのプロンプト注入用語彙・ADR-050）。"""
+    return list(conn.execute(select(themes.c.name).order_by(themes.c.name)).scalars().all())
+
+
+def list_themes_with_counts(conn: Connection) -> list[dict[str, Any]]:
+    """テーマ目録＋所属銘柄数を返す（Tool `list_themes` の素・ADR-050）。
+
+    themes LEFT JOIN stock_themes ＋ GROUP BY で n_stocks（所属銘柄数・未付与は 0）を都度数える。
+    near_duplicate_of は重複候補フラグ（自動マージせず候補提示のみ）。name 昇順で安定。
+    """
+    stmt = (
+        select(
+            themes.c.name,
+            themes.c.near_duplicate_of,
+            themes.c.first_seen_at,
+            func.count(stock_themes.c.id).label("n_stocks"),
+        )
+        .select_from(themes.outerjoin(stock_themes, stock_themes.c.theme_name == themes.c.name))
+        .group_by(themes.c.name)
+        .order_by(themes.c.name)
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def list_themes_needing_embedding(
+    conn: Connection, *, current_model: str, limit: int
+) -> list[dict[str, Any]]:
+    """埋め込みが未生成 or モデル不一致の themes 行を limit 件返す（ADR-045/050）。
+
+    list_news_needing_embedding と同型。SQLite に IS DISTINCT FROM は無いため
+    `embed_model IS NULL OR embed_model != :m` で表現する（未埋め込み行は embed_model も
+    NULL なので OR の左で拾う）。name 昇順で安定。
+    """
+    stmt = (
+        select(themes.c.name, themes.c.embed_model)
+        .where(
+            or_(
+                themes.c.embedding.is_(None),
+                themes.c.embed_model.is_(None),
+                themes.c.embed_model != current_model,
+            )
+        )
+        .order_by(themes.c.name)
+        .limit(limit)
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def update_theme_embedding(name: str, embedding_blob: bytes, model: str) -> None:
+    """themes 1 行の embedding/embed_model を更新する（ADR-045/050・W1）。
+
+    embedding_blob は pack_embedding 済みの float32 LE BLOB（news と同じ格納形式＝
+    vec_distance_cosine が次元非依存に読む）。単発・1 文で閉じる書き込みなので repo が
+    自前で begin する（W1）。
+    """
+    stmt = (
+        themes.update()
+        .where(themes.c.name == name)
+        .values(embedding=embedding_blob, embed_model=model)
+    )
+    with get_engine().begin() as conn:
+        conn.execute(stmt)
+
+
+def find_nearest_theme(conn: Connection, name: str, query_blob: bytes) -> dict[str, Any] | None:
+    """`name` 以外で query_blob に最も近いテーマを 1 件返す（語彙 reconcile・ADR-045/050）。
+
+    vec_distance_cosine(embedding, :qvec) の直接スキャンを距離昇順 LIMIT 1（search_news と
+    同流儀・vec0 仮想表は使わず次元非依存）。自分自身（name 一致）と embedding NULL の行は
+    除外する。戻りは {"name", "distance"} か None（候補なし）。近接判定の閾値比較と
+    near_duplicate_of への記録は呼び出し側（embed_themes ジョブ）の責務。
+    sqlite-vec 未ロードだと SQL が失敗するが、ここでは握らず投げる（呼び出し側が握って
+    degrade する＝ADR-018）。
+    """
+    stmt = text(
+        "SELECT name, vec_distance_cosine(embedding, :qvec) AS distance "
+        "FROM themes WHERE embedding IS NOT NULL AND name != :name "
+        "ORDER BY distance ASC LIMIT 1"
+    )
+    row = conn.execute(stmt, {"qvec": query_blob, "name": name}).mappings().first()
+    return dict(row) if row else None
+
+
+def set_theme_near_duplicate(name: str, near_duplicate_of: str | None) -> None:
+    """themes 1 行の near_duplicate_of を設定/解除する（重複候補フラグ・ADR-050・W1）。
+
+    自動マージはせず候補提示のみ（None で解除）。単発・1 文で閉じる書き込みなので W1。
+    """
+    stmt = themes.update().where(themes.c.name == name).values(near_duplicate_of=near_duplicate_of)
+    with get_engine().begin() as conn:
+        conn.execute(stmt)
+
+
+def upsert_stock_themes(rows: list[dict[str, Any]]) -> int:
+    """stock_themes を (market, code, theme_name) で冪等 UPSERT する（ADR-050・W1）。
+
+    衝突時は **last_seen_at のみ bump** し first_assigned_at は既存値を保持する（EXCLUDED の
+    set_ に含めない）。削除はしない＝古いタグは prune_stale_stock_themes の時間窓 prune が
+    枯らす。この「UPSERT＋bump・削除しない」が 2 書き手（ユニバースタガー／investigate
+    オーバーレイ）のクロバー回避の要（ADR-050 の三択トレードオフ解）。
+    rows の各行は {market, code, theme_name, first_assigned_at, last_seen_at} を持つこと。
+    """
+    if not rows:
+        return 0
+    stmt = sqlite_insert(stock_themes)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["market", "code", "theme_name"],
+        set_={"last_seen_at": stmt.excluded["last_seen_at"]},
+    )
+    with get_engine().begin() as conn:
+        conn.execute(stmt, rows)
+    return len(rows)
+
+
+def get_stock_themes(conn: Connection, market: str, code: str) -> list[dict[str, Any]]:
+    """1 銘柄のテーマ一覧を theme_name 昇順で返す（Tool `get_stock_themes` の素・ADR-050）。"""
+    stmt = (
+        select(stock_themes)
+        .where(and_(stock_themes.c.market == market, stock_themes.c.code == code))
+        .order_by(stock_themes.c.theme_name)
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def screen_stocks_by_theme(
+    conn: Connection,
+    theme: str,
+    *,
+    market: str | None = None,
+    sector17_code: str | None = None,
+    gics_sector: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """テーマ所属銘柄を返す（Tool `screen_by_theme` の素・ADR-050）。
+
+    market='US' 行は us_stocks（company_name/gics_sector）、market='JP' 行は stocks
+    （company_name/sector17_code）へ LEFT JOIN し、名称とセクターラベルを読み取り時に補完する
+    （行レベルに焼かない＝repo 規約）。sector ラベルは US が gics_sector（英語ラベル）、JP が
+    sector17_code（J-Quants S17 コード・ADR-053）。sector17_code 絞りは stocks.sector17_code、
+    gics_sector 絞りは us_stocks.gics_sector に効く（他市場の行は条件不一致で落ちる）。
+    戻り行は market/code/company_name/sector/last_seen_at の事実のみ＝バリュエーション数値は
+    含めない（ADR-014: テーマ所属の事実に数値を混ぜない）。
+    """
+    st = stock_themes
+    joined = st.outerjoin(
+        us_stocks, and_(st.c.market == "US", st.c.code == us_stocks.c.symbol)
+    ).outerjoin(stocks, and_(st.c.market == "JP", st.c.code == stocks.c.code))
+    company_name = func.coalesce(us_stocks.c.company_name, stocks.c.company_name).label(
+        "company_name"
+    )
+    sector = func.coalesce(us_stocks.c.gics_sector, stocks.c.sector17_code).label("sector")
+
+    stmt = (
+        select(st.c.market, st.c.code, company_name, sector, st.c.last_seen_at)
+        .select_from(joined)
+        .where(st.c.theme_name == theme)
+    )
+    if market is not None:
+        stmt = stmt.where(st.c.market == market)
+    if sector17_code is not None:
+        stmt = stmt.where(stocks.c.sector17_code == sector17_code)
+    if gics_sector is not None:
+        stmt = stmt.where(us_stocks.c.gics_sector == gics_sector)
+    stmt = stmt.order_by(st.c.market, st.c.code).limit(limit)
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def prune_stale_stock_themes(*, market: str, cutoff_iso: str) -> int:
+    """`market` の stale なテーマタグを時間窓 prune する（ADR-050・W1）。
+
+    DELETE WHERE market=:market AND last_seen_at < :cutoff（境界一致は残す・NULL は消さない）。
+    「一定期間どの再タグにも再確認されなかった行だけ枯らす」＝特定書き手基準でないので
+    クロバーにならない（upsert_stock_themes の bump と対の設計）。
+    **market は必須**＝段階 A のタガーは US のみ稼働のため、JP 行（段階 B/C で付く）を誤って
+    枯らさない安全弁。全市場一括 prune の口は意図的に作らない。返り値は削除行数。
+    """
+    stmt = stock_themes.delete().where(
+        and_(stock_themes.c.market == market, stock_themes.c.last_seen_at < cutoff_iso)
+    )
+    with get_engine().begin() as conn:
+        result = conn.execute(stmt)
+    return result.rowcount or 0
+
+
+def list_us_codes_for_theme_tagging(conn: Connection, limit: int) -> list[str]:
+    """テーマタガーの巡回対象 US 銘柄を優先順に limit 件返す（ADR-050・ADR-033 同型）。
+
+    company_descriptions（market='US'）を起点に us_stocks へ JOIN し **is_etf=1 を除外**する
+    （ETF の longBusinessSummary はファンド運用方針の説明で、事業テーマの信号にならないノイズ）。
+    fetch_meta は source キー `'us_themes:' || code` で LEFT JOIN する
+    （list_us_symbols_for_fundamentals の `us_fundamentals:<symbol>` と同じキー慣行）。
+
+    優先順（CASE でバケツ分け→バケツ内は last_fetched_date 古い順→code 昇順で安定）:
+      ① メタ無し（未タグ）を最優先
+      ② company_descriptions.fetched_at > メタの last_fetched_date（説明テキストが前回タグ
+         以降に変化した銘柄。upsert_company_description の「同一テキストは fetched_at 据え置き」
+         契約が判定を成立させる）
+      ③ 残りは last_fetched_date が古い順のローテ（語彙ドリフトの eventual 追従・ADR-033 流用）
+
+    **タガーが 'us_themes:<code>' に書く last_fetched_date は ISO datetime 文字列（時刻まで）**
+    であること。②は fetched_at（ISO datetime）との文字列比較で成立する前提
+    （'YYYY-MM-DD' 日付のみだと同日内のテキスト変化を取りこぼす）。
+    """
+    if limit <= 0:
+        return []
+    cd = company_descriptions
+    src = "us_themes:" + cd.c.code
+    priority = case(
+        (fetch_meta.c.source.is_(None), 0),  # ① 未タグ
+        (cd.c.fetched_at > fetch_meta.c.last_fetched_date, 1),  # ② 説明変化
+        else_=2,  # ③ ローテ
+    )
+    # NULL（未タグ）を先頭に保つため last_fetched_date の NULL は空文字に畳んで昇順。
+    order_age = func.coalesce(fetch_meta.c.last_fetched_date, "")
+    stmt = (
+        select(cd.c.code)
+        .select_from(
+            cd.join(us_stocks, us_stocks.c.symbol == cd.c.code).join(
+                fetch_meta, fetch_meta.c.source == src, isouter=True
+            )
+        )
+        .where(cd.c.market == "US")
+        .where(func.coalesce(us_stocks.c.is_etf, 0) == 0)  # ETF 除外（NULL は普通株扱い）
+        .order_by(priority.asc(), order_age.asc(), cd.c.code.asc())
+        .limit(limit)
+    )
+    return list(conn.execute(stmt).scalars().all())

@@ -570,3 +570,60 @@ us_valuation_snapshots = Table(
     Column("fin_disclosed_date", String),  # 採用した財務の基準日（監査）
     Column("updated_at", String),  # ISO8601（この行を焼いた時刻）
 )
+
+# ===== テーマタグ（ADR-050 改訂・ADR-056・0018_themes・data-model.md「テーマタグ」節） =====
+# 業種コードをまたぐテーマ（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねる。全ユニバース
+# （JP＋US）を実在テキスト（米株 longBusinessSummary・JP は EDINET 有報「事業の内容」）に grounded
+# で事前タグ付けする（名前推測禁止）。テーマは定性タグで数値ではない（ADR-014）。
+
+# テーマ語彙の目録（JP＋US 横断のグローバル語彙・"AI需要" は市場を跨いで 1 語）。
+# 語彙は単調増加で消さない（reconcile の資産）。embedding は語彙 reconcile 用（ADR-045 の
+# vec_distance_cosine 流用・float32 LE・未埋め込み/機能オフは NULL）。near_duplicate_of は
+# 近接した既存テーマ名の重複候補フラグ（自動マージはせず候補提示のみ）。
+themes = Table(
+    "themes",
+    metadata,
+    Column("name", String, primary_key=True),  # canonical なテーマ名
+    Column("embedding", LargeBinary),  # 語彙 reconcile 用ベクトル（float32 LE・NULL 可）
+    Column("embed_model", String),  # 埋め込みに使ったモデル名（差替検知・NULL 可）
+    Column("first_seen_at", String),  # 初出日時 ISO8601
+    Column("near_duplicate_of", String),  # 近接既存テーマ名（重複候補・NULL 可）
+)
+
+# 銘柄×theme 台帳（JP＋US 横断）。code への cross-FK は張らない（signals と同じ生データ流儀・
+# US は別テーブルのため）。source 列も持たない＝書き込みは UPSERT＋last_seen_at bump（削除しない）、
+# 古いタグは時間窓 prune で枯らす。これでユニバースタガーと investigate オーバーレイの 2 書き手が
+# クロバーせず共存する（ADR-050 の三択トレードオフ解・意図的決定）。
+stock_themes = Table(
+    "stock_themes",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("market", String, nullable=False),  # 'JP'/'US'
+    Column("code", String, nullable=False),  # JP 5桁コード or US symbol
+    Column("theme_name", String, nullable=False),  # themes.name（canonical 名のみ）
+    Column("first_assigned_at", String),  # 初付与日時 ISO8601
+    Column("last_seen_at", String),  # 最終再確認日時 ISO8601（時間窓 prune の基準）
+    UniqueConstraint("market", "code", "theme_name", name="uq_stock_themes_market_code_theme"),
+    Index("ix_stock_themes_market_code", "market", "code"),  # 銘柄のテーマ一覧
+    Index("ix_stock_themes_theme_name", "theme_name"),  # テーマ株スクリーニング
+)
+
+# 事業説明の実在テキスト（市場横断・grounded タガーの信号源・ADR-050/056）。
+# description_text は compact プロフィール（JP は EDINET「事業の内容」を要約・US は
+# longBusinessSummary を素のまま・本文は持たない＝ADR-020）。source/doc_id/disclosed_date は
+# テキストの provenance（タグの provenance ではない＝stock_themes とは役割が別）。
+# fetched_at は「テキスト最終変化時刻」（同一テキストの再 UPSERT では更新しない＝repo 契約）で、
+# 差分タガーが「変化した銘柄」だけ再タグする判定材料になる。
+company_descriptions = Table(
+    "company_descriptions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("market", String, nullable=False),  # 'JP'/'US'
+    Column("code", String, nullable=False),  # JP 5桁 or US symbol（cross-FK なし）
+    Column("source", String),  # 'edinet'（JP 有報）/ 'yfinance'（US longBusinessSummary）
+    Column("description_text", String),  # compact プロフィール（本文は持たない）
+    Column("disclosed_date", String),  # テキストの基準日（EDINET 提出/開示日・US は NULL）
+    Column("doc_id", String),  # EDINET 書類管理番号（provenance・US は NULL）
+    Column("fetched_at", String),  # テキスト最終変化時刻 ISO8601（時刻まで）
+    UniqueConstraint("market", "code", name="uq_company_descriptions_market_code"),
+)

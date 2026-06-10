@@ -254,6 +254,56 @@ class GetLeadLagArgs(_ToolArgs):
     """
 
 
+class ListThemesArgs(_ToolArgs):
+    """list_themes の引数（ADR-050 改訂・テーマタグ段階 A）。
+
+    limit 省略時は全件。テーマ語彙の discovery 用なので、まず全体を眺める使い方を既定にする
+    （handler が n_stocks 降順に並べるため、limit 指定時は「所属の多い順の先頭 N 件」になる）。
+    """
+
+    limit: int | None = None
+
+
+class GetStockThemesArgs(_ToolArgs):
+    """get_stock_themes の引数（ADR-050 改訂）。
+
+    market='JP' のとき code は J-Quants 5 桁コード（例 72030）、market='US' のとき code は
+    ティッカー（例 AAPL）。stock_themes は market+code が同一性（cross-FK なし・ADR-050）。
+    """
+
+    market: Literal["JP", "US"] = Field(
+        description="市場。JP=日本株（code は 5 桁コード）/ US=米国株（code はティッカー）。"
+    )
+    code: str = Field(description="JP は 5 桁コード（例 72030）、US はティッカー（例 AAPL）。")
+
+
+class ScreenByThemeArgs(_ToolArgs):
+    """screen_by_theme の引数（ADR-050 改訂）。
+
+    theme は list_themes が返す canonical 名と exact 一致（当て推量しない）。業種絞りは
+    S17（JP の TOPIX-17）と GICS（US の Yahoo `.info.sector` 英語ラベル）が**別体系**
+    （ADR-053）なので 1 引数に混載せず分離する。段階 A のタガーは US のみ稼働で JP 行が
+    無いため、sector17_code は前方互換の予約引数（段階 B/C で効く）。
+    """
+
+    theme: str = Field(
+        description="テーマ名（list_themes の canonical 名と exact 一致。当て推量しない）。"
+    )
+    market: Literal["JP", "US"] | None = Field(
+        default=None, description="市場の絞り込み（省略時は JP＋US 横断）。"
+    )
+    sector17_code: str | None = Field(
+        default=None,
+        description="JP の TOPIX-17 業種コード（S17）での絞り込み。US 行には効かない。",
+    )
+    gics_sector: str | None = Field(
+        default=None,
+        description="US の GICS 相当業種（英語ラベル・例 Technology）での絞り込み。"
+        "JP 行には効かない。",
+    )
+    limit: int = Field(default=50, ge=1, le=200)
+
+
 class ProposedPolicyChange(_ToolArgs):
     """方針変更案（単一フィールド・ADR-013）。
 

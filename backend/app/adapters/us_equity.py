@@ -108,7 +108,8 @@ class UsEquitySource(ABC):
         返す dict のキー: eps/bps/shares_net/dividend_per_share/net_sales/operating_profit/
         profit/gics_sector/industry/company_name/fin_disclosed_date（欠損は None）。
         加えて YoY 素（revenue_growth_yoy/earnings_growth_yoy）も拾えた範囲で含める（後続ウェーブ
-        が採否を決める＝ADR-055・リスク1）。
+        が採否を決める＝ADR-055・リスク1）。テーマタグの信号源として business_summary
+        （事業説明テキスト・素のまま）も含める（ADR-050 段階A・欠損は None）。
         """
         raise NotImplementedError
 
@@ -254,7 +255,9 @@ class YahooUsEquitySource(UsEquitySource):
         operatingMargins × totalRevenue で**近似**する（近似である旨を明記＝ADR-014・リスク2）。
         YoY 素（revenue_growth_yoy/earnings_growth_yoy）は `.info` 提供の率をそのまま拾って渡す
         （採否は後続ウェーブ＝ADR-055・リスク1）。`fin_disclosed_date` は `.info` に決算開示日が
-        無いため None（後続ウェーブで取得日等を充てる判断）。
+        無いため None（後続ウェーブで取得日等を充てる判断）。business_summary は
+        `.info.longBusinessSummary` を素のまま渡す（既に短く compact 化不要＝ADR-050 段階A・
+        テーマタグの信号源。欠損は None）。
         """
         self._throttle()
         try:
@@ -287,6 +290,8 @@ class YahooUsEquitySource(UsEquitySource):
             # YoY 素（`.info` 提供の率・採否は後続ウェーブ＝ADR-055・リスク1）。
             "revenue_growth_yoy": _to_float(_first(info, ["revenueGrowth"])),
             "earnings_growth_yoy": _to_float(_first(info, ["earningsGrowth"])),
+            # テーマタグの信号源（`.info.longBusinessSummary` 素のまま・ADR-050 段階A）。
+            "business_summary": _first(info, ["longBusinessSummary"]),
         }
 
 

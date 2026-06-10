@@ -174,6 +174,16 @@ class Settings(BaseSettings):
     # と長時間メモリ滞留を避ける（差分カーソルは全銘柄共通＝fetch_quotes 同型・ADR-018）。
     us_quotes_batch_size: int = 50
 
+    # --- テーマタグ（ADR-050 改訂・段階A・grounded 事前タグ） ---
+    # 夜あたりタグ付け本数の天井（ADR-033 の cadence 流用・暴走防止）。約 6000 銘柄の US
+    # ユニバースを約 40 夜で一周するローテ（未タグ→説明変化→古い順の優先はクエリ側が担う）。
+    theme_tagging_nightly_max: int = 150
+    # stock_themes の時間窓 prune（最終再確認 last_seen_at からの日数）。どの再タグにも
+    # 再確認されなかったタグだけ枯らす（UPSERT＋bump と対の設計・ADR-050）。
+    # 不変条件: theme_prune_days はローテ一周日数（ユニバース数 ÷ theme_tagging_nightly_max）
+    # より十分大きく保つこと（一周しきる前に健全なタグが prune される事故防止）。
+    theme_prune_days: int = 90
+
     # --- 銘柄別調査 cadence（夜の巡回・ADR-033） ---
     # watchlist の interval_days で各銘柄の調査間隔を持ち、夜あたりの処理本数は天井で抑える。
     # 固定 N=3 を廃し、暴走防止の上限として残す（投資 dossier 巡回ジョブが消費する）。

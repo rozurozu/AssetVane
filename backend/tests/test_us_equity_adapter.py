@@ -1,7 +1,8 @@
 """UsEquityAdapter / UsEquitySource の単体テスト（ネット非依存・Phase 7(B-1)・ADR-010/039）。
 
 担保: NASDAQ Trader directory パーサの普通株抽出・is_etf 判定・フッタ行除去（fetch_universe）／
-`.info` の内部列正規化・欠損→None・operating_profit 近似・YoY 素の受け渡し（fetch_fundamentals）／
+`.info` の内部列正規化・欠損→None・operating_profit 近似・YoY 素の受け渡し・business_summary
+（`.info.longBusinessSummary` 素のまま・ADR-050 段階A）の受け渡し（fetch_fundamentals）／
 OHLCV の内部列正規化（fetch_quotes）／ファサードが UsEquityNotSupported ソースをスキップして次へ
 回すこと。実 API（yfinance/NASDAQ）は叩かず、サンプル text/dict と fake fetch を注入する
 （testing-strategy）。
@@ -88,6 +89,7 @@ def test_fetch_fundamentals_normalizes_info_fields() -> None:
         "netIncomeToCommon": 100_000_000_000,
         "revenueGrowth": 0.08,
         "earningsGrowth": 0.11,
+        "longBusinessSummary": "Apple Inc. designs, manufactures, and markets smartphones.",
     }
     source = YahooUsEquitySource(fetch_info=lambda _s: info)
     snap = source.fetch_fundamentals("AAPL")
@@ -106,6 +108,8 @@ def test_fetch_fundamentals_normalizes_info_fields() -> None:
     # YoY 素は `.info` 提供の率をそのまま受け渡す（採否は後続ウェーブ）。
     assert snap["revenue_growth_yoy"] == pytest.approx(0.08)
     assert snap["earnings_growth_yoy"] == pytest.approx(0.11)
+    # business_summary は `.info.longBusinessSummary` を素のまま渡す（ADR-050 段階A）。
+    assert snap["business_summary"] == "Apple Inc. designs, manufactures, and markets smartphones."
 
 
 def test_fetch_fundamentals_missing_fields_become_none() -> None:
@@ -121,6 +125,7 @@ def test_fetch_fundamentals_missing_fields_become_none() -> None:
     assert snap["operating_profit"] is None  # margin/revenue が無いので近似不可
     assert snap["fin_disclosed_date"] is None
     assert snap["revenue_growth_yoy"] is None
+    assert snap["business_summary"] is None  # longBusinessSummary 欠損は None（捏造しない）
 
 
 def test_fetch_quotes_normalizes_ohlcv() -> None:

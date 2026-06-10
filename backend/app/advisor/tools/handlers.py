@@ -35,10 +35,13 @@ from app.advisor.tools.schemas import (
     GetNewsContextArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
+    GetStockThemesArgs,
     GetUsValuationArgs,
     GetValuationArgs,
     InvestigateStockArgs,
+    ListThemesArgs,
     OptimizePortfolioArgs,
+    ScreenByThemeArgs,
     ScreenStocksArgs,
     ScreenUsValuationArgs,
     ScreenValuationArgs,
@@ -53,6 +56,7 @@ from app.quant import (
     compute_portfolio_metrics,
     optimize_portfolio,
 )
+from app.reference.gics_sectors import normalize_gics_sector
 from app.services.fund_holdings import value_fund_holdings
 from app.services.news import build_news_context, search_news_corpus
 from app.services.policy import get_policy
@@ -865,4 +869,99 @@ async def handle_get_lead_lag(args: dict[str, object]) -> dict[str, Any]:
         }
     except Exception as exc:
         logger.exception("handle_get_lead_lag 失敗")
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# テーマタグ Tool（ADR-050 段階A）
+# ---------------------------------------------------------------------------
+
+
+async def handle_list_themes(args: dict[str, object]) -> dict[str, Any]:
+    """list_themes（ADR-050 改訂・段階A）。テーマ語彙の目録＋所属銘柄数を返す。
+
+    repo.list_themes_with_counts は name 昇順で返すが、語彙 discovery では「所属の多い
+    テーマ」から見えるほうが有用なので、handler 側で n_stocks 降順（同数は name 昇順）に
+    並べ替えてから limit を切る。near_duplicate_of は重複候補フラグ（自動マージはしない・
+    候補提示のみ）。戻りはテーマ所属の事実のみで数値指標は返さない（ADR-014）。
+    """
+    try:
+        limit = ListThemesArgs.model_validate(args).limit
+        with get_engine().connect() as conn:
+            rows = repo.list_themes_with_counts(conn)
+        rows.sort(key=lambda r: (-int(r["n_stocks"]), r["name"]))
+        if limit is not None and limit > 0:
+            rows = rows[:limit]
+        items = [
+            {
+                "name": r["name"],
+                "n_stocks": r["n_stocks"],
+                "near_duplicate_of": r.get("near_duplicate_of"),
+                "first_seen_at": r.get("first_seen_at"),
+            }
+            for r in rows
+        ]
+        return {"count": len(items), "items": items}
+    except Exception as exc:
+        logger.exception("handle_list_themes 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_stock_themes(args: dict[str, object]) -> dict[str, Any]:
+    """get_stock_themes（ADR-050 改訂・段階A）。1 銘柄のテーマタグ一覧を返す。
+
+    repo.get_stock_themes（theme_name 昇順）の橋渡し。タグ 0 件は「未タグ」という事実なので
+    error にせず found=False＋空 themes で返す（ループを落とさない・get_dossier の空ドシエと
+    同じ流儀）。戻りはテーマ所属の事実のみ（ADR-014）。
+    """
+    try:
+        a = GetStockThemesArgs.model_validate(args)
+        with get_engine().connect() as conn:
+            rows = repo.get_stock_themes(conn, a.market, a.code)
+        theme_rows = [
+            {
+                "theme_name": r["theme_name"],
+                "first_assigned_at": r.get("first_assigned_at"),
+                "last_seen_at": r.get("last_seen_at"),
+            }
+            for r in rows
+        ]
+        return {
+            "market": a.market,
+            "code": a.code,
+            "found": bool(theme_rows),
+            "themes": theme_rows,
+        }
+    except Exception as exc:
+        logger.exception("handle_get_stock_themes 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_screen_by_theme(args: dict[str, object]) -> dict[str, Any]:
+    """screen_by_theme（ADR-050 改訂・段階A）。テーマ所属銘柄を列挙する。
+
+    repo.screen_stocks_by_theme の橋渡し。gics_sector は normalize_gics_sector で表記揺れ
+    （正式 GICS 名・大小文字）を Yahoo canonical に寄せてから渡す。11 分類のどれにも正規化
+    できない入力は素通しして exact 一致に委ねる（フィルタを黙って外して全件返すより、
+    0 件で「業種ラベルが違う」と LLM に伝わるほうが安全）。
+    戻り行は market/code/company_name/sector/last_seen_at のテーマ所属の事実のみ＝
+    バリュエーション数値は返さない（ADR-014。数値は get_valuation / get_us_valuation 併用）。
+    """
+    try:
+        a = ScreenByThemeArgs.model_validate(args)
+        gics = a.gics_sector
+        if gics is not None:
+            gics = normalize_gics_sector(gics) or gics
+        with get_engine().connect() as conn:
+            rows = repo.screen_stocks_by_theme(
+                conn,
+                a.theme,
+                market=a.market,
+                sector17_code=a.sector17_code,
+                gics_sector=gics,
+                limit=a.limit,
+            )
+        return {"theme": a.theme, "count": len(rows), "items": rows}
+    except Exception as exc:
+        logger.exception("handle_screen_by_theme 失敗")
         return {"error": str(exc)}

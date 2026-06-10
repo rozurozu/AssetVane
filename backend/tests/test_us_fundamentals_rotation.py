@@ -2,8 +2,9 @@
 
 担保: list_us_symbols_for_fundamentals が「未取得最優先→古い順」で limit 件返すこと・ジョブが
 各銘柄の fetch_meta['us_fundamentals:<symbol>'] を前進させること・YoY 率など us_stocks に列の無い
-キーを書き込まず財務素だけ partial update すること。fake adapter で実 HTTP に出ない
-（testing-strategy）。
+キーを書き込まず財務素だけ partial update すること・business_summary が非空のときだけ
+company_descriptions へ相乗り保存されること（ADR-050 段階A・捏造しない＝ADR-014）。
+fake adapter で実 HTTP に出ない（testing-strategy）。
 """
 
 from __future__ import annotations
@@ -115,3 +116,45 @@ def test_partial_failure_keeps_going(temp_db, monkeypatch) -> None:
         aaa = repo.get_us_stock(conn, "AAA")
     assert bad_meta is not None and bad_meta["last_attempt_ok"] == 0  # 失敗を記録
     assert aaa["eps"] == 5.0  # 成功した銘柄は焼けている
+
+
+def test_business_summary_upserted_to_company_descriptions(temp_db, monkeypatch) -> None:
+    """business_summary 非空の銘柄だけ company_descriptions へ相乗り保存（ADR-050 段階A）。
+
+    欠損/空文字列の銘柄は書かない（捏造しない＝ADR-014）。保存行は market='US'・
+    source='yfinance'・disclosed_date/doc_id は NULL（US は provenance を持たない）。
+    business_summary は us_stocks には流れない（_US_STOCKS_FUNDAMENTAL_COLS 外で捨てられる）。
+    """
+    repo.upsert_us_stocks(
+        [
+            {"symbol": "AAA", "company_name": "A", "is_etf": 0, "updated_at": "t"},
+            {"symbol": "BBB", "company_name": "B", "is_etf": 0, "updated_at": "t"},
+            {"symbol": "CCC", "company_name": "C", "is_etf": 0, "updated_at": "t"},
+        ]
+    )
+    monkeypatch.setattr(settings, "us_fundamentals_nightly_max", 10)
+
+    fake = _FakeAdapter(
+        {
+            "AAA": _info("Apple A", business_summary="Apple A designs smartphones."),
+            "BBB": _info("Bee B"),  # business_summary 欠損 → 書かれない
+            "CCC": _info("Cee C", business_summary="   "),  # 空白のみ → 書かれない
+        }
+    )
+    result = fetch_us_fundamentals.run(adapter=fake)  # type: ignore[arg-type]
+    assert result.ok is True
+    assert result.rows == 3
+
+    with get_engine().connect() as conn:
+        aaa_desc = repo.get_company_description(conn, "US", "AAA")
+        bbb_desc = repo.get_company_description(conn, "US", "BBB")
+        ccc_desc = repo.get_company_description(conn, "US", "CCC")
+    assert aaa_desc is not None
+    assert aaa_desc["description_text"] == "Apple A designs smartphones."
+    assert aaa_desc["source"] == "yfinance"
+    assert aaa_desc["disclosed_date"] is None
+    assert aaa_desc["doc_id"] is None
+    assert aaa_desc["fetched_at"]  # テキスト最終変化時刻が入る
+    # 欠損・空白のみの銘柄は書かれない（捏造しない・ADR-014）。
+    assert bbb_desc is None
+    assert ccc_desc is None

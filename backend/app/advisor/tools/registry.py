@@ -27,10 +27,13 @@ from app.advisor.tools.schemas import (
     GetNewsContextArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
+    GetStockThemesArgs,
     GetUsValuationArgs,
     GetValuationArgs,
     InvestigateStockArgs,
+    ListThemesArgs,
     OptimizePortfolioArgs,
+    ScreenByThemeArgs,
     ScreenStocksArgs,
     ScreenUsValuationArgs,
     ScreenValuationArgs,
@@ -308,6 +311,46 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(ScreenUsValuationArgs),
         handler=handlers.handle_screen_us_valuation,
+        min_phase=7,
+    ),
+    # --- ADR-050 段階A（テーマタグ）---
+    "list_themes": ToolDef(
+        name="list_themes",
+        description=(
+            "テーマ語彙の目録（canonical テーマ名・所属銘柄数 n_stocks・重複候補フラグ"
+            " near_duplicate_of）を取得する。テーマ語彙の discovery 用＝テーマ名を当て推量せず、"
+            "get_stock_themes / screen_by_theme の前に必ずここで実在の語彙を確認する"
+            "（screen_by_theme はここの canonical 名との exact 一致でしか引けない）。"
+            "near_duplicate_of が付くテーマは近接の既存テーマの重複候補（自動マージはされない）。"
+        ),
+        parameters=_schema(ListThemesArgs),
+        handler=handlers.handle_list_themes,
+        min_phase=7,
+    ),
+    "get_stock_themes": ToolDef(
+        name="get_stock_themes",
+        description=(
+            "指定銘柄（market: JP=5桁コード / US=ティッカー）に付いたテーマタグの一覧を取得する。"
+            "タグは実在の事業説明テキスト（米株 longBusinessSummary・JP は EDINET 有報"
+            "「事業の内容」）に grounded に付与されたもの＝社名からの名前推測ではない"
+            "（ADR-050）。銘柄のテーマ所属・物色文脈を語る前に呼ぶ。未タグは found:false で返る。"
+        ),
+        parameters=_schema(GetStockThemesArgs),
+        handler=handlers.handle_get_stock_themes,
+        min_phase=7,
+    ),
+    "screen_by_theme": ToolDef(
+        name="screen_by_theme",
+        description=(
+            "テーマ株スクリーニング＝指定テーマ（list_themes の canonical 名・exact 一致）に"
+            "所属する銘柄を列挙する。market（JP/US）・sector17_code（JP の TOPIX-17）・"
+            "gics_sector（US の GICS 相当英語ラベル）で絞れる（業種は日米で別体系＝ADR-053）。"
+            "競合比較は専用 Tool がないため get_stock_themes→screen_by_theme（同セクター絞り）の"
+            "合成で行う。戻りはテーマ所属の事実のみで数値なし＝バリュエーション等の数値が"
+            "要るときは get_us_valuation / get_valuation 等を併用する（ADR-014）。"
+        ),
+        parameters=_schema(ScreenByThemeArgs),
+        handler=handlers.handle_screen_by_theme,
         min_phase=7,
     ),
 }

@@ -181,16 +181,17 @@
 
 ---
 
-## テーマタグ（全ユニバース grounded 事前タグ）— 設計確定・未着手（[ADR-050](decisions.md) 改訂・[ADR-056](decisions.md)）
+## テーマタグ（全ユニバース grounded 事前タグ）— 段階 A 実装済み・B/C 未着手（[ADR-050](decisions.md) 改訂・[ADR-056](decisions.md)）
 
 業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で **JP＋US の全ユニバースを実在テキストに grounded で事前タグ付け**し、「テーマで引く」（未調査銘柄・米株も）を実現する。**名前推測は禁止・`code`/`symbol` を同一性として渡す・根拠が無ければタグを付けない**（[ADR-050](decisions.md)）。重さが桁違いなので段階化する。
 
-### 段階 A: 米株テーマ（最速で価値・EDINET 不要）
-- 米株の `.info.longBusinessSummary` を `company_descriptions` に保存（信号源）。
-- `themes` 目録＋`stock_themes` 台帳＋grounded タガー（compact プロフィール＋code 同一性で LLM 判定）＋語彙 reconcile（プロンプト照合＋embedding 近接＝[ADR-045](decisions.md) 流用）＋夜間 `embed_themes`。
-- 種テーマを `app/reference/` に seed（[ADR-053](decisions.md) 参照知識層）。
-- 消費 Tool 3 本（`list_themes`/`get_stock_themes`/`screen_by_theme`・[advisor.md](advisor.md)）。
-- **完了条件（A）**: 米株を `screen_by_theme("AI需要")` 等でテーマ横断に引け、各タグが実在の事業概要に grounded（名前推測でない）。
+### 段階 A: 米株テーマ（最速で価値・EDINET 不要）— **実装済み（2026-06-10）**
+- 米株の `.info.longBusinessSummary` を `company_descriptions` に保存（信号源）。✅ `fetch_us_fundamentals` 相乗り（`.info` 二重取得回避）。
+- `themes` 目録＋`stock_themes` 台帳＋grounded タガー（compact プロフィール＋code 同一性で LLM 判定・evidence の本文照合で grounding 検証）＋語彙 reconcile（プロンプト照合＋embedding 近接＝[ADR-045](decisions.md) 流用）＋夜間 `embed_themes`。✅ migration `0018_themes`・`advisor/theme_tagger.py`・夜間 `tag_us_themes`（夜あたり天井 `theme_tagging_nightly_max=150`・末尾で時間窓 prune `theme_prune_days=90`）。
+- 種テーマを `app/reference/` に seed（[ADR-053](decisions.md) 参照知識層）。✅ `reference/theme_seeds.py`（44 個・毎晩冪等投入）。
+- 消費 Tool 3 本（`list_themes`/`get_stock_themes`/`screen_by_theme`・[advisor.md](advisor.md)）。✅ min_phase=7 で露出済み（業種絞りは JP=`sector17_code`/US=`gics_sector` の別引数＝[ADR-053](decisions.md)）。
+- 一括バックフィル: `uv run python -m app.scripts.backfill_themes`（説明取得→タグ付け・中断再開可・`--retag-all`/`--descriptions-only`/`--limit`）。**初回実行は未**（LLM コスト発生・夜間バッチ時間帯を避けて手動実行）。
+- **完了条件（A）**: 米株を `screen_by_theme("AI需要")` 等でテーマ横断に引け、各タグが実在の事業概要に grounded（名前推測でない）。→ **コードは達成・実データはバックフィル実行後に充足**。
 
 ### 段階 B: JP 調査済みのオーバーレイ
 - `investigate_stock` の JP 調査済み銘柄に、ドシエ/ニュースを根拠としたリッチなテーマを**オーバーレイ**（UPSERT＋`last_seen_at`・ユニバースタガーとクロバーしない）。

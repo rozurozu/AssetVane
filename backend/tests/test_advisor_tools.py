@@ -87,6 +87,10 @@ def test_registry_handlers_are_registered() -> None:
         # Phase 7(B-1): 米国株バリュエーション（min_phase=7・ADR-039/048/055）。
         "get_us_valuation",
         "screen_us_valuation",
+        # ADR-050 段階A: テーマタグ（min_phase=7）。
+        "list_themes",
+        "get_stock_themes",
+        "screen_by_theme",
     }
     assert set(REGISTRY) == expected
 
