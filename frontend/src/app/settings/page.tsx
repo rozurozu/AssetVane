@@ -8,6 +8,7 @@ import {
   getBatchStatus,
   getHealth,
   runBatch,
+  runEdinetDifferential,
   sendDiscordTest,
   sendJquantsTest,
   stopBatch,
@@ -25,6 +26,7 @@ const ENV_LABELS: { key: string; label: string }[] = [
   { key: "jquants_api_key", label: "J-Quants API キー" },
   { key: "llm_api_key", label: "LLM API キー" },
   { key: "discord_webhook_url", label: "Discord Webhook URL（通知）" },
+  { key: "edinet_api_key", label: "EDINET API キー（テーマタグ段階C）" },
 ];
 
 /** started_at（ISO8601・UTC）からの経過分。未走行・解析不能は null。 */
@@ -100,6 +102,25 @@ export default function SettingsPage() {
       setBatchNote(e instanceof Error ? e.message : String(e));
     } finally {
       setStopBusy(false);
+    }
+  }
+
+  // EDINET 差分タグ付け（テーマタグ段階C・ADR-056）。夜間と同じ差分を run_jobs で 1 回回す。
+  // 進捗は上のバッチ状態ポーリングに相乗りで映る（同じ state・ADR-011/036）。
+  const [edinetBusy, setEdinetBusy] = useState(false);
+  const [edinetNote, setEdinetNote] = useState<string | null>(null);
+
+  async function onRunEdinet() {
+    setEdinetBusy(true);
+    setEdinetNote(null);
+    try {
+      await runEdinetDifferential();
+      setEdinetNote("EDINET 差分タグ付けを起動したのだ。下の夜間バッチ進捗で追えるのだ。");
+    } catch (e) {
+      // 409（実行中）も ApiError の message で拾って表示する。
+      setEdinetNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEdinetBusy(false);
     }
   }
 
@@ -246,6 +267,25 @@ export default function SettingsPage() {
             </p>
           )}
           {batchNote && <p className="mt-2 text-[12px] text-ink-muted">{batchNote}</p>}
+        </Card>
+
+        {/* EDINET 差分タグ付け（テーマタグ段階C・ADR-056）。夜間と同じ差分を run_jobs で 1 回。 */}
+        <Card title="EDINET 差分タグ付け">
+          <p className="mb-2 text-[12px] text-ink-muted">
+            EDINET 有報「事業の内容」を取り込み（提出日クロール差分）→ JP テーマを grounded
+            タグ付けまで 1 回走らせる。EDINET API キーの設定が必要なのだ。初回の全銘柄バックフィル
+            （約15ヶ月遡及・LLM コスト大）は <code>app.scripts.backfill_edinet</code>{" "}
+            で手動実行するのだ。
+          </p>
+          <button
+            type="button"
+            onClick={onRunEdinet}
+            disabled={edinetBusy || running}
+            className="rounded-md border border-hairline bg-surface-2 px-3 py-1.5 text-[13px] font-medium hover:bg-surface-3 disabled:opacity-50"
+          >
+            {edinetBusy ? "起動中…" : "EDINET 差分を今すぐ実行"}
+          </button>
+          {edinetNote && <p className="mt-2 text-[12px] text-ink-muted">{edinetNote}</p>}
         </Card>
 
         {/* Discord 疎通テスト（冪等回避＝毎回飛ぶ・ADR-011） */}

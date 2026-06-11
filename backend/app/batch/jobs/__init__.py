@@ -18,6 +18,7 @@ from app.batch.jobs import (
     calc_valuation,
     embed_news,
     embed_themes,
+    fetch_edinet_descriptions,
     fetch_financials,
     fetch_fund_navs,
     fetch_general_news,
@@ -74,9 +75,14 @@ NIGHTLY_JOBS = [
     fetch_sector_news.run,
     run_advisor.run,  # Phase 3: 事実が揃ってから夜の分析AI を回す（phase3-spec.md §5）
     investigate_dossier.run,  # Phase 4: watchlist を古い順に巡回しドシエ調査（phase4-spec.md §6）
-    # ADR-050 段階B: JP 調査済みドシエのテーマ grounded タグ付け。investigate_dossier が
-    # company_descriptions(JP, source='dossier') を更新した直後に置き、当夜投資調査された銘柄の
-    # 説明変化を同じ夜にタグ付けまで反映する（US と非対称＝JP の信号源は後段で生まれるため）。
+    # ADR-056 段階C: EDINET 有報「事業の内容」を JP 全ユニバースへ取り込む（提出日クロール差分）。
+    # investigate_dossier（dossier を書く）の直後・tag_jp_themes（説明を食う）の直前に置き、JP の
+    # description 書き手を dossier→edinet の優先順に並べる（既存 dossier は事前 skip で残す）。
+    # 当夜埋めた company_descriptions(JP,'edinet') を直後の tag_jp_themes が source 不問で拾う。
+    fetch_edinet_descriptions.run,
+    # ADR-050 段階B/C: JP テーマの grounded タグ付け。investigate_dossier（dossier）＋
+    # fetch_edinet_descriptions（edinet）が company_descriptions(JP) を更新した直後に置き、当夜
+    # 書かれた説明変化を同じ夜にタグ付けまで反映する（US と非対称＝JP の信号源は後段で生まれる）。
     # embed_themes より前に置き、当夜の新テーマ語彙が後続の埋め込み reconcile に乗る順序を保つ。
     tag_jp_themes.run,
     # ADR-045: 全ニュース書込後に embedding が null/モデル不一致の行を埋める（意味検索の素地）。

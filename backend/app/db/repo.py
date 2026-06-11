@@ -160,6 +160,17 @@ def list_stock_codes(conn: Connection) -> list[str]:
     return list(rows)
 
 
+def list_jp_universe_codes(conn: Connection) -> set[str]:
+    """JP 普通株（ETF/REIT 除外）の証券コード集合を返す（EDINET secCode 突合用・ADR-056 段階C）。
+
+    EDINET 書類一覧クロールで拾った secCode（5 桁）がこの集合に在れば取り込み対象、無ければ skip
+    （REIT/ファンド/非上場提出を落とす）。is_etf=1 を除外（NULL は普通株扱い＝coalesce）。
+    set で返すのは O(1) 突合のため（クロールは 1 日数百件 × 多数日を回す）。
+    """
+    stmt = select(stocks.c.code).where(func.coalesce(stocks.c.is_etf, 0) == 0)
+    return set(conn.execute(stmt).scalars().all())
+
+
 def get_max_financial_disclosed_date(conn: Connection) -> str | None:
     """SELECT MAX(disclosed_date) FROM financials（fetch_financials の自己修復用・ADR-031）。"""
     return conn.execute(select(func.max(financials.c.disclosed_date))).scalar()
@@ -1949,7 +1960,7 @@ def screen_us_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[st
 # investigate オーバーレイ）が共存する。テーマは定性タグで数値を持たない（ADR-014）。
 
 
-def _company_description_upsert_stmt(values: dict[str, Any]):
+def _company_description_upsert_stmt(values: dict[str, Any], *, protect_dossier: bool = False):
     """company_descriptions の冪等 UPSERT 文を組む（W1/W2 共有・ADR-050/056）。
 
     **description_text が既存と同一なら何も更新しない**（DO UPDATE の WHERE 条件で弾く）。
@@ -1958,31 +1969,49 @@ def _company_description_upsert_stmt(values: dict[str, Any]):
     list_us/jp_codes_for_theme_tagging の優先順②の判定材料）。同一判定は NULL 安全
     （is_distinct_from＝SQLite では `IS NOT`。既存が NULL でも新テキストで更新できる）。
     fetched_at 未指定なら UTC now を補完する。
+
+    protect_dossier=True（段階C の EDINET 書き込み）: 既存が source='dossier'（JP 調査済み）の
+    ときは上書きしない。dossier ⊇ EDINET（ドシエは EDINET の事業の内容＋ニュース＋財務から組まれ
+    包含する）ので、ユニバースベースラインの edinet で調査済みオーバーレイを潰さない（ADR-050 実装
+    メモ「dossier 行があれば edinet で上書きしない」）。edinet→edinet 更新は通る（NULL 安全＝
+    既存 source が NULL でも更新できる）。dossier 書き込み（W2・段階B）は無条件のまま勝つ。
     """
     values = dict(values)
     values.setdefault("fetched_at", datetime.now(UTC).isoformat())
     stmt = sqlite_insert(company_descriptions).values(**values)
     update_cols = ("source", "description_text", "disclosed_date", "doc_id", "fetched_at")
+    where = company_descriptions.c.description_text.is_distinct_from(stmt.excluded.description_text)
+    if protect_dossier:
+        where = and_(where, company_descriptions.c.source.is_distinct_from("dossier"))
     return stmt.on_conflict_do_update(
         index_elements=["market", "code"],
         set_={c: stmt.excluded[c] for c in update_cols if c in values},
-        where=company_descriptions.c.description_text.is_distinct_from(
-            stmt.excluded.description_text
-        ),
+        where=where,
     )
 
 
-def upsert_company_description(row: dict[str, Any]) -> int:
+def upsert_company_description(row: dict[str, Any], *, protect_dossier: bool = False) -> int:
     """company_descriptions を (market, code) で冪等 UPSERT する（ADR-050/056・W1）。
 
     バッチ（fetch_us_fundamentals 等）からの単発 UPSERT 用。冪等性（同一テキストは fetched_at
     据え置き）は _company_description_upsert_stmt に集約し W2 版と共有する。
-    返り値は影響行数（1=新規 or テキスト変化で更新／0=同一テキストで据え置き）。
+    protect_dossier=True は EDINET 書き込み専用ガード（既存 dossier を上書きしない・段階C）。
+    返り値は影響行数（1=新規 or テキスト変化で更新／0=同一テキスト or dossier 保護で据え置き）。
     """
-    stmt = _company_description_upsert_stmt(row)
+    stmt = _company_description_upsert_stmt(row, protect_dossier=protect_dossier)
     with get_engine().begin() as conn:
         result = conn.execute(stmt)
     return result.rowcount or 0
+
+
+def upsert_company_description_edinet(row: dict[str, Any]) -> int:
+    """EDINET 由来の事業説明を (market, code) で冪等 UPSERT する（段階C・ADR-056・dossier 保護）。
+
+    upsert_company_description の薄いラッパで protect_dossier=True を固定する。クロールジョブは
+    要約前に dossier 持ちを事前 skip するが（コスト節約）、ここでも保険として既存 dossier を
+    上書きしない二重防御（書き込み順の race・将来の経路変更に対する安全弁・ADR-050 実装メモ）。
+    """
+    return upsert_company_description(row, protect_dossier=True)
 
 
 def upsert_company_description_tx(

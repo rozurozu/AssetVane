@@ -42,21 +42,32 @@ class JobResult:
 
 
 def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
-    """夜間バッチを実行し JobResult のリストを返す（spec §3.3）。
+    """夜間バッチ（NIGHTLY_JOBS 全体）を実行し JobResult のリストを返す（spec §3.3）。
 
     full_backfill=True: fetch_meta を無視して BACKFILL_YEARS 分を頭から取り直す（初回/復旧）。
     False（既定）: fetch_meta['daily_quotes'] の翌営業日から today まで差分取得。
-    `lock.acquire()` で囲み、ok=False が 1 件でもあれば notify.error() を 1 度だけ呼ぶ。
-    ロック競合（BatchAlreadyRunning）はそのまま送出する（cron はログ・/batch/run は 409 に翻訳）。
+    実体は run_jobs（脳の本体）に委譲する。NIGHTLY_JOBS の import は循環回避で関数内に置く。
+    """
+    from app.batch.jobs import NIGHTLY_JOBS
+
+    return run_jobs(NIGHTLY_JOBS, label="夜間バッチ", full_backfill=full_backfill)
+
+
+def run_jobs(
+    jobs: list[object], *, label: str = "バッチ", full_backfill: bool = False
+) -> list[JobResult]:
+    """ジョブ列を順に実行し JobResult のリストを返す（脳の本体・ADR-011「1つの脳・2つの起動口」）。
+
+    run_nightly（NIGHTLY 全体）と、部分ジョブ列の起動口（/settings の EDINET 差分タグ付け＝
+    fetch_edinet_descriptions + tag_jp_themes）が共有する。`lock.acquire()` で囲み多重起動を防ぎ、
+    ok=False が 1 件でもあれば notify.error() を 1 度だけ呼ぶ。ロック競合（BatchAlreadyRunning）は
+    そのまま送出する（cron はログ・REST は 409 に翻訳）。
 
     実行状態は `state` モジュール（メモリ singleton・ADR-036）に映し、WebUI が `GET /batch/status`
     で「実行中・今どのジョブ・経過」を見られるようにする。停止は協調キャンセル＝各ジョブの**境界で**
     `state.should_stop()` を見て break する（今のジョブを終えてから止まる）。停止は意図的操作なので
     「正常終了」扱いとし、残ジョブは未実行のまま **Discord エラー通知は鳴らさない**（ADR-036）。
     """
-    # jobs パッケージは JobResult を runner から import するため、循環回避で関数内 import する。
-    from app.batch.jobs import NIGHTLY_JOBS
-
     results: list[JobResult] = []
     stopped = False
     with lock.acquire():
@@ -65,12 +76,13 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
         # バッチ全体の開始を 1 行で残す（cron/手動どちらの起動口でも同じ脳から出る・ADR-011）。
         # 「ここからここまで」を grep で追えるよう、対になる終了ログを後段で出す。
         logger.info(
-            "夜間バッチ開始: %s・ジョブ %d 件",
+            "%s開始: %s・ジョブ %d 件",
+            label,
             "フル取得" if full_backfill else "差分取得",
-            len(NIGHTLY_JOBS),
+            len(jobs),
         )
         try:
-            for job in NIGHTLY_JOBS:
+            for job in jobs:
                 # ジョブ境界で停止要求を確認する（今のジョブを終えてから止まる・ADR-036）。
                 if state.should_stop():
                     stopped = True
@@ -99,7 +111,8 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
     # バッチ全体の終了を 1 行で残す（開始ログと対・経過時間つき）。所要時間がログから直に読める。
     ok_count = sum(1 for r in results if r.ok)
     logger.info(
-        "夜間バッチ終了: %s・%d/%d ジョブ成功・経過 %s",
+        "%s終了: %s・%d/%d ジョブ成功・経過 %s",
+        label,
         "停止により中断" if stopped else "完走",
         ok_count,
         len(results),
@@ -111,7 +124,7 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
         failed = [r for r in results if not r.ok]
         if failed:
             detail = "\n".join(f"- {r.name}: {r.detail}" for r in failed)
-            notify.error("夜間バッチでジョブが失敗", detail)
+            notify.error(f"{label}でジョブが失敗", detail)
     return results
 
 

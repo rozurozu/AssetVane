@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
-from app.batch import lock, run_nightly, state
+from app.batch import lock, run_jobs, run_nightly, state
 
 router = APIRouter(tags=["batch"])
 
@@ -61,6 +61,37 @@ def run_batch(req: BatchRunRequest, background: BackgroundTasks) -> BatchRunResp
         ) from exc
 
     background.add_task(run_nightly, full_backfill=req.full_backfill)
+    return BatchRunResponse(started=True, job_id=None)
+
+
+@router.post("/edinet/run-differential", response_model=BatchRunResponse, status_code=202)
+def run_edinet_differential(background: BackgroundTasks) -> BatchRunResponse:
+    """EDINET 差分タグ付け（取得→cap タグ付け）を非同期で起動し 202 を返す（段階C・ADR-056）。
+
+    /settings からのオンデマンド起動口。夜間と同じ差分（fetch_edinet_descriptions →
+    tag_jp_themes）を run_jobs で回す（ADR-011「1つの脳・2つの起動口」＝run_nightly と同じ
+    lock/state/通知機構を共有）。重い 15ヶ月バックフィルと無キャップ一括タグは app.scripts 手動の
+    まま（コストガード・grill 2026-06-11）。進捗は既存 `GET /batch/status` で見る。
+
+    起動前に flock を非ブロッキングで試し、取れなければ既に実行中なので 409（run_batch 同型）。
+    """
+    # 部分ジョブ列の起動口。NIGHTLY_JOBS 全体の import 循環を避けるため関数内 import する。
+    from app.batch.jobs import fetch_edinet_descriptions, tag_jp_themes
+
+    try:
+        with lock.acquire():
+            pass
+    except lock.BatchAlreadyRunning as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="バッチが既に実行中です。完了後に再度お試しください。",
+        ) from exc
+
+    background.add_task(
+        run_jobs,
+        [fetch_edinet_descriptions.run, tag_jp_themes.run],
+        label="EDINET 差分タグ付け",
+    )
     return BatchRunResponse(started=True, job_id=None)
 
 

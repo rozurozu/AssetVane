@@ -187,6 +187,21 @@ class Settings(BaseSettings):
     # より十分大きく保つこと（一周しきる前に健全なタグが prune される事故防止）。
     theme_prune_days: int = 90
 
+    # --- EdinetAdapter（有報「事業の内容」・テーマタグ段階C・ADR-010/050/056） ---
+    # JP 全ユニバースの grounded テーマタグの信号源＝EDINET 有報「事業の内容」。価格・財務は
+    # J-Quants のまま（ADR-008）、EDINET はテキスト専用の additive ソース（ADR-056）。秘密情報は
+    # backend の .env のみ（ADR-005）。直結ハードコード禁止＝値は config 経由で渡す（ADR-010）。
+    edinet_api_key: str = ""  # EDINET API v2 のサブスクリプションキー（無料登録・Subscription-Key）
+    edinet_base_url: str = "https://api.edinet-fsa.go.jp/api/v2"  # 書類一覧/取得 API のベース URL
+    edinet_http_timeout_seconds: float = 30.0  # documents.json / ZIP GET のタイムアウト（秒）
+    edinet_min_interval_seconds: float = 1.0  # 取得スロットル間隔（秒・Free 系に優しく）
+    # 夜あたり要約する有報の天井（ADR-033 同型・暴走と LLM コストの上限）。提出日クロールで拾った
+    # docTypeCode=120 のうち要約まで進める件数を抑える。差分は低 churn なので通常これに達しない。
+    edinet_nightly_max: int = 100
+    # バックフィル script の遡及窓（日数）。約 470 日＝15ヶ月で年次サイクル 1 周＋提出ラグ 3ヶ月を
+    # カバーし、3月決算以外（12月/9月等）も最新有報を 1 本ずつ拾える（ADR-056・grill 2026-06-11）。
+    edinet_backfill_window_days: int = 470
+
     # --- 銘柄別調査 cadence（夜の巡回・ADR-033） ---
     # watchlist の interval_days で各銘柄の調査間隔を持ち、夜あたりの処理本数は天井で抑える。
     # 固定 N=3 を廃し、暴走防止の上限として残す（投資 dossier 巡回ジョブが消費する）。
@@ -238,6 +253,8 @@ class Settings(BaseSettings):
                 ),
                 "required_from_phase": 4,
             },
+            # EDINET 有報の事業の内容（テーマタグ段階C・ADR-056）。未設定なら段階C 取得は機能オフ。
+            "edinet_api_key": {"set": bool(self.edinet_api_key), "required_from_phase": 7},
         }
 
 

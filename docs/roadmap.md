@@ -200,10 +200,12 @@
 - ✅ **「2書き手共存」を reframe**＝company_descriptions は `UNIQUE(market,code)` の1銘柄1テキスト（全市場共通）。調査済み JP は **dossier 優先**（dossier ⊇ EDINET ゆえ共存不要）。段階 C は「dossier 行があれば edinet で上書きしない」で解く（[ADR-050](decisions.md) 実装メモ）。
 - **完了条件（B）**: 調査済み JP 銘柄が `screen_by_theme`/`get_stock_themes(market="JP", code)` で引ける。→ **達成（実データは investigate 実行で随時充足）**。
 
-### 段階 C: EDINET → JP 全ユニバース
-- `EdinetAdapter`（[ADR-056](decisions.md)）＝有報「事業の内容」を取得→要約→`company_descriptions`。
-- バックフィル一括スクリプト（`app.scripts` 流）＋日次差分（新規/変化銘柄＋古い順ローテ＝[ADR-033](decisions.md) cadence）＋`/settings` トリガー＋時間窓 prune。
-- **完了条件（C）**: 未調査 JP 銘柄も `screen_by_theme` で引け、EDINET の事業の内容に grounded。`/settings` から一括/差分タグ付けを起動できる。
+### 段階 C: EDINET → JP 全ユニバース — **実装済み（2026-06-11）**
+- ✅ `EdinetAdapter`（[ADR-056](decisions.md)・`adapters/edinet.py`）＝有報「事業の内容」を取得（書類一覧 type=2／取得 type=5＝CSV ZIP・UTF-16 から `DescriptionOfBusinessTextBlock`）→ 要約（`advisor/edinet_summary`）→ `company_descriptions(JP, source='edinet')`。
+- ✅ **取得モデルは提出日クロール型**（EDINET は提出日でしか一覧を引けない）。クロール core `batch/jobs/fetch_edinet_descriptions.crawl` をバックフィル一括スクリプト（`app.scripts.backfill_edinet`＝約15ヶ月窓・中断再開可）と日次差分（夜間 `fetch_edinet_descriptions.run`＝カーソル `fetch_meta('edinet:crawl')` 翌日〜今日）が共有。NIGHTLY 順は `investigate_dossier`→`fetch_edinet_descriptions`→`tag_jp_themes`。
+- ✅ **dossier 優先 2 段ガード**（事前 skip＋`upsert_company_description_edinet` の `source!='dossier'` ガード）で「dossier 行があれば edinet で上書きしない」。docTypeCode=120 のみ（訂正 130 は対象外）。時間窓 prune は既存 `tag_jp_themes`（`market='JP'`）が担う。
+- ✅ `/settings` トリガー＝`POST /edinet/run-differential`（差分＝EDINET 取得＋cap タグ付けを `run_jobs` でオンデマンド）。重い 15ヶ月バックフィルと無キャップ一括タグは `app.scripts` 手動（コストガード）。
+- **完了条件（C）**: 未調査 JP 銘柄も `screen_by_theme` で引け、EDINET の事業の内容に grounded。`/settings` から差分タグ付けを起動できる。→ **達成（実データは `backfill_edinet`＋夜間差分で充足・初回バックフィルは LLM コストのため手動実行）**。
 
 ---
 

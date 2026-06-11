@@ -631,6 +631,14 @@ export function runBatch(fullBackfill = false): Promise<BatchRunResponse> {
   return postJSON<BatchRunResponse>("/batch/run", { full_backfill: fullBackfill });
 }
 
+/** EDINET 差分タグ付けを手動起動（テーマタグ段階C・POST /edinet/run-differential・ADR-056）。
+ * 夜間と同じ差分（fetch_edinet_descriptions → tag_jp_themes）を run_jobs で回す。進捗は
+ * getBatchStatus で追う（夜間バッチと同じ state・ADR-011/036）。既に実行中なら 409（ApiError）。
+ * 重い 15ヶ月バックフィルは app.scripts.backfill_edinet 手動のまま（コストガード）。 */
+export function runEdinetDifferential(): Promise<BatchRunResponse> {
+  return postJSON<BatchRunResponse>("/edinet/run-differential", {});
+}
+
 /** バッチ実行状態（GET /batch/status・batch.py・ADR-036）。batch.state と 1:1。 */
 export interface BatchStatusResponse {
   running: boolean;

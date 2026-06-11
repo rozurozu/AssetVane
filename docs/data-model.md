@@ -431,7 +431,7 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 - 適時開示（TDnet）は有料アドオンのため後付け。`source='disclosure'` でこのコーパスに入れる（構造が複雑になれば専用テーブルに分離）。
 
 ### テーマタグ — `themes`／`stock_themes`／`company_descriptions`（[ADR-050](decisions.md) 改訂・[ADR-056](decisions.md)）
-業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねる。**全ユニバース（JP＋US）を実在テキストに grounded で事前タグ付け**する（名前推測禁止・[ADR-050](decisions.md)）。テーマは**定性タグで数値でない**（[ADR-014](decisions.md)）。**段階 A（米株）は実装済み（migration `0018_themes`・2026-06-10）**＝US は `fetch_us_fundamentals` 相乗りで `longBusinessSummary` を取り込み、夜間 `tag_us_themes`／`embed_themes` がタグ付け・語彙 reconcile する。**段階 B（JP 調査済み）も実装済み（2026-06-11）**＝`investigate_stock` がドシエ要約を `company_descriptions(JP, source='dossier')` に焼き、夜間 `tag_jp_themes` がタグ付け（説明未変化は LLM を呼ばず last_seen_at だけ bump）。段階 C（EDINET 全ユニバース）は未着手（[roadmap.md](roadmap.md)）。
+業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねる。**全ユニバース（JP＋US）を実在テキストに grounded で事前タグ付け**する（名前推測禁止・[ADR-050](decisions.md)）。テーマは**定性タグで数値でない**（[ADR-014](decisions.md)）。**段階 A（米株）は実装済み（migration `0018_themes`・2026-06-10）**＝US は `fetch_us_fundamentals` 相乗りで `longBusinessSummary` を取り込み、夜間 `tag_us_themes`／`embed_themes` がタグ付け・語彙 reconcile する。**段階 B（JP 調査済み）も実装済み（2026-06-11）**＝`investigate_stock` がドシエ要約を `company_descriptions(JP, source='dossier')` に焼き、夜間 `tag_jp_themes` がタグ付け（説明未変化は LLM を呼ばず last_seen_at だけ bump）。**段階 C（EDINET 全ユニバース）も実装済み（2026-06-11）**＝`EdinetAdapter` が有報「事業の内容」を提出日クロールで取得・要約して `company_descriptions(JP, source='edinet')` に焼き（dossier 行は上書きしない）、既存 `tag_jp_themes` が `source` 不問で拾う。migration 不要（既存列を流用・[ADR-056](decisions.md)）。
 
 **`themes`** — テーマ語彙の目録（JP＋US 横断のグローバル語彙・"AI需要" は市場を跨いで 1 語）。
 
