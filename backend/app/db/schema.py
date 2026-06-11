@@ -183,6 +183,7 @@ asset_snapshots = Table(
     Column("cash_value", Float),
     Column("external_value", Float),
     Column("fund_value", Float),  # 投信評価額合計（ADR-054・0015_funds で追加）
+    Column("us_stock_value", Float),  # 米株評価額合計（JPY 換算後・ADR-057・0019_us_holdings_fx）
     Column("pnl", Float),
 )
 
@@ -569,6 +570,59 @@ us_valuation_snapshots = Table(
     Column("eps_growth_yoy", Float),  # EPS YoY 成長率
     Column("fin_disclosed_date", String),  # 採用した財務の基準日（監査）
     Column("updated_at", String),  # ISO8601（この行を焼いた時刻）
+)
+
+# ===== FX レート・米株保有管理（ADR-057・0019_us_holdings_fx・Phase 7(B-2)） =====
+# Phase 7(B-1) で米株を提示専用に持ったが、JPY 単一前提の資産評価コアには触れなかった。本フェーズで
+# (a) FX 基盤 (b) 米株保有管理 (c) 資産概要合算 を足す。市場分離（ADR-031）は維持＝米株は別テーブル
+# で持ち、合算は資産概要レイヤの FX 換算でのみ行う（AI に計算させない・quant は通貨非依存＝
+# ADR-014/016）。
+
+# FX 日足終値（FxAdapter＝yfinance JPY=X 供給）。(date,pair) を複合主キーにし UPSERT で冪等
+# （ADR-002）。rate は 1 USD あたりの JPY（JPY=X 終値）。FK は張らない（生データ流儀＝index_quotes/
+# fund_navs 同方針）。
+fx_rates = Table(
+    "fx_rates",
+    metadata,
+    Column("date", String, nullable=False),  # 営業日 'YYYY-MM-DD'
+    Column("pair", String, nullable=False),  # 通貨ペア 'USDJPY'
+    Column("rate", Float),  # 1 USD あたりの JPY（JPY=X 終値）
+    PrimaryKeyConstraint("date", "pair", name="pk_fx_rates"),
+    Index("ix_fx_rates_pair", "pair"),
+)
+
+# 米株取引記録（transactions 相当・一次データ。us_holdings はここから導出＝ADR-019/057）。
+# 自分データ（手入力）なので symbol → us_stocks.symbol に FK を張る（誤入力防止・裁定 L-7）。
+# price は約定単価（USD）。fx_rate は約定時 USDJPY（JPY/USD）で、取得時レートを記録して原価を JPY
+# 固定する（評価額は現レート → 為替損益が含み損益に乗る厳密含み損益＝ADR-057）。単一ユーザー
+# （ADR-001）ゆえ portfolio_id は持たない（global 保有）。
+us_transactions = Table(
+    "us_transactions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("symbol", String, ForeignKey("us_stocks.symbol"), nullable=False),
+    Column("side", String, nullable=False),  # 'buy' / 'sell'
+    Column("shares", Float, nullable=False),
+    Column("price", Float, nullable=False),  # 約定単価（USD）
+    Column("fee", Float),  # 手数料（USD・任意・avg_cost には含めない）
+    Column("traded_at", String, nullable=False),  # 約定日 'YYYY-MM-DD'
+    Column("fx_rate", Float, nullable=False),  # 約定時 USDJPY（JPY/USD・取得時レート記録）
+    Column("note", String),  # 任意メモ
+    Index("ix_us_transactions_symbol", "symbol"),
+)
+
+# 米株保有（holdings 相当・us_transactions からの導出値。直接編集しない＝ADR-019/057）。
+# symbol に UNIQUE を張り UPSERT キーとする（単一ユーザー・global 保有）。avg_cost は USD 建て移動
+# 平均、avg_cost_jpy は取得時レートで JPY 固定した移動平均原価（為替損益を含み損益に乗せる素）。
+us_holdings = Table(
+    "us_holdings",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("symbol", String, ForeignKey("us_stocks.symbol"), nullable=False),
+    Column("shares", Float, nullable=False),  # 導出: Σbuy.shares − Σsell.shares
+    Column("avg_cost", Float),  # 導出: 移動平均取得単価（USD）
+    Column("avg_cost_jpy", Float),  # 導出: 取得時レートで JPY 固定した移動平均原価
+    UniqueConstraint("symbol", name="uq_us_holdings_symbol"),
 )
 
 # ===== テーマタグ（ADR-050 改訂・ADR-056・0018_themes・data-model.md「テーマタグ」節） =====

@@ -28,6 +28,7 @@ from app.advisor.tools.schemas import (
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     GetStockThemesArgs,
+    GetUsHoldingsArgs,
     GetUsValuationArgs,
     GetValuationArgs,
     InvestigateStockArgs,
@@ -351,6 +352,19 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(ScreenByThemeArgs),
         handler=handlers.handle_screen_by_theme,
+        min_phase=7,
+    ),
+    # --- Phase 7(B-2)（米株保有・FX 換算・ADR-039/057）---
+    "get_us_holdings": ToolDef(
+        name="get_us_holdings",
+        description=(
+            "保有米国株（ティッカー symbol）の株数・取得単価（USD）・最新終値（USD）・"
+            "USDJPY レート・JPY 評価額・JPY 含み損益（為替損益込み）・米株内ウェイトを取得する。"
+            "米株の保有状況・含み損益・日米横断の資産バランスを論じる前に呼ぶ"
+            "（FX/終値未取得の銘柄は評価額 null で返る・捏造しない・ADR-014/057）。"
+        ),
+        parameters=_schema(GetUsHoldingsArgs),
+        handler=handlers.handle_get_us_holdings,
         min_phase=7,
     ),
 }

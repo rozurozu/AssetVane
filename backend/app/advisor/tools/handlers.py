@@ -66,6 +66,7 @@ from app.services.portfolio import (
     portfolio_deviations,
     value_holdings,
 )
+from app.services.us_holdings import value_us_holdings
 
 logger = logging.getLogger(__name__)
 
@@ -604,6 +605,47 @@ async def handle_get_fund_holdings(args: dict[str, object]) -> dict[str, Any]:
         return {"portfolio_id": portfolio_id, "holdings": holdings}
     except Exception as exc:
         logger.exception("handle_get_fund_holdings 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_us_holdings(args: dict[str, object]) -> dict[str, Any]:
+    """get_us_holdings（ADR-057）。米株保有を最新終値×USDJPY で JPY 評価して事実だけ返す。
+
+    routers/us_holdings.py の _build_us_holdings 経路を踏襲（計算経路を一致させる・ADR-014）。
+    Python（value_us_holdings）が JPY 評価額・含み損益・米株内 weight を算出し、
+    LLM には事実だけ渡す（判定はしない）。保有 0・FX/終値未取得は空/None をそのまま通す。
+    AI が日米横断バランスを相談できるように資産概要に米株を乗せる（ADR-057）。
+    """
+    try:
+        with get_engine().connect() as conn:
+            holdings_rows = repo.list_us_holdings(conn)
+            symbols = [h["symbol"] for h in holdings_rows]
+            latest_closes = repo.get_latest_us_closes(conn, symbols) if symbols else {}
+            fx_row = repo.get_latest_fx_rate(conn, "USDJPY")
+            fx_rate = float(fx_row["rate"]) if fx_row is not None else None
+            valued = value_us_holdings(holdings_rows, latest_closes, fx_rate)
+
+        holdings = [
+            {
+                "symbol": h["symbol"],
+                "company_name": h.get("company_name"),
+                "gics_sector": h.get("gics_sector"),
+                "shares": h.get("shares"),
+                "avg_cost": h.get("avg_cost"),
+                "avg_cost_jpy": h.get("avg_cost_jpy"),
+                "last_close": h.get("last_close"),
+                "close_date": h.get("close_date"),
+                "fx_rate": h.get("fx_rate"),
+                "market_value_jpy": h.get("market_value_jpy"),
+                "cost_jpy": h.get("cost_jpy"),
+                "unrealized_pnl_jpy": h.get("unrealized_pnl_jpy"),
+                "weight": h.get("weight"),
+            }
+            for h in valued
+        ]
+        return {"holdings": holdings, "fx_rate": fx_rate}
+    except Exception as exc:
+        logger.exception("handle_get_us_holdings 失敗")
         return {"error": str(exc)}
 
 

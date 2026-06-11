@@ -181,6 +181,10 @@ class GetFundHoldingsArgs(_ToolArgs):
     portfolio_id: int | None = None
 
 
+class GetUsHoldingsArgs(_ToolArgs):
+    """get_us_holdings の引数（ADR-057）。引数なし（単一ユーザー・global 保有・ADR-001）。"""
+
+
 class GetAssetOverviewArgs(_ToolArgs):
     """get_asset_overview の引数（spec §4.4・引数なし）。"""
 

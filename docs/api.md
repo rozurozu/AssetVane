@@ -46,7 +46,7 @@
 | GET | `/portfolio/{id}/metrics` | 相関・シャープ・最大ドローダウン |
 | POST | `/portfolio/{id}/optimize` | policy 制約下の最適比率 |
 | GET | `/portfolio/{id}/backtest` | 過去シミュレーション（現保有 buy&hold vs TOPIX） |
-| GET | `/asset-overview` | 保有・現金・割合・資産推移（遅延注記付き・**`fund_value` を含む**＝[ADR-054](decisions.md)）|
+| GET | `/asset-overview` | 保有・現金・割合・資産推移（遅延注記付き・**`fund_value`・`us_stock_value` を含む**＝[ADR-054](decisions.md)/[ADR-057](decisions.md)）|
 
 ### 投資信託（非上場投信・[ADR-054](decisions.md)）
 
@@ -283,3 +283,41 @@ GET /us-stocks/{symbol} ->
 `GET /us-quotes/{symbol}` は `[{ date, open, high, low, close, volume, adj_close }]`（date 昇順）。
 
 > **AI Tool**: `get_us_valuation`／`screen_us_valuation`（`min_phase=7`・返り値に `market:"US"`/`currency:"USD"` 明示・verdict なし＝[ADR-048](decisions.md) 契約をミラー）。日本株は `get_valuation`/`screen_valuation`（JPY・[advisor.md](advisor.md)）。
+
+---
+
+## 9. 米株保有・FX（Phase 7(B-2)・[ADR-057](decisions.md)）
+
+FX 基盤と米株保有管理。**日本株保有（`/holdings`/`/transactions`）とは別ルート**（単一ユーザー＝`portfolio_id` なし・[ADR-001](decisions.md)）。取引が一次データで保有は導出（[ADR-019](decisions.md)）。数値は USD（原価・約定価格）と JPY（評価額・`avg_cost_jpy`）の両建て。
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| GET | `/us-holdings` | 米株の現在保有一覧（USD/JPY 両評価・含み損益つき）|
+| GET | `/us-transactions` | 米株の取引履歴（新しい順）|
+| POST | `/us-transactions` | 米株取引の記録 → `us_holdings` 再計算。`fx_rate` 解決順: body 明示 → 約定日 FX（`fx_rates` から取得）→ どちらもなければ 400 |
+| PUT | `/us-transactions/{id}` | 米株取引の編集 → 再計算後の保有を返す（存在しない id は 404）|
+| DELETE | `/us-transactions/{id}` | 米株取引の削除 → 再計算後の保有を返す（存在しない id は 404）|
+
+```ts
+interface UsHolding {
+  symbol: string; company_name: string | null;
+  shares: number;
+  avg_cost: number;          // 移動平均取得単価（USD）
+  avg_cost_jpy: number;      // 移動平均取得単価（JPY 固定・約定時 FX）
+  latest_close: number;      // 最新終値（USD）
+  fx_rate: number;           // 評価時 USDJPY（直近の fx_rates 取得値）
+  market_value_jpy: number;  // shares × latest_close × fx_rate
+  unrealized_pnl_jpy: number; // (latest_close × fx_rate - avg_cost_jpy) × shares
+}
+
+interface UsTransactionOut {
+  id: number; symbol: string; company_name: string | null;
+  side: "buy" | "sell"; shares: number;
+  price: number;             // 約定単価（USD）
+  fee: number | null; traded_at: string; fx_rate: number; note: string | null;
+}
+```
+
+`GET /asset-overview` レスポンスに `us_stock_value`（JPY）が追加される（`fund_value` と並ぶ独立スライス）。`allocation` に「米国株」スライスが出る。
+
+> **AI Tool**: `get_us_holdings`（`min_phase=7`）＝米株保有を JPY 評価で返す（日米横断バランス相談用・[ADR-057](decisions.md)）。

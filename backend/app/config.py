@@ -174,6 +174,18 @@ class Settings(BaseSettings):
     # と長時間メモリ滞留を避ける（差分カーソルは全銘柄共通＝fetch_quotes 同型・ADR-018）。
     us_quotes_batch_size: int = 50
 
+    # --- FxAdapter（FX レート・Phase 7(B-2)・ADR-010/057） ---
+    # 米株保有を JPY 資産概要へ合算するための FX 換算基盤。取得源は yfinance JPY=X 日足終値一本
+    # （UsEquityAdapter 同型のフォールバック連鎖の素地を残しつつ当面 yahoo・grill 確定）。秘密情報は
+    # 不要（yfinance は無認証）。直結ハードコード禁止＝値は config 経由で渡す（ADR-010）。
+    fx_source: str = (
+        "yahoo"  # カンマ区切り・優先順（adapters/fx.py の _REGISTRY が解決・未知名は skip）
+    )
+    fx_min_interval_seconds: float = 1.0  # yfinance のリクエスト間隔（秒・Free 系に優しく）
+    fx_http_timeout_seconds: float = (
+        30.0  # 取得タイムアウト（秒・予備＝yfinance 内部 timeout の保険）
+    )
+
     # --- テーマタグ（ADR-050 改訂・段階A・grounded 事前タグ） ---
     # 夜あたりタグ付け本数の天井（ADR-033 の cadence 流用・暴走防止）。約 6000 銘柄の US
     # ユニバースを約 40 夜で一周するローテ（未タグ→説明変化→古い順の優先はクエリ側が担う）。
@@ -233,6 +245,14 @@ class Settings(BaseSettings):
     def us_equity_source_list(self) -> list[str]:
         """カンマ区切りの米株ソース名を優先順リストにする（index_source_list 同型・ADR-039）。"""
         return [s.strip() for s in self.us_equity_source.split(",") if s.strip()]
+
+    @property
+    def fx_source_list(self) -> list[str]:
+        """カンマ区切りの FX ソース名を優先順リストにする（us_equity_source_list 同型・ADR-057）。
+
+        ADR-057（Phase 7(B-2)）。フォールバック連鎖の素地（当面 yahoo 一本）。
+        """
+        return [s.strip() for s in self.fx_source.split(",") if s.strip()]
 
     def env_status(self) -> dict[str, dict[str, object]]:
         """各キーの充足状況を「どの Phase で要るか」付きで返す（/health 用）。

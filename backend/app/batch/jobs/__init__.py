@@ -21,6 +21,7 @@ from app.batch.jobs import (
     fetch_edinet_descriptions,
     fetch_financials,
     fetch_fund_navs,
+    fetch_fx_rates,
     fetch_general_news,
     fetch_index,
     fetch_quotes,
@@ -55,6 +56,12 @@ NIGHTLY_JOBS = [
     # ADR-054: 投信 NAV（基準価額）を取得。snapshot_assets が当日 NAV から fund_value を焼くため、
     # その前に置き NAV を揃える（fetch_index と同様の取得→評価の順序）。
     fetch_fund_navs.run,
+    # ADR-057: FX レート（USDJPY）を取得。snapshot_assets が当夜の FX で us_stock_value を
+    # JPY 換算するため、その前に置き FX を揃える（fetch_fund_navs が NAV を揃えるのと同じ意図）。
+    # ※ プランの「米株ブロック先頭」配置ではなく snapshot_assets の直前に置くことで、当夜の
+    #   FX レートが同夜の snapshot に確実に反映される（米株ブロックは snapshot_assets の後に
+    #   あるため、米株ブロック先頭に置くと当夜 FX が snapshot に間に合わない）。
+    fetch_fx_rates.run,
     snapshot_assets.run,  # Phase 2: 今日の株価確定後に評価額を焼く（phase2-spec.md §3.3）
     # Phase 7(B-1) 米株ブロック・日本株フローと独立（ADR-031/039）。米市場のユニバース/OHLCV/
     # fundamentals/valuation を 1 ブロックで回す（提示専用・JPY コア無改変）。順序は日本株フロー

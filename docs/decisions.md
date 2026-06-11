@@ -469,7 +469,7 @@
   - **キー付きの契約データソース（有償 API）を主にする** → Phase 7(A) の提示用途には過剰でコストもかかる。将来 (B) で精度・銘柄数が要るときにフォールバック連鎖へ足せばよい（[ADR-010](#adr-010-データソースはアダプタ越しにする) の連鎖は後付け可能）。保留。
   - **Phase 7 を分割せず一括実装** → (B) の重さに (A) が引きずられる。却下（分割が本 ADR の主旨）。
   - **scipy を入れて固有分解する** → numpy（`eigh`）＋pandas で足り、依存を増やさない。不採用（追加依存は yfinance のみ）。
-- **(B) への繰り延べ事項（明記）**: 米株スクリーナー `/us-stocks`（[ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離)）・米国個別株（数千・OHLCV・`UsEquityAdapter` 新設）・米国ファンダ源・通貨列・`FxAdapter`・holdings/cash/asset_snapshots の通貨/FX 波及・GICS 分類。これらは (A) のスコープ外で、(B) サブフェーズに送る。
+- **(B) への繰り延べ事項（明記）**: 米株スクリーナー `/us-stocks`（[ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離)）・米国個別株（数千・OHLCV・`UsEquityAdapter` 新設）・米国ファンダ源・通貨列・`FxAdapter`・holdings/cash/asset_snapshots の通貨/FX 波及・GICS 分類。これらは (A) のスコープ外で、(B) サブフェーズに送る。**→ (B-1) は [ADR-055](#adr-055-米株スクリーナーphase-7b-1は-yfinance-一本gics-は-yahoo-infosector-の文字列保持提示専用で-jpy-資産評価コアに触れない) で解消（2026-06-09）。(B-2) FX/保有波及は [ADR-057](#adr-057-phase-7b-2fx-基盤米株保有管理資産概要合算を最小スコープで実装する) で解消（2026-06-11）。**
 - **段階**: **着工（2026-06-07）**。設計確定（grill `snappy-cuddling-scott`・論文 PDF `2026_76.pdf` 読了）。実装は `quant/lead_lag.py`（純関数）・`adapters/index.py`（`YahooIndexSource` 追加・yfinance 依存）・`services/lead_lag.py`・`batch/jobs/calc_lead_lag.py`（`NIGHTLY_JOBS` の `calc_signals` 後・`run_advisor` 前）・`GET /lead-lag` ＋ Tool `get_lead_lag`・frontend `LeadLagWidget`。手法カードは [docs/methods/lead-lag.md](methods/lead-lag.md)（参照知識・リポジトリ markdown）。
 - **関連**: [ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し・フォールバック連鎖）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)／[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（手法はテスト済みコード）・[ADR-008](#adr-008-j-quants-は-v2-を使う)（Free 遅延）・[roadmap.md Phase 7](roadmap.md)・[advisor.md §5](advisor.md)・[docs/methods/lead-lag.md](methods/lead-lag.md)。
 
@@ -790,11 +790,11 @@
   - **(B) を分割せず一括（FX/保有波及まで）実装** → 重い通貨波及に軽い提示が引きずられる。却下（(B-1)/(B-2) 分割が本 ADR の主旨）。
   - **米株を `stocks`/`daily_quotes` に混ぜる** → 通貨/業種分類/財務ソースが食い違い、市場内ランクが無意味になる（[ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離) 市場分離）。却下（別テーブル）。
 - **TODO（落とさない・明示管理）**:
-  - **(B-2)＝FX 換算/保有波及**: 米株保有管理（holdings/transactions の米株対応）・`FxAdapter`・通貨列の holdings/cash/asset_snapshots への波及・日米横断の "both" バランス（portfolio/資産概要レイヤ）。(B-1) で持たなかった currency 列はここで導入する。
+  - **(B-2)＝FX 換算/保有波及**: → **[ADR-057](#adr-057-phase-7b-2fx-基盤米株保有管理資産概要合算を最小スコープで実装する) で実装済み（2026-06-11）**。採用した最小スコープは「`FxAdapter`・`fx_rates`・`us_transactions`/`us_holdings`・`asset_snapshots.us_stock_value`」で、holdings/cash/portfolio metrics の通貨波及は今回含めず将来課題に明示。currency 列の us_stocks 等への追加も見送り。
   - **repo/handler/service の日米 DRY 共通化**: (B-1) は日本株を無改変に保つため**重複を許容**した（`us_stocks.py` ルータ・`screen_us_stocks` 等が日本株版のミラー）。共通化は (B-2) 以降で安定してから詰める。
   - **米株版 25 指標フル充足**: [ADR-048](#adr-048-銘柄バリュエーションroeperpbr基準を-tool事実参照知識カードで持たせる) の横断 TODO（ROA/ROIC 等）を米株でも。`.info` に無い指標は別ソースが要る。
   - **op/eps の YoY を活かす**: `op_growth_yoy`/`eps_growth_yoy` を None でなく実値にするには、財務履歴源（前期 FY 値）を追加して `growth_yoy` 純関数の素を揃える必要がある。`.info` のスナップショット中継では出せない。
-- **段階**: **実装済み（2026-06-09）**。`adapters/us_equity.py`・schema `0017_us_equity`・夜間 4 ジョブ・`routers/us_stocks.py`・AI Tool 2 つ・frontend `/us-stocks` ＋ `/us-stocks/[symbol]`。pytest green。(B-2) は未着手。
+- **段階**: **実装済み（2026-06-09）**。`adapters/us_equity.py`・schema `0017_us_equity`・夜間 4 ジョブ・`routers/us_stocks.py`・AI Tool 2 つ・frontend `/us-stocks` ＋ `/us-stocks/[symbol]`。pytest green。**(B-2) FX/保有波及は [ADR-057](#adr-057-phase-7b-2fx-基盤米株保有管理資産概要合算を最小スコープで実装する) で解消済み（2026-06-11）**。
 - **関連**: [ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（Phase 7(B)・`UsEquityAdapter` 新設の明言）・[ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離)（市場分離・読み取り時ランク・通貨ポリシー）・[ADR-048](#adr-048-銘柄バリュエーションroeperpbr基準を-tool事実参照知識カードで持たせる)（valuation 列・Tool 契約 market/currency・verdict なし）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し・フォールバック連鎖）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（事実は Python・捏造しない）・[ADR-033](#adr-033-銘柄ごとの調査-cadence-は-interval_days-夜あたり天井で律速する)（財務ローテ巡回）・[ADR-009](#adr-009-自動売買はしない提示に徹する)（提示専用）・[data-model.md](data-model.md)・[api.md](api.md)・[roadmap.md Phase 7](roadmap.md)。
 
 ---
@@ -816,3 +816,34 @@
 - **ADR-048 との非衝突**: [ADR-048](#adr-048-銘柄バリュエーションroeperpbr基準を-tool事実参照知識カードで持たせる) が却下したのは「バリュエーション**判断**の外部 SaaS 委譲」。本 ADR は EDINET を**生テキスト源**として使うだけで、数値判断は引き続き quant 純関数が持つ（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)）。判断の委譲ではないため衝突しない。
 - **段階**: **実装済み（2026-06-11）**。[ADR-050](#adr-050-銘柄テーマは実在テキストに-grounded-な全ユニバース事前タグで持つ改訂名前推測を禁じ-edinetlongbusinesssummary-を信号源にする) 段階 C（JP 全ユニバース）として実装＝`EdinetAdapter`（書類一覧 type=2／取得 type=5＝CSV ZIP から `DescriptionOfBusinessTextBlock`）／`advisor/edinet_summary`（要約）／提出日クロール core `batch/jobs/fetch_edinet_descriptions`（夜間差分・カーソル `fetch_meta('edinet:crawl')`・dossier 優先 2 段ガード）／`app.scripts.backfill_edinet`（15ヶ月窓・中断再開可）／`POST /edinet/run-differential`＋`/settings`。pytest green。`secCode`↔`stocks.code`（5桁）直接一致・migration 不要（`company_descriptions` の既存列を流用）。詳細は [ADR-050](#adr-050-銘柄テーマは実在テキストに-grounded-な全ユニバース事前タグで持つ改訂名前推測を禁じ-edinetlongbusinesssummary-を信号源にする) 「実装メモ（段階C・2026-06-11）」。[data-model.md](data-model.md) に `company_descriptions` を同期。
 - **関連**: [ADR-050](#adr-050-銘柄テーマは実在テキストに-grounded-な全ユニバース事前タグで持つ改訂名前推測を禁じ-edinetlongbusinesssummary-を信号源にする)（信号源として消費）・[ADR-008](#adr-008-j-quants-は-v2x-api-key-を使うv1-は使わない)（JP=J-Quants を価格/財務で継続・EDINET は追加）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（アダプタ越し）・[ADR-048](#adr-048-銘柄バリュエーションroeperpbr基準を-tool事実参照知識カードで持たせる)（非衝突）・[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)（要約イディオム）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（数値は quant）・[ADR-005](#adr-005-db-に触るのは-fastapi-だけnextjs-は-ui-専用)（秘密は backend）。
+
+---
+
+## ADR-057: Phase 7(B-2)＝FX 基盤・米株保有管理・資産概要合算を最小スコープで実装する
+
+- **状況/問題**: [ADR-055](#adr-055-米株スクリーナーphase-7b-1は-yfinance-一本gics-は-yahoo-infosector-の文字列保持提示専用で-jpy-資産評価コアに触れない) で (B-2) に繰り延べた「FX 換算・米株保有管理・JPY 資産概要への合算」を実装する。(B-1) が提示専用＝JPY 資産評価コアに一切触れない設計で先行したため、今回はじめて USD 資産を JPY 資産概要と結ぶ。一方、JPY 資産評価コアそのもの（`holdings`/`cash`/`portfolio metrics`/`/optimize`）を大規模改修するのではなく、**資産概要レイヤ（`asset_snapshots` と `/asset-overview`）でのみ合算する**最小スコープに絞る。
+- **決定**:
+  - **スコープを 3 要素に限定する**: (a) FX 基盤（`FxAdapter`・`fx_rates` テーブル・夜間 `fetch_fx_rates`）、(b) 米株保有管理（`us_transactions`・`us_holdings`・`services/us_holdings.py`）、(c) 資産概要合算（`asset_snapshots.us_stock_value` 追加・`/asset-overview` に米株スライス）。**`holdings`/`cash`/`portfolio metrics`/`/optimize` への通貨波及は今回含めない**（[ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離) の市場分離維持）。
+  - **FX 取得源は yfinance `JPY=X` 日足終値**（`FxAdapter`・`adapters/fx.py`・[ADR-055](#adr-055-米株スクリーナーphase-7b-1は-yfinance-一本gics-は-yahoo-infosector-の文字列保持提示専用で-jpy-資産評価コアに触れない) の `UsEquityAdapter` と同型のフォールバック連鎖ファサード・[ADR-010](#adr-010-データソースはアダプタ越しにする)）。テーブル `fx_rates(date, pair, rate)`（`rate` は JPY/USD＝1 USD あたりの円）。config に `fx_source`/`fx_min_interval_seconds`/`fx_http_timeout_seconds`。依存追加なし（yfinance は既出）。
+  - **米株保有の入力は取引ベース**（[ADR-019](#adr-019-保有は取引から導出する-holdings-は-transactions-の射影) と同型）。`us_transactions`（`id`/`symbol`→`us_stocks` FK/`side`/`shares`/`price`〔USD〕/`fee`/`traded_at`/`fx_rate`〔約定時 USDJPY〕/`note`）を一次データとし、`us_holdings`（`symbol` UNIQUE/`shares`/`avg_cost`〔USD〕/`avg_cost_jpy`〔JPY 固定原価〕）を導出する。**[ADR-001](#adr-001-単一ユーザー前提で作る) の単一ユーザー前提ゆえ `portfolio_id` を持たない**（JPY 側の `holdings` が `portfolio_id` を持つのとは違い、グローバル保有とする）。再導出は `services/us_holdings.py` の `recalc_us_holdings(conn, symbol)`（symbol 単位・共有純関数 `recompute_positions` を price と price_jpy=price×fx_rate の 2 引数で呼び、USD と JPY 両原価を出す）。mutation 後に atomic 再計算（[ADR-019](#adr-019-保有は取引から導出する-holdings-は-transactions-の射影)）。
+  - **含み損益の為替処理を「約定時固定 + 現レート評価」にする**。取得原価は約定時 USDJPY で JPY に固定（`avg_cost_jpy`）。評価額は現レート×最新 close で算出。**これにより為替損益が含み損益に乗る**（為替差損益を区別したい場合は将来の拡張）。`value_us_holdings(holdings_rows, latest_closes_usd, fx_rate)` が JPY 換算を行う通貨非依存の純関数（[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)）。
+  - **資産概要合算は `asset_snapshots.us_stock_value` 列追加**（`fund_value` と同型・[ADR-054](#adr-054-投資信託の保有管理を株と同型の取引ベース導出で持つ) が先例）。`/asset-overview` の `total_value`/`pnl` に合算・`allocation` に「米国株」スライスを追加。`snapshot_assets` 夜間ジョブが当夜 FX×最新 close で焼く。
+  - **夜間ジョブ `fetch_fx_rates`** を `snapshot_assets` の直前に配置する（当夜の FX を当夜の `snapshot_assets` に確実に反映するため）。`fetch_meta['fx:USDJPY']` カーソルで差分取得。migration `0019_us_holdings_fx`。
+  - **API**:
+    - `GET /us-holdings` → 保有中の米株一覧（USD/JPY 両評価・含み損益）
+    - `GET /us-transactions` → 取引履歴
+    - `POST /us-transactions` → 取引記録（body の `fx_rate` → 約定日 FX → なければ 400 の順で解決）
+    - `PUT /us-transactions/{id}` → 取引編集
+    - `DELETE /us-transactions/{id}` → 取引削除
+    - `GET /asset-overview` に `us_stock_value` を追加（既存 `fund_value` と並ぶ）
+  - **AI Tool `get_us_holdings`**（`min_phase=7`）: 米株保有を JPY 評価で返す（日米横断のバランス相談を AI が一体で語れるようにするため）。
+- **理由**:
+  - JPY 資産評価コア（`holdings`/`cash`/`/optimize`）への通貨波及は規模が大きく既存機能のリスクが高い。一方「米株がいくら含み益/損か」「総資産に占める米株割合は」という実用的な問いは、資産概要レイヤ（スナップショット合算）だけで答えられる。最小スコープに絞れば、JPY 単一前提コアを壊さず米株保有の価値を先に出せる。
+  - 取引ベース保有管理（[ADR-019](#adr-019-保有は取引から導出する-holdings-は-transactions-の射影)）を踏襲することで、買値・約定日・FX レートが全取引に記録され、将来の損益計算・税務用途に耐える基盤になる。
+  - `avg_cost_jpy`（約定時固定）を持つことで、将来「為替損益と株価損益を分離表示」する拡張の余地を確保する（現時点では合算して含み損益に出す）。
+- **代替案**:
+  - **`holdings`/`cash` に currency 列を足して JPY 資産評価コアを全面的に多通貨対応にする** → `portfolio metrics`（相関・最適化・バックテスト）まで全面改修が要る。リスクが大きく、「米株保有が資産概要に出る」という今回の目的に対して過剰。却下（将来の Phase で検討）。
+  - **USD 保有を `external_assets` に手入力する（今まで通り）** → 取引履歴が残らず含み損益が手動更新頼り。FX も自分で計算する必要がある。却下（本 ADR の目的を達成しない）。
+  - **FX 取得源に別サービス（OpenExchangeRates 等）を使う** → yfinance は既に依存済みであり、`JPY=X` が USDJPY 日足を提供している。追加依存を増やす理由がない。却下。
+- **段階**: **実装済み（2026-06-11）**。`adapters/fx.py`・`services/us_holdings.py`・schema `0019_us_holdings_fx`（`fx_rates`・`us_transactions`・`us_holdings`・`asset_snapshots.us_stock_value`）・夜間ジョブ `fetch_fx_rates`・`routers/us_holdings.py`・AI Tool `get_us_holdings`・`/asset-overview` 合算。pytest green。
+- **関連**: [ADR-055](#adr-055-米株スクリーナーphase-7b-1は-yfinance-一本gics-は-yahoo-infosector-の文字列保持提示専用で-jpy-資産評価コアに触れない)（(B-1)/(B-2) 分割・FX/保有波及を本 ADR で解消）・[ADR-039](#adr-039-phase-7-を-a-sector-lead-lag-先行b-米株拡張に分割し-a-の業種-etf-は-indexadapter-に-yahoo-ソースを足して流用する)（Phase 7(B) 繰り延べの解消）・[ADR-019](#adr-019-保有は取引から導出する-holdings-は-transactions-の射影)（取引ベース保有導出・atomic 再計算）・[ADR-054](#adr-054-投資信託の保有管理を株と同型の取引ベース導出で持つ)（fund_value の先例＝asset_snapshots への追加カラム）・[ADR-031](#adr-031-株式スクリーナー夜間-valuation_snapshots-読み取り時ランク市場ごとに分離)（市場分離の維持）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)/[ADR-016](#adr-016-手法はコードで実装する手法db-は索引でありコードの代替ではない)（事実は Python）・[ADR-010](#adr-010-データソースはアダプタ越しにする)（FxAdapter）・[ADR-001](#adr-001-単一ユーザー前提で作る)（portfolio_id なし）・[data-model.md](data-model.md)・[api.md](api.md)・[roadmap.md Phase 7](roadmap.md)。

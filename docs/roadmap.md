@@ -163,7 +163,7 @@
 **状況（2026-06-09・実装完了）**: 提示専用＝既存 JPY 資産評価コア（holdings/cash/asset_snapshots/portfolio metrics/`/optimize`）に一切触れず、米株を AI と相談できる軸を先に通した。
 
 - **データ源は yfinance 一本**。[ADR-039](decisions.md)(B) が明言した `UsEquityAdapter` を新設（`adapters/us_equity.py`・`UsEquitySource` ABC ＋ `YahooUsEquitySource` ＋ファサード＝[IndexAdapter](architecture.md) 同型のフォールバック連鎖・[ADR-010](decisions.md)）。ユニバースは NASDAQ Trader directory（普通株のみ・ETF は `is_etf` フラグ保持）。
-- **市場は別テーブル**（[ADR-031](decisions.md) 市場分離・migration `0017_us_equity`）: `us_stocks`／`us_daily_quotes`（全履歴）／`us_valuation_snapshots`。日本株コアと列はミラーするが `code→symbol`・`sector33_code→gics_sector` に読み替える。**currency 列は持たない**（(B-2) 送り）。
+- **市場は別テーブル**（[ADR-031](decisions.md) 市場分離・migration `0017_us_equity`）: `us_stocks`／`us_daily_quotes`（全履歴）／`us_valuation_snapshots`。日本株コアと列はミラーするが `code→symbol`・`sector33_code→gics_sector` に読み替える。**currency 列は持たない**（比率/ランクは通貨非依存で完結。FX/保有は (B-2)＝[ADR-057](decisions.md)）。
 - **業種は Yahoo `.info.sector`（GICS 相当 11 分類の英語ラベル）を文字列で保持**（厳密 GICS コードは追わない・和訳表 `backend/app/reference/gics_sectors.py`）。
 - **夜間 4 ジョブ**（`snapshot_assets` の後・通知系の前）: `sync_us_universe`→`fetch_us_quotes`→`fetch_us_fundamentals`（`.info` を [ADR-033](decisions.md) 同型でローテ巡回・夜天井 900）→`calc_us_valuation`。派生比率・市場内ランクは日本株と同じ `quant/valuation.py` 純関数で読み取り時に Python 計算（[ADR-014](decisions.md)/[ADR-016](decisions.md)）。
 - **AI Tool 2 つ**: `get_us_valuation`／`screen_us_valuation`（`min_phase=7`・`market:"US"`/`currency:"USD"` 明示・verdict なし＝[ADR-048](decisions.md) 契約をミラー）。日本株 Tool（JPY）は無改変。`CURRENT_PHASE` は 7 のまま。
@@ -172,12 +172,17 @@
 
 **完了条件（B-1・達成）**: 米株スクリーナー `/us-stocks` ＋ AI Tool ＋ チャートが日本株版と同等に動く（提示専用・JPY 資産評価コア無改変）。
 
-### Phase 7(B-2): FX/保有波及 — 未着手（繰り延べ・[ADR-039](decisions.md)/[ADR-055](decisions.md)）
+### Phase 7(B-2): FX/保有波及 — 実装済み（2026-06-11・[ADR-057](decisions.md)）
 
-- 通貨列・`FxAdapter`・FX 換算と holdings/cash/asset_snapshots への波及（米株保有管理）をここで導入する。日米横断の "both" バランスは portfolio/資産概要レイヤ（FX 換算）で見る。
-- repo/handler/service の日米 DRY 共通化（(B-1) は日本株無改変のため重複を許容した）・米株版 25 指標フル充足・`op_growth_yoy`/`eps_growth_yoy` を活かす財務履歴源の追加（[ADR-055](decisions.md) TODO）。
+**状況（2026-06-11・実装完了）**: FX 基盤・米株保有管理・資産概要合算を**最小スコープ**で実装。JPY 資産評価コア（`holdings`/`cash`/`/optimize`）への通貨波及は行わず、資産概要レイヤのみで合算する設計（[ADR-057](decisions.md)・市場分離維持＝[ADR-031](decisions.md)）。
 
-**完了条件（B-2）**: 通貨/FX 換算が資産評価に反映され、米株保有が JPY 資産概要に合算される。
+- **FX 基盤**: `FxAdapter`（`adapters/fx.py`・yfinance `JPY=X` 日足終値・[ADR-055](decisions.md) `UsEquityAdapter` と同型のフォールバック連鎖）＋ `fx_rates(date, pair, rate)` テーブル＋夜間ジョブ `fetch_fx_rates`（`snapshot_assets` 直前に配置）。
+- **米株保有管理**: `us_transactions`（約定時 USDJPY `fx_rate` を持つ・グローバル保有＝`portfolio_id` なし・[ADR-001](decisions.md)）→ `us_holdings`（`avg_cost` USD ＋ `avg_cost_jpy` JPY 固定）を `recalc_us_holdings` で導出（[ADR-019](decisions.md) 同型）。評価額は現レート×最新 close（為替損益が含み損益に乗る）。
+- **資産概要合算**: `asset_snapshots.us_stock_value` 列追加（[ADR-054](decisions.md) の `fund_value` と同型）。`snapshot_assets` 夜間ジョブが当夜 FX×最新 close で焼く。`/asset-overview` に `us_stock_value`・`total_value`/`pnl` 合算・「米国株」配分スライスを追加。
+- **REST/AI Tool**: `GET /us-holdings`・`GET/POST/PUT/DELETE /us-transactions`（[api.md §9](api.md)）＋ AI Tool `get_us_holdings`（`min_phase=7`・JPY 評価で返す）。
+- **migration `0019_us_holdings_fx`**（`fx_rates`・`us_transactions`・`us_holdings`・`asset_snapshots.us_stock_value` 追加）。
+
+**完了条件（B-2・達成）**: 通貨/FX 換算が資産評価に反映され、米株保有が JPY 資産概要に合算される。→ **達成（2026-06-11・[ADR-057](decisions.md)）**。残る将来課題（[ADR-057](decisions.md) TODO）: `holdings`/`cash`/`/optimize` への通貨波及・日米 DRY 共通化・`op_growth_yoy`/`eps_growth_yoy` の財務履歴源追加。
 
 ---
 

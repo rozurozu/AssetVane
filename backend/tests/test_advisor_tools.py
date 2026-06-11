@@ -91,6 +91,8 @@ def test_registry_handlers_are_registered() -> None:
         "list_themes",
         "get_stock_themes",
         "screen_by_theme",
+        # Phase 7(B-2): 米株保有・FX 換算（min_phase=7・ADR-039/057）。
+        "get_us_holdings",
     }
     assert set(REGISTRY) == expected
 

@@ -112,6 +112,8 @@ export default function Dashboard() {
         // （NAV 自動取得の "投資信託" とは別系統）。
         const ext = overview.allocation.find((a) => a.name === "外部資産");
         const fund = overview.allocation.find((a) => a.name === "投資信託");
+        // 米国株（Phase 7(B-2)・JPY 建て）。保有なしのとき us_stock_value=0 で allocation に出ない場合も "—" にしない。
+        const usStock = overview.allocation.find((a) => a.name === "米国株");
         return [
           {
             label: "総資産",
@@ -147,6 +149,13 @@ export default function Dashboard() {
             dot: "var(--color-chart-6)",
           },
           {
+            // 米国株（Phase 7(B-2)・JPY 建て評価額）。保有なしは ¥0。
+            label: "米国株",
+            value: fmtJpy(overview.us_stock_value),
+            sub: usStock ? pct(usStock.weight) : "—",
+            dot: "var(--color-chart-3)",
+          },
+          {
             label: "評価損益",
             value: `${overview.pnl >= 0 ? "+" : ""}${fmtJpy(overview.pnl)}`,
             sub: overview.pnl >= 0 ? "含み益" : "含み損",
@@ -160,6 +169,7 @@ export default function Dashboard() {
         { label: "現金", value: "—", sub: "—", dot: "var(--color-chart-2)" },
         { label: "外部資産", value: "—", sub: "—", dot: "var(--color-chart-4)" },
         { label: "投資信託", value: "—", sub: "—", dot: "var(--color-chart-6)" },
+        { label: "米国株", value: "—", sub: "—", dot: "var(--color-chart-3)" },
         { label: "評価損益", value: "—", sub: "—" },
       ] satisfies KpiItem[]);
 
@@ -172,6 +182,7 @@ export default function Dashboard() {
         const colors: Record<string, string> = {
           株式: "var(--color-chart-1)",
           現金: "var(--color-chart-2)",
+          米国株: "var(--color-chart-3)",
           外部資産: "var(--color-chart-4)",
           投資信託: "var(--color-chart-6)",
         };
@@ -260,8 +271,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* KPI 行 */}
-      <div className="mb-3 grid grid-cols-6 gap-3 max-[1100px]:grid-cols-2">
+      {/* KPI 行（Phase 7(B-2) で「米国株」追加→7 列）*/}
+      <div className="mb-3 grid grid-cols-7 gap-3 max-[1100px]:grid-cols-2">
         {kpis.map((k) => (
           <div key={k.label} className="rounded-lg border border-hairline bg-surface-1 p-3">
             <div className="flex items-center gap-1.5 font-medium text-[11px] text-ink-muted uppercase tracking-[0.2px]">

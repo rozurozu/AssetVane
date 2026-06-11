@@ -19,6 +19,7 @@ from app.db.engine import get_conn
 from app.services.fund_holdings import value_fund_holdings
 from app.services.policy import get_policy
 from app.services.portfolio import portfolio_deviations, value_holdings
+from app.services.us_holdings import value_us_holdings
 
 router = APIRouter(tags=["assets"])
 
@@ -107,6 +108,7 @@ class AssetOverviewOut(BaseModel):
     cash_value: float
     external_value: float
     fund_value: float  # 投信評価額合計（最新 NAV・ADR-054）
+    us_stock_value: float  # 米株評価額合計（最新終値×USDJPY・ADR-057）
     pnl: float
     allocation: list[AllocationSliceOut]
     policy_targets: dict[str, Any]  # target_cash_ratio / max_position_weight
@@ -232,7 +234,22 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
                 if f.get("unrealized_pnl") is not None:
                     pnl += float(f["unrealized_pnl"])
 
-    total_value = stock_value + cash_value + external_value + fund_value
+    # --- 米株評価額（最新終値×USDJPY・ADR-057）---
+    us_stock_value = 0.0
+    us_rows = repo.list_us_holdings(conn)
+    if us_rows:
+        us_symbols = [h["symbol"] for h in us_rows]
+        us_closes = repo.get_latest_us_closes(conn, us_symbols)
+        us_fx_row = repo.get_latest_fx_rate(conn, "USDJPY")
+        us_fx_rate = float(us_fx_row["rate"]) if us_fx_row is not None else None
+        us_valued = value_us_holdings(us_rows, us_closes, us_fx_rate)
+        for u in us_valued:
+            if u.get("market_value_jpy") is not None:
+                us_stock_value += float(u["market_value_jpy"])
+            if u.get("unrealized_pnl_jpy") is not None:
+                pnl += float(u["unrealized_pnl_jpy"])
+
+    total_value = stock_value + cash_value + external_value + fund_value + us_stock_value
 
     # --- allocation スライス（総資産内 0..1）---
     def _weight(v: float) -> float:
@@ -243,6 +260,7 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
         AllocationSliceOut(name="現金", value=cash_value, weight=_weight(cash_value)),
         AllocationSliceOut(name="投資信託", value=fund_value, weight=_weight(fund_value)),
         AllocationSliceOut(name="外部資産", value=external_value, weight=_weight(external_value)),
+        AllocationSliceOut(name="米国株", value=us_stock_value, weight=_weight(us_stock_value)),
     ]
 
     # --- policy と deviations ---
@@ -272,6 +290,7 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
         cash_value=cash_value,
         external_value=external_value,
         fund_value=fund_value,
+        us_stock_value=us_stock_value,
         pnl=pnl,
         allocation=allocation,
         policy_targets=policy_targets,

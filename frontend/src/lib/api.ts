@@ -245,10 +245,11 @@ export interface BacktestResult {
   excess_return: number; // ポート年率 - ベンチ年率
 }
 
-/** 配分ドーナツ用スライス（P2-7・ADR-054）。weight は 0..1（UI で ×100）。
- * external_assets 由来は backend が "外部資産"、NAV 自動取得の投信は "投資信託" を返す（旧 "投信" は廃止）。 */
+/** 配分ドーナツ用スライス（P2-7・ADR-054・ADR-055）。weight は 0..1（UI で ×100）。
+ * external_assets 由来は backend が "外部資産"、NAV 自動取得の投信は "投資信託"、
+ * 米国株保有は "米国株" を返す（Phase 7(B-2)）。 */
 export interface AllocationSlice {
-  name: "株式" | "現金" | "外部資産" | "投資信託";
+  name: "株式" | "現金" | "外部資産" | "投資信託" | "米国株";
   value: number;
   weight: number; // 0..1
 }
@@ -259,7 +260,7 @@ export interface AssetSnapshotPoint {
   total_value: number;
 }
 
-/** `GET /asset-overview` レスポンス（P2-7）。 */
+/** `GET /asset-overview` レスポンス（P2-7・Phase 7(B-2) で us_stock_value を追加）。 */
 export interface AssetOverview {
   as_of: string | null;
   is_delayed: boolean;
@@ -269,6 +270,7 @@ export interface AssetOverview {
   cash_value: number;
   external_value: number;
   fund_value: number; // 投資信託の評価額合計（ADR-054・allocation に「投資信託」スライスが入る）
+  us_stock_value: number; // 米国株の評価額合計（JPY 建て・Phase 7(B-2)・allocation に「米国株」スライスが入る）
   pnl: number; // 評価損益
   allocation: AllocationSlice[];
   policy_targets: {
@@ -1394,6 +1396,57 @@ export type UsQuote = {
   adj_close: number | null;
 };
 
+// --- Phase 7(B-2) 米国株保有管理（ADR-055・GET /us-holdings・GET/POST/DELETE /us-transactions）---
+// backend routers/us_holdings.py の Pydantic（UsHoldingOut / UsTransactionOut）と 1:1。
+// price は USD・fx_rate は USDJPY レート（省略時はサーバが約定日レートを解決）。
+// 評価系（market_value_jpy 等）は FX 未取得 or close 未取得のとき null になる。
+// weight は米株保有内の比率（0..1・UI で ×100）。
+
+/** 米株保有 1 件（UsHoldingOut と 1:1・評価系は null 可）。 */
+export type UsHolding = {
+  id: number;
+  symbol: string;
+  company_name: string | null;
+  gics_sector: string | null;
+  shares: number;
+  avg_cost: number | null; // 平均取得単価（USD）
+  avg_cost_jpy: number | null; // 平均取得単価（JPY 換算）
+  last_close: number | null; // 最終終値（USD）
+  close_date: string | null; // 終値基準日（YYYY-MM-DD）
+  fx_rate: number | null; // 直近 USDJPY レート
+  market_value_jpy: number | null; // 評価額（JPY・FX×close×shares）
+  cost_jpy: number | null; // 取得コスト（JPY 換算）
+  unrealized_pnl_jpy: number | null; // 含み損益（JPY）
+  weight: number | null; // 米株内比率（0..1・UI で ×100）
+};
+
+/** 米株取引 1 件（UsTransactionOut と 1:1）。 */
+export type UsTransaction = {
+  id: number;
+  symbol: string;
+  company_name: string | null;
+  side: "buy" | "sell";
+  shares: number;
+  price: number; // 約定単価（USD）
+  fee: number | null; // 手数料（USD・任意）
+  traded_at: string; // 約定日（YYYY-MM-DD）
+  fx_rate: number | null; // 約定時 USDJPY（省略時はサーバ解決済み）
+  note: string | null;
+};
+
+/** `POST /us-transactions` リクエスト（UsTransactionIn と 1:1）。
+ * fx_rate 省略時はサーバが約定日レートを解決。未取得なら 400「FX レート未取得」が throw される。 */
+export type UsTransactionInput = {
+  symbol: string;
+  side: "buy" | "sell";
+  shares: number;
+  price: number; // USD
+  fee?: number | null;
+  traded_at: string; // YYYY-MM-DD
+  fx_rate?: number | null; // USDJPY（省略可・サーバ解決）
+  note?: string | null;
+};
+
 /** 米株スクリーニング（GET /us-stocks/screen・ADR-031/055）。criteria を query にして読み取り時計算結果を得る。
  * boolean は true のときだけ送る（既定 false は送らない・日本株 screenStocks と同じ流儀）。 */
 export function screenUsStocks(
@@ -1433,4 +1486,28 @@ export function getUsQuotes(
     `/us-quotes/${encodeURIComponent(symbol)}${qs ? `?${qs}` : ""}`,
     signal,
   );
+}
+
+// --- Phase 7(B-2) 米株保有 API 関数（ADR-055・POST/DELETE は UsHolding[] を返す）---
+// 投信（ADR-054）と同じ流儀。失敗は detail を載せた ApiError を throw。
+
+/** 米株保有一覧（GET /us-holdings）。評価系は FX 未取得 or close 未取得のとき null（ADR-014）。 */
+export function getUsHoldings(signal?: AbortSignal): Promise<UsHolding[]> {
+  return getJSON<UsHolding[]>("/us-holdings", signal);
+}
+
+/** 米株取引履歴一覧（GET /us-transactions）。新しい順。 */
+export function listUsTransactions(signal?: AbortSignal): Promise<UsTransaction[]> {
+  return getJSON<UsTransaction[]>("/us-transactions", signal);
+}
+
+/** 米株取引を記録（POST /us-transactions）。更新後の全保有 UsHolding[] を返す。
+ * fx_rate 省略時はサーバが約定日レートを解決（未取得なら 400「FX レート未取得」が ApiError で throw）。 */
+export function addUsTransaction(input: UsTransactionInput): Promise<UsHolding[]> {
+  return postJSON<UsHolding[]>("/us-transactions", input);
+}
+
+/** 米株取引を削除（DELETE /us-transactions/{id}）。更新後の全保有 UsHolding[] を返す。 */
+export function deleteUsTransaction(id: number): Promise<UsHolding[]> {
+  return del<UsHolding[]>(`/us-transactions/${id}`);
 }

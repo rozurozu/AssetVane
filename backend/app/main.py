@@ -34,6 +34,7 @@ from app.routers.portfolio import router as portfolio_router
 from app.routers.screening_filters import router as screening_filters_router
 from app.routers.signals import router as signals_router
 from app.routers.stocks import router as stocks_router
+from app.routers.us_holdings import router as us_holdings_router
 from app.routers.us_stocks import router as us_stocks_router
 from app.routers.watchlist import router as watchlist_router
 
@@ -106,6 +107,8 @@ app = FastAPI(
 app.include_router(stocks_router)
 # 米国株（Phase 7(B-1)／提示専用＝ADR-039(B)・ADR-055）。GET /us-stocks・/us-quotes。
 app.include_router(us_stocks_router)
+# 米株保有・取引（Phase 7(B-2)・ADR-057）。GET/POST/DELETE /us-holdings・/us-transactions。
+app.include_router(us_holdings_router)
 # シグナル一覧（Phase 1／spec §5.1）。GET /signals（routers/signals.py）。
 app.include_router(signals_router)
 # 手動バッチ起動（Phase 1／spec §3.8）。POST /batch/run（routers/batch.py）。

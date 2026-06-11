@@ -19,6 +19,7 @@ import { TransactionHistory } from "@/components/portfolio/TransactionHistory";
 import { Card } from "@/components/ui/Card";
 import { DataTable, Td } from "@/components/ui/DataTable";
 import { StatusBlock } from "@/components/ui/StatusBlock";
+import { UsSection } from "@/components/us-holdings/UsSection";
 import {
   type AssetOverview,
   type BacktestResult,
@@ -38,11 +39,11 @@ import { fmtJpy, pct } from "@/lib/format";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
-type Tab = "holdings" | "input" | "history" | "funds";
+type Tab = "holdings" | "input" | "history" | "funds" | "us";
 
 /** ?tab クエリを Tab に解決する（既定は保有）。 */
 function resolveTab(raw: string | null): Tab {
-  if (raw === "input" || raw === "history" || raw === "funds") return raw;
+  if (raw === "input" || raw === "history" || raw === "funds" || raw === "us") return raw;
   return "holdings";
 }
 
@@ -187,6 +188,7 @@ function PortfolioPageInner() {
     { key: "input", label: "入力" },
     { key: "history", label: "履歴" },
     { key: "funds", label: "投資信託" },
+    { key: "us", label: "米国株" },
   ];
 
   return (
@@ -566,6 +568,9 @@ function PortfolioPageInner() {
         ) : (
           <div className="text-[13px] text-ink-subtle">ポートフォリオを読み込み中…</div>
         ))}
+
+      {/* ===== 米国株タブ（保有＋取引入力＋取引履歴・Phase 7(B-2)）===== */}
+      {tab === "us" && <UsSection />}
     </>
   );
 }
