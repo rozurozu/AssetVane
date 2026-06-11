@@ -10,7 +10,7 @@ import struct
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, Table, and_, case, func, or_, select, text
+from sqlalchemy import Connection, Table, and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.engine import get_engine
@@ -1949,30 +1949,73 @@ def screen_us_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[st
 # investigate オーバーレイ）が共存する。テーマは定性タグで数値を持たない（ADR-014）。
 
 
-def upsert_company_description(row: dict[str, Any]) -> int:
-    """company_descriptions を (market, code) で冪等 UPSERT する（ADR-050/056・W1）。
+def _company_description_upsert_stmt(values: dict[str, Any]):
+    """company_descriptions の冪等 UPSERT 文を組む（W1/W2 共有・ADR-050/056）。
 
     **description_text が既存と同一なら何も更新しない**（DO UPDATE の WHERE 条件で弾く）。
-    これにより `fetched_at` は「テキスト最終変化時刻」の意味になり、差分タガーが
-    fetch_meta（'us_themes:<code>'）の last_fetched_date と比較して「説明が変化した銘柄」
-    だけを再タグできる（設計の肝・list_us_codes_for_theme_tagging の優先順②の判定材料）。
-    同一判定は NULL 安全（is_distinct_from＝SQLite では `IS NOT`。既存が NULL でも新テキストで
-    更新できる）。fetched_at 未指定なら UTC now を補完する。
-    返り値は影響行数（1=新規 or テキスト変化で更新／0=同一テキストで据え置き）。
+    これにより `fetched_at` は「テキスト最終変化時刻」の意味になり、差分タガーが fetch_meta の
+    last_fetched_date と比較して「説明が変化した銘柄」だけを再タグできる（設計の肝・
+    list_us/jp_codes_for_theme_tagging の優先順②の判定材料）。同一判定は NULL 安全
+    （is_distinct_from＝SQLite では `IS NOT`。既存が NULL でも新テキストで更新できる）。
+    fetched_at 未指定なら UTC now を補完する。
     """
-    values = dict(row)
+    values = dict(values)
     values.setdefault("fetched_at", datetime.now(UTC).isoformat())
     stmt = sqlite_insert(company_descriptions).values(**values)
     update_cols = ("source", "description_text", "disclosed_date", "doc_id", "fetched_at")
-    stmt = stmt.on_conflict_do_update(
+    return stmt.on_conflict_do_update(
         index_elements=["market", "code"],
         set_={c: stmt.excluded[c] for c in update_cols if c in values},
         where=company_descriptions.c.description_text.is_distinct_from(
             stmt.excluded.description_text
         ),
     )
+
+
+def upsert_company_description(row: dict[str, Any]) -> int:
+    """company_descriptions を (market, code) で冪等 UPSERT する（ADR-050/056・W1）。
+
+    バッチ（fetch_us_fundamentals 等）からの単発 UPSERT 用。冪等性（同一テキストは fetched_at
+    据え置き）は _company_description_upsert_stmt に集約し W2 版と共有する。
+    返り値は影響行数（1=新規 or テキスト変化で更新／0=同一テキストで据え置き）。
+    """
+    stmt = _company_description_upsert_stmt(row)
     with get_engine().begin() as conn:
         result = conn.execute(stmt)
+    return result.rowcount or 0
+
+
+def upsert_company_description_tx(
+    conn: Connection,
+    *,
+    market: str,
+    code: str,
+    source: str,
+    description_text: str | None,
+    disclosed_date: str | None = None,
+    doc_id: str | None = None,
+    fetched_at: str | None = None,
+) -> int:
+    """company_descriptions を (market, code) で冪等 UPSERT する conn 受け取り版（W2・ADR-050）。
+
+    investigate_stock のように 1 リクエストで複数表（stock_dossiers ＋ company_descriptions）を
+    atomic に書く経路用（段階B＝JP 調査済みドシエ要約を信号源に焼く）。**commit はしない。
+    呼び出し側が `with get_engine().begin()` で境界を所有する**。冪等性は W1 版
+    upsert_company_description と同一ヘルパ _company_description_upsert_stmt で共有する。
+    fetched_at=None のときはヘルパが UTC now を補完する。返り値は影響行数。
+    """
+    values: dict[str, Any] = {
+        "market": market,
+        "code": code,
+        "source": source,
+        "description_text": description_text,
+        "disclosed_date": disclosed_date,
+        "doc_id": doc_id,
+    }
+    if fetched_at is not None:
+        values["fetched_at"] = fetched_at
+    stmt = _company_description_upsert_stmt(values)
+    result = conn.execute(stmt)
     return result.rowcount or 0
 
 
@@ -2118,6 +2161,24 @@ def upsert_stock_themes(rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
+def bump_stock_themes_last_seen(*, market: str, code: str, last_seen_at: str) -> int:
+    """指定銘柄の既存テーマタグの last_seen_at を一括 bump する（ADR-050 段階B・W1）。
+
+    説明テキストが前回タグ以降に未変化のとき、tag_jp_themes が LLM を呼ばずに prune を回避する
+    ための安価パス（毎晩 LLM 再タグのコスト削減）。re-tag と違い新テーマの発見はしない＝既存の
+    タグ集合をそのまま「再確認した」とみなして時間窓を延ばすだけ。返り値は更新行数（タグ 0 件の
+    銘柄は 0）。単発・1 文で閉じる書き込みなので W1（repo が自前 begin）。
+    """
+    stmt = (
+        update(stock_themes)
+        .where(and_(stock_themes.c.market == market, stock_themes.c.code == code))
+        .values(last_seen_at=last_seen_at)
+    )
+    with get_engine().begin() as conn:
+        result = conn.execute(stmt)
+    return result.rowcount or 0
+
+
 def get_stock_themes(conn: Connection, market: str, code: str) -> list[dict[str, Any]]:
     """1 銘柄のテーマ一覧を theme_name 昇順で返す（Tool `get_stock_themes` の素・ADR-050）。"""
     stmt = (
@@ -2227,6 +2288,45 @@ def list_us_codes_for_theme_tagging(conn: Connection, limit: int) -> list[str]:
         )
         .where(cd.c.market == "US")
         .where(func.coalesce(us_stocks.c.is_etf, 0) == 0)  # ETF 除外（NULL は普通株扱い）
+        .order_by(priority.asc(), order_age.asc(), cd.c.code.asc())
+        .limit(limit)
+    )
+    return list(conn.execute(stmt).scalars().all())
+
+
+def list_jp_codes_for_theme_tagging(conn: Connection, limit: int) -> list[str]:
+    """テーマタガーの巡回対象 JP 銘柄を優先順に limit 件返す（ADR-050 段階B・ADR-033 同型）。
+
+    company_descriptions（market='JP'＝investigate_stock が焼いたドシエ要約・source='dossier'）を
+    起点に stocks へ JOIN し **is_etf=1 を除外**する（watchlist に ETF を入れる運用は薄いが US 版
+    と対称の安全弁）。fetch_meta は source キー `'jp_themes:' || code` で LEFT JOIN する
+    （list_us_codes_for_theme_tagging の `us_themes:<code>` と同じキー慣行）。
+
+    優先順は US 版と同一（①未タグ ②fetched_at>last_fetched_date=説明変化 ③古い順ローテ）。
+    段階Bでは JP 行は source='dossier' のみ（段階C で EDINET が `source='edinet'` を加える）。
+    タガーが 'jp_themes:<code>' に書く last_fetched_date は ISO datetime 文字列（時刻まで）である
+    こと（②の文字列比較が同日内のテキスト変化を取りこぼさない前提）。
+    """
+    if limit <= 0:
+        return []
+    cd = company_descriptions
+    src = "jp_themes:" + cd.c.code
+    priority = case(
+        (fetch_meta.c.source.is_(None), 0),  # ① 未タグ
+        (cd.c.fetched_at > fetch_meta.c.last_fetched_date, 1),  # ② 説明変化
+        else_=2,  # ③ ローテ
+    )
+    # NULL（未タグ）を先頭に保つため last_fetched_date の NULL は空文字に畳んで昇順。
+    order_age = func.coalesce(fetch_meta.c.last_fetched_date, "")
+    stmt = (
+        select(cd.c.code)
+        .select_from(
+            cd.join(stocks, stocks.c.code == cd.c.code).join(
+                fetch_meta, fetch_meta.c.source == src, isouter=True
+            )
+        )
+        .where(cd.c.market == "JP")
+        .where(func.coalesce(stocks.c.is_etf, 0) == 0)  # ETF 除外（NULL は普通株扱い）
         .order_by(priority.asc(), order_age.asc(), cd.c.code.asc())
         .limit(limit)
     )

@@ -181,7 +181,7 @@
 
 ---
 
-## テーマタグ（全ユニバース grounded 事前タグ）— 段階 A 実装済み・B/C 未着手（[ADR-050](decisions.md) 改訂・[ADR-056](decisions.md)）
+## テーマタグ（全ユニバース grounded 事前タグ）— 段階 A・B 実装済み・C 未着手（[ADR-050](decisions.md) 改訂・[ADR-056](decisions.md)）
 
 業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で **JP＋US の全ユニバースを実在テキストに grounded で事前タグ付け**し、「テーマで引く」（未調査銘柄・米株も）を実現する。**名前推測は禁止・`code`/`symbol` を同一性として渡す・根拠が無ければタグを付けない**（[ADR-050](decisions.md)）。重さが桁違いなので段階化する。
 
@@ -193,9 +193,12 @@
 - 一括バックフィル: `uv run python -m app.scripts.backfill_themes`（説明取得→タグ付け・中断再開可・`--retag-all`/`--descriptions-only`/`--limit`）。**初回実行は未**（LLM コスト発生・夜間バッチ時間帯を避けて手動実行）。
 - **完了条件（A）**: 米株を `screen_by_theme("AI需要")` 等でテーマ横断に引け、各タグが実在の事業概要に grounded（名前推測でない）。→ **コードは達成・実データはバックフィル実行後に充足**。
 
-### 段階 B: JP 調査済みのオーバーレイ
-- `investigate_stock` の JP 調査済み銘柄に、ドシエ/ニュースを根拠としたリッチなテーマを**オーバーレイ**（UPSERT＋`last_seen_at`・ユニバースタガーとクロバーしない）。
-- **完了条件（B）**: 調査済み JP 銘柄が、ユニバースタグより詳しいテーマを併せ持つ。
+### 段階 B: JP 調査済みのオーバーレイ — **実装済み（2026-06-11）**
+- `investigate_stock` の JP 調査済み銘柄に、ドシエを根拠としたテーマを付与。✅ 経路は **company_descriptions 経由**＝investigate_stock がドシエ要約 `summary_md` を `company_descriptions(JP, source='dossier')` に W2（`upsert_company_description_tx`）で焼く（段階 A 対称）。
+- ✅ 夜間 `tag_jp_themes`（`tag_us_themes` 対称・`list_jp_codes_for_theme_tagging` 起点・`prune` は `market='JP'` 限定・天井 `theme_tagging_jp_nightly_max=100`）が既存 `tag_stock_themes(market='JP')` を無改変で再利用。NIGHTLY 順は `investigate_dossier`→`tag_jp_themes`→`embed_themes`。
+- ✅ **毎晩 LLM 再タグ最適化**＝説明未変化なら LLM を呼ばず `bump_stock_themes_last_seen` で `last_seen_at` だけ bump（段階 B 固有・小さい調査済み母集団のコスト抑制）。
+- ✅ **「2書き手共存」を reframe**＝company_descriptions は `UNIQUE(market,code)` の1銘柄1テキスト（全市場共通）。調査済み JP は **dossier 優先**（dossier ⊇ EDINET ゆえ共存不要）。段階 C は「dossier 行があれば edinet で上書きしない」で解く（[ADR-050](decisions.md) 実装メモ）。
+- **完了条件（B）**: 調査済み JP 銘柄が `screen_by_theme`/`get_stock_themes(market="JP", code)` で引ける。→ **達成（実データは investigate 実行で随時充足）**。
 
 ### 段階 C: EDINET → JP 全ユニバース
 - `EdinetAdapter`（[ADR-056](decisions.md)）＝有報「事業の内容」を取得→要約→`company_descriptions`。

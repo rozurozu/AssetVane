@@ -431,7 +431,7 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 - 適時開示（TDnet）は有料アドオンのため後付け。`source='disclosure'` でこのコーパスに入れる（構造が複雑になれば専用テーブルに分離）。
 
 ### テーマタグ — `themes`／`stock_themes`／`company_descriptions`（[ADR-050](decisions.md) 改訂・[ADR-056](decisions.md)）
-業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねる。**全ユニバース（JP＋US）を実在テキストに grounded で事前タグ付け**する（名前推測禁止・[ADR-050](decisions.md)）。テーマは**定性タグで数値でない**（[ADR-014](decisions.md)）。**段階 A（米株）は実装済み（migration `0018_themes`・2026-06-10）**＝US は `fetch_us_fundamentals` 相乗りで `longBusinessSummary` を取り込み、夜間 `tag_us_themes`／`embed_themes` がタグ付け・語彙 reconcile する。段階 B/C（JP オーバーレイ／EDINET）は未着手（[roadmap.md](roadmap.md)）。
+業種コードをまたぐ **テーマ**（"AI需要"・"防衛"・"円安メリット" 等）で銘柄を束ねる。**全ユニバース（JP＋US）を実在テキストに grounded で事前タグ付け**する（名前推測禁止・[ADR-050](decisions.md)）。テーマは**定性タグで数値でない**（[ADR-014](decisions.md)）。**段階 A（米株）は実装済み（migration `0018_themes`・2026-06-10）**＝US は `fetch_us_fundamentals` 相乗りで `longBusinessSummary` を取り込み、夜間 `tag_us_themes`／`embed_themes` がタグ付け・語彙 reconcile する。**段階 B（JP 調査済み）も実装済み（2026-06-11）**＝`investigate_stock` がドシエ要約を `company_descriptions(JP, source='dossier')` に焼き、夜間 `tag_jp_themes` がタグ付け（説明未変化は LLM を呼ばず last_seen_at だけ bump）。段階 C（EDINET 全ユニバース）は未着手（[roadmap.md](roadmap.md)）。
 
 **`themes`** — テーマ語彙の目録（JP＋US 横断のグローバル語彙・"AI需要" は市場を跨いで 1 語）。
 
@@ -456,7 +456,7 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 | `first_assigned_at` | TEXT | 初付与日時 |
 | `last_seen_at` | TEXT | 最終再確認日時（time-window prune の基準）|
 
-- **UNIQUE `(market, code, theme_name)`**。**`source` 列は持たない**。書き込みは **UPSERT＋`last_seen_at` bump（削除しない）**、古いタグは**時間窓 prune**（一定期間どの再タグにも再確認されなかった行だけ枯らす）。これでユニバースタガーと investigate オーバーレイの 2 書き手がクロバーせず共存する（[ADR-050](decisions.md) の三択トレードオフ解）。読み取りは theme_name で union。
+- **UNIQUE `(market, code, theme_name)`**。**`source` 列は持たない**。書き込みは **UPSERT＋`last_seen_at` bump（削除しない）**、古いタグは**時間窓 prune**（一定期間どの再タグにも再確認されなかった行だけ枯らす）。読み取りは theme_name で union。なお JP は `company_descriptions` を1銘柄1テキスト（`UNIQUE(market,code)`）で共有し **dossier 優先**にしたため、実運用の書き手は market ごとに1系統（US=`tag_us_themes`／JP=`tag_jp_themes`）で、prune は「②説明テキストが変わって確認されなくなったタグの時間窓減衰」として効く（2書き手共存の reframe＝[ADR-050](decisions.md) 実装メモ・段階B）。
 - インデックス: `(market, code)`（銘柄のテーマ一覧）・`theme_name`（テーマ株スクリーニング）。
 
 **`company_descriptions`** — 事業説明の実在テキスト（市場横断・grounded タガーの信号源）。
@@ -466,11 +466,11 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 | `id` | INTEGER PK | |
 | `market` | TEXT | `'JP'`／`'US'` |
 | `code` | TEXT | JP 5桁 or US symbol（cross-FK なし）|
-| `source` | TEXT | `'edinet'`（JP 有報「事業の内容」）／`'yfinance'`（US `longBusinessSummary`）|
-| `description_text` | TEXT | **compact プロフィール**（JP は EDINET 事業の内容を要約・US は longBusinessSummary を素のまま・本文は持たず＝[ADR-020](decisions.md)）|
-| `disclosed_date` | TEXT | テキストの基準日（EDINET 有報の提出/開示日）|
-| `doc_id` | TEXT | EDINET 書類管理番号（provenance・US は null）|
-| `fetched_at` | TEXT | 取得日時 |
+| `source` | TEXT | `'dossier'`（JP 調査済み＝investigate_stock のドシエ要約・段階B）／`'edinet'`（JP 未調査＝有報「事業の内容」・段階C）／`'yfinance'`（US `longBusinessSummary`）。**`UNIQUE(market,code)` で1銘柄1テキスト**＝JP は調査済みが dossier 優先（段階C は dossier 行があれば edinet で上書きしない・[ADR-050](decisions.md) 実装メモ）|
+| `description_text` | TEXT | **compact プロフィール**（JP 調査済みは `summary_md` そのまま／JP 未調査は EDINET 事業の内容を要約・US は longBusinessSummary を素のまま・本文は持たず＝[ADR-020](decisions.md)）|
+| `disclosed_date` | TEXT | テキストの基準日（EDINET 有報の提出/開示日・dossier/yfinance は null）|
+| `doc_id` | TEXT | EDINET 書類管理番号（provenance・dossier/US は null）|
+| `fetched_at` | TEXT | テキスト最終変化時刻（同一テキスト再 UPSERT では据え置き＝差分タガーが「説明変化した銘柄」を拾う判定材料）|
 
 - `source`/`doc_id`/`disclosed_date` は**テキストの provenance**（タグの provenance ではない＝`stock_themes` とは役割が別）。`fetched_at` は **UPSERT 時に `description_text` が実際に変化したときだけ更新**される＝「テキスト最終変化時刻」の意味（`repo.upsert_company_description`）。差分タガーは銘柄ごとのタグ時刻カーソル（`fetch_meta` の source キー `us_themes:<symbol>`・ISO datetime）と `fetched_at` を比較し、「未タグ → 説明変化 → 古い順ローテ」の優先順で夜あたり天井（`theme_tagging_nightly_max`）まで再タグする（[ADR-033](decisions.md) 流用）。
 - UNIQUE `(market, code)`（1 銘柄 1 行・最新を UPSERT）。

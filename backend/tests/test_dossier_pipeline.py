@@ -129,6 +129,50 @@ def test_investigate_records_source_and_advances_timestamp(
     assert sources[0]["extraction_status"] == "summarized"
 
 
+def test_investigate_writes_company_description_for_themes(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """ドシエ要約を company_descriptions(JP, source='dossier') に焼く（段階B 信号源・ADR-050）。"""
+    repo.upsert_stocks([STOCK])
+    _stub_complete(monkeypatch)
+    _stub_fetch_news(monkeypatch, [_ARTICLE])
+
+    with get_engine().begin() as conn:
+        result = _run(dossier.investigate_stock(conn, "7203"))
+
+    with get_engine().connect() as conn:
+        desc = repo.get_company_description(conn, "JP", "7203")
+    assert desc is not None
+    assert desc["source"] == "dossier"
+    assert desc["description_text"] == result["summary_md"]  # summary_md そのまま
+    # fetched_at は last_investigated_at と揃う（同一 now・差分タガーのテキスト変化判定の起点）。
+    assert desc["fetched_at"] == result["last_investigated_at"]
+    assert desc["disclosed_date"] is None  # EDINET 専用 provenance はドシエ由来では None
+    assert desc["doc_id"] is None
+
+
+def test_investigate_company_description_idempotent_on_same_summary(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """同一 summary_md の再調査では company_descriptions.fetched_at が据え置かれる（差分の肝）。"""
+    repo.upsert_stocks([STOCK])
+    _stub_complete(monkeypatch)  # 常に同じ summary_md を返すスタブ
+    _stub_fetch_news(monkeypatch, [_ARTICLE])
+
+    with get_engine().begin() as conn:
+        _run(dossier.investigate_stock(conn, "7203"))
+    with get_engine().connect() as conn:
+        first = repo.get_company_description(conn, "JP", "7203")
+    with get_engine().begin() as conn:
+        _run(dossier.investigate_stock(conn, "7203"))
+    with get_engine().connect() as conn:
+        second = repo.get_company_description(conn, "JP", "7203")
+
+    # テキスト未変化なので fetched_at は据え置き＝tag_jp_themes が無駄に再タグしない（差分の肝）。
+    assert first is not None and second is not None
+    assert second["fetched_at"] == first["fetched_at"]
+
+
 def test_investigate_dedupes_existing_url(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
     """既存 url の記事は二重取り込みしない（2 回目は n_sources_added=0・行は増えない）。"""
     repo.upsert_stocks([STOCK])

@@ -423,3 +423,121 @@ def test_list_us_codes_for_theme_tagging_requires_description(temp_db) -> None:
     with get_engine().connect() as conn:
         order = repo.list_us_codes_for_theme_tagging(conn, limit=10)
     assert order == ["AAA"]  # BBB（説明なし）と 7203（JP）は出ない
+
+
+# ===== list_jp_codes_for_theme_tagging（段階B＝JP 調査済みドシエ） =====
+
+
+def _jp_desc_row(code: str, text_: str, fetched_at: str | None = None) -> dict:
+    """JP（source='dossier'）の company_descriptions 行（段階B 信号源・investigate 由来）。"""
+    row = {
+        "market": "JP",
+        "code": code,
+        "source": "dossier",
+        "description_text": text_,
+        "disclosed_date": None,
+        "doc_id": None,
+    }
+    if fetched_at is not None:
+        row["fetched_at"] = fetched_at
+    return row
+
+
+def _seed_jp_theme_meta(code: str, last_fetched: str) -> None:
+    """fetch_meta に 'jp_themes:<code>' のカーソル（ISO datetime）を投入する。"""
+    with get_engine().begin() as conn:
+        conn.execute(
+            fetch_meta.insert().values(
+                source=f"jp_themes:{code}",
+                last_fetched_date=last_fetched,
+                updated_at=last_fetched,
+                last_attempt_ok=1,
+            )
+        )
+
+
+def _seed_jp_stocks_with_etf(*rows: tuple[str, str, int]) -> None:
+    """JP 銘柄マスタを (code, company_name, is_etf) で投入する（is_etf 除外検証用）。"""
+    with get_engine().begin() as conn:
+        for code, name, etf in rows:
+            conn.execute(stocks.insert().values(code=code, company_name=name, is_etf=etf))
+
+
+def test_list_jp_codes_for_theme_tagging_priority_etf_and_limit(temp_db) -> None:
+    """JP も ①未タグ→②変化→③古い順ローテ・is_etf 除外・limit が効く（ADR-050 段階B）。"""
+    _seed_jp_stocks_with_etf(
+        ("11110", "A社", 0),
+        ("22220", "B社", 0),
+        ("33330", "C社", 0),
+        ("44440", "D社", 0),
+        ("99990", "上場ETF", 1),  # ETF は除外される
+    )
+    repo.upsert_company_description(_jp_desc_row("11110", "A の事業。", T1))  # メタ無し → ①
+    repo.upsert_company_description(_jp_desc_row("22220", "B の事業（更新）。", T3))  # 変化 → ②
+    repo.upsert_company_description(_jp_desc_row("33330", "C の事業。", T1))  # ③（メタ新しめ）
+    repo.upsert_company_description(_jp_desc_row("44440", "D の事業。", T1))  # ③（メタ古い）
+    repo.upsert_company_description(_jp_desc_row("99990", "ファンドの説明。", T1))  # ETF → 除外
+
+    _seed_jp_theme_meta("22220", T2)  # T3 > T2 → 説明変化
+    _seed_jp_theme_meta("33330", "2026-06-04T00:00:00+00:00")
+    _seed_jp_theme_meta("44440", "2026-06-02T00:00:00+00:00")  # 33330 より古い → 先
+
+    with get_engine().connect() as conn:
+        order = repo.list_jp_codes_for_theme_tagging(conn, limit=10)
+        top2 = repo.list_jp_codes_for_theme_tagging(conn, limit=2)
+        empty = repo.list_jp_codes_for_theme_tagging(conn, limit=0)
+
+    assert order == ["11110", "22220", "44440", "33330"]  # ①→②→③古い順。99990 は出ない
+    assert top2 == ["11110", "22220"]  # limit で先頭から切る
+    assert empty == []
+
+
+def test_list_jp_codes_for_theme_tagging_excludes_us_rows(temp_db) -> None:
+    """market='US' の説明は JP 起点に乗らない（段階A/B の信号源分離・US 版の対称）。"""
+    _seed_jp_stocks_with_etf(("11110", "A社", 0))
+    repo.upsert_company_description(_jp_desc_row("11110", "A の事業。", T1))
+    repo.upsert_company_description(_desc_row("AAPL", "US の事業。", T1))  # market='US'
+
+    with get_engine().connect() as conn:
+        order = repo.list_jp_codes_for_theme_tagging(conn, limit=10)
+    assert order == ["11110"]  # AAPL（US）は出ない
+
+
+def test_bump_stock_themes_last_seen(temp_db) -> None:
+    """bump_stock_themes_last_seen が指定銘柄の既存タグの last_seen_at だけ更新する（段階B）。"""
+    repo.insert_themes_if_absent(["AI需要", "半導体"], T1)
+    repo.upsert_stock_themes(
+        [
+            {
+                "market": "JP",
+                "code": "11110",
+                "theme_name": "AI需要",
+                "first_assigned_at": T1,
+                "last_seen_at": T1,
+            },
+            {
+                "market": "JP",
+                "code": "11110",
+                "theme_name": "半導体",
+                "first_assigned_at": T1,
+                "last_seen_at": T1,
+            },
+            {
+                "market": "JP",
+                "code": "22220",
+                "theme_name": "AI需要",
+                "first_assigned_at": T1,
+                "last_seen_at": T1,
+            },
+        ]
+    )
+
+    n = repo.bump_stock_themes_last_seen(market="JP", code="11110", last_seen_at=T3)
+    assert n == 2  # 11110 の 2 タグだけ更新
+
+    with get_engine().connect() as conn:
+        rows_11110 = repo.get_stock_themes(conn, "JP", "11110")
+        rows_22220 = repo.get_stock_themes(conn, "JP", "22220")
+    assert all(r["last_seen_at"] == T3 for r in rows_11110)  # bump 済み
+    assert all(r["first_assigned_at"] == T1 for r in rows_11110)  # first は不変
+    assert rows_22220[0]["last_seen_at"] == T1  # 別銘柄は触らない

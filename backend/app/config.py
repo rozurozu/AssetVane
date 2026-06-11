@@ -178,6 +178,9 @@ class Settings(BaseSettings):
     # 夜あたりタグ付け本数の天井（ADR-033 の cadence 流用・暴走防止）。約 6000 銘柄の US
     # ユニバースを約 40 夜で一周するローテ（未タグ→説明変化→古い順の優先はクエリ側が担う）。
     theme_tagging_nightly_max: int = 150
+    # JP（段階B＝調査済みドシエ）の夜あたりタグ付け天井。母集団は watchlist 調査済み銘柄で
+    # US ユニバースより遥かに小さいため控えめ。tag_jp_themes が消費（ADR-050 段階B）。
+    theme_tagging_jp_nightly_max: int = 100
     # stock_themes の時間窓 prune（最終再確認 last_seen_at からの日数）。どの再タグにも
     # 再確認されなかったタグだけ枯らす（UPSERT＋bump と対の設計・ADR-050）。
     # 不変条件: theme_prune_days はローテ一周日数（ユニバース数 ÷ theme_tagging_nightly_max）

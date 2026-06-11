@@ -34,6 +34,7 @@ from app.batch.jobs import (
     snapshot_assets,
     sync_master,
     sync_us_universe,
+    tag_jp_themes,
     tag_us_themes,
 )
 
@@ -73,11 +74,16 @@ NIGHTLY_JOBS = [
     fetch_sector_news.run,
     run_advisor.run,  # Phase 3: 事実が揃ってから夜の分析AI を回す（phase3-spec.md §5）
     investigate_dossier.run,  # Phase 4: watchlist を古い順に巡回しドシエ調査（phase4-spec.md §6）
+    # ADR-050 段階B: JP 調査済みドシエのテーマ grounded タグ付け。investigate_dossier が
+    # company_descriptions(JP, source='dossier') を更新した直後に置き、当夜投資調査された銘柄の
+    # 説明変化を同じ夜にタグ付けまで反映する（US と非対称＝JP の信号源は後段で生まれるため）。
+    # embed_themes より前に置き、当夜の新テーマ語彙が後続の埋め込み reconcile に乗る順序を保つ。
+    tag_jp_themes.run,
     # ADR-045: 全ニュース書込後に embedding が null/モデル不一致の行を埋める（意味検索の素地）。
     # investigate_dossier の後・通知系の前に置き、当夜貯めた要約まで含めて意味検索に乗せる。
     embed_news.run,
-    # ADR-050: tag_us_themes が当夜増やしたテーマ語彙を埋め込み near_duplicate_of を判定する
-    # （embed_news の直後＝embedding 系をまとめて回す・語彙 reconcile の第二段）。
+    # ADR-050: tag_us_themes/tag_jp_themes が当夜増やしたテーマ語彙を埋め込み near_duplicate_of を
+    # 判定する（embed_news の直後＝embedding 系をまとめて回す・語彙 reconcile の第二段）。
     embed_themes.run,
     # ADR-028: warn 超過時、その月最初の夜に 1 通だけ警告（通知系を digest と並べる）。
     notify_cost_warn.run,
