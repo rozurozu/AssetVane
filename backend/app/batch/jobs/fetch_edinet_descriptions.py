@@ -181,9 +181,7 @@ def crawl(
 
         if cap_reached:
             # 現提出日は未完なのでカーソルを進めない（次回この日から再開・事前 skip で重複撃たず）。
-            emit(
-                f"夜天井 {cap} 件に到達。{iso} の途中で打ち切り（カーソルは {last_cursor}）。"
-            )
+            emit(f"夜天井 {cap} 件に到達。{iso} の途中で打ち切り（カーソルは {last_cursor}）。")
             break
 
         # この提出日を完了＝カーソルを前進（部分失敗 doc があっても日付は進める＝liveness 優先。

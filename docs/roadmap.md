@@ -99,7 +99,8 @@
 **ニュース系の発展（統合コーパス上の山）**: 統合コーパス（[ADR-044](decisions.md)）・ユーザー投入（[ADR-046](decisions.md)）・`/news` 画面（[ADR-047](decisions.md)）に続き、**ニュース意味検索 [ADR-045](decisions.md) 段階A（embedding＋`sqlite-vec` の `vec_distance_cosine`・夜間 `embed_news`＋貼付即時・Tool/REST/UI の 3 面）は実装済み（2026-06-09・migration `0016`）**。残るニュース系の将来項目:
 - **意味検索の vec0 索引昇格**（[ADR-045](decisions.md)）＝コーパスが育ったら BLOB 全件スキャンから vec0 仮想テーブルへ。発火条件の叩き台＝概ね 5 万行 or 検索レイテンシ >200ms（`embedding` 列はそのまま活きる）。
 - **意味検索の段階C＝FTS5 キーワード索引ハイブリッド**（[ADR-045](decisions.md)）＝キーワードで広く拾い embedding で意味順に並べ替え。
-- **RAG 活用の線引き・能動配信・売買アイデア起票**（[ADR-049](decisions.md)/[ADR-051](decisions.md)/[ADR-052](decisions.md)・docs 確定／実装は別タスク）。
+- **売買アイデア起票（[ADR-052](decisions.md)）は実装済み（2026-06-11）**＝専用 Tool `propose_trade` で `proposals(kind=buy/sell)` へ承認制起票（方向と根拠のみ・数値ゼロ・未知コード drop・pending dedup・承認しても約定なし・migration 不要）。
+- **RAG 活用の線引き・能動配信**（[ADR-049](decisions.md)/[ADR-051](decisions.md)・docs 確定／実装は別タスク。能動配信は前提の `polarity` 列〔ADR-049〕が未実装）。
 - **テーマタグ**は [ADR-050](decisions.md) 改訂＋[ADR-056](decisions.md) で「全ユニバース grounded 事前タグ（EDINET/longBusinessSummary 信号源）」へ方針転換し独立化（上記「テーマタグ」段階 A/B/C を参照）。
 
 ---

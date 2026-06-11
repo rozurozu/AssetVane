@@ -316,6 +316,9 @@ submit_journal(observations, proposal?, proposed_policy_change?) ->
 get_dossier(code) -> {code, summary_md, key_facts, last_investigated_at, sources:[{url,title,summary,published_at,source_type}]}
 investigate_stock(code) -> {code, summary_md, key_facts, last_investigated_at, n_sources_added}
 fetch_news(code, since?) -> {code, articles:[{url,title,summary,published_at,source_type}]}
+propose_trade(action, code, reason) ->          // ニュース起点 buy/sell 提案の起票（ADR-052・min_phase=4）。
+  {ok: true, action, code, company_name, market} // 検証 only＝実起票は橋渡しが tool_runs から拾う。
+  // 未知コードは {error}。数値（株数/金額）は受けない＝方向と根拠のみ（ADR-014）。承認しても約定なし。
 ```
 
 - 全 Tool の返却は**素の dict**（registry が `json.dumps` して `tool` ロールへ）。
@@ -362,6 +365,10 @@ async def run_nightly_advisor(conn: Connection) -> None:
     6. if proposed_policy_change:
            repo.insert_proposal(conn, kind="policy_change", body=…, rationale=…,
                status="pending", journal_id=journal_id)
+    6b. persist_trade_proposals_from_tool_runs(conn, tool_runs, date, journal_id)   # ADR-052
+        # tool_runs の propose_trade を全件起票（kind=buy/sell・body={code,company_name,market}）。
+        # 銘柄解決 JP→US・未知は drop・pending dedup・depends_on=None。journal 縮退でも独立に起票。
+        # チャット（軸2・router）も同関数を呼ぶ（submit 無しでも起票・journal は明示 submit 時のみ）。
     7. 失敗（LLM 例外）or 無応答（observations 空）はリトライ→ダメなら journal スキップ＝
        例外は伝播 / 縮退は理由 return。ジョブ自身は通知せず ok=False で返し runner 集約通知に乗る（§7）
     """

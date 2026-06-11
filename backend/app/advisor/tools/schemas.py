@@ -367,3 +367,16 @@ def coerce_policy_change(raw: object) -> dict[str, object] | None:
     if model.reason is not None:
         result["reason"] = model.reason
     return result
+
+
+class ProposeTradeArgs(_ToolArgs):
+    """propose_trade の引数（ADR-052・ニュース起点の売買アイデア起票）。
+
+    提示専用（ADR-009）。方向（action）と銘柄（code）と根拠（reason）だけを受け、株数・金額・
+    目標価格などの数値は持たない（数値は AI に計算させない＝ADR-014）。code は JP 5 桁または
+    US ティッカー。受理側（persist）が stocks→us_stocks で解決し、未知コードは起票しない。
+    """
+
+    action: Literal["buy", "sell"] = Field(description="売買の方向（buy=買い / sell=売り）。")
+    code: str = Field(description="JP は 5 桁コード（例 72030）、US はティッカー（例 AAPL）。")
+    reason: str = Field(description="ニュース起点の根拠（なぜ買い/売りかの説明・数値は含めない）。")

@@ -23,6 +23,7 @@ from sqlalchemy import Connection
 
 from app.adapters.news import fetch_news
 from app.advisor.dossier import investigate_stock
+from app.advisor.journaling import resolve_trade_target
 from app.advisor.tools.schemas import (
     FetchNewsArgs,
     GetAssetOverviewArgs,
@@ -41,6 +42,7 @@ from app.advisor.tools.schemas import (
     InvestigateStockArgs,
     ListThemesArgs,
     OptimizePortfolioArgs,
+    ProposeTradeArgs,
     ScreenByThemeArgs,
     ScreenStocksArgs,
     ScreenUsValuationArgs,
@@ -681,6 +683,36 @@ async def handle_submit_journal(args: dict[str, object]) -> dict[str, Any]:
     except Exception as exc:
         logger.exception("handle_submit_journal 失敗")
         return {"error": str(exc)}
+
+
+async def handle_propose_trade(args: dict[str, object]) -> dict[str, Any]:
+    """propose_trade（ADR-052）。ニュース起点の買い/売りアイデアを承認制提案として受ける。
+
+    submit_journal と同じ検証 only の契約（W2）＝実際の proposals 起票は呼び出し側
+    （router / nightly）が tool_runs から persist_trade_proposals_from_tool_runs で行う。
+    ここでは引数を検証し、銘柄を JP→US で解決して AI に手応え（company_name/market）を返す。
+    未知コードは {"error": ...} を返して AI に修正を促す（起票の真の権限は persist 側の drop＝
+    防御多重化・ADR-018）。数値（株数・金額）は受けない＝方向と根拠だけ（ADR-014）。
+    """
+    try:
+        parsed = ProposeTradeArgs.model_validate(args)
+    except Exception as exc:
+        logger.warning("handle_propose_trade: 引数が不正（%s）", args)
+        return {"error": str(exc)}
+
+    with get_engine().connect() as conn:
+        target = resolve_trade_target(conn, parsed.code)
+    if target is None:
+        return {
+            "error": f"銘柄 {parsed.code} が見つからない（JP 5 桁コードか US ティッカーを確認）。"
+        }
+    return {
+        "ok": True,
+        "action": parsed.action,
+        "code": parsed.code,
+        "company_name": target["company_name"],
+        "market": target["market"],
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -20,9 +20,10 @@ import json
 import logging
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import Connection
 
-from app.advisor.tools.schemas import coerce_policy_change
+from app.advisor.tools.schemas import ProposeTradeArgs, coerce_policy_change
 from app.db import repo
 
 logger = logging.getLogger(__name__)
@@ -127,3 +128,97 @@ def persist_journal_from_tool_runs(
         )
 
     return journal_id
+
+
+def resolve_trade_target(conn: Connection, code: str) -> dict[str, str] | None:
+    """売買提案の銘柄 code を解決する（ADR-052）。JP→US の順で引き当てる。
+
+    `stocks`（JP 5 桁）→ `us_stocks`（US ティッカー）の順で探し、見つかれば
+    `{"company_name", "market"}` を返す。どちらにも無ければ None（未知＝幻覚/誤記の疑い）。
+    company_name が NULL の行でも market は確定できるので company_name="" で返す。
+    """
+    jp = repo.get_stock(conn, code)
+    if jp is not None:
+        return {"company_name": str(jp.get("company_name") or ""), "market": "JP"}
+    us = repo.get_us_stock(conn, code)
+    if us is not None:
+        return {"company_name": str(us.get("company_name") or ""), "market": "US"}
+    return None
+
+
+def _extract_trade_proposals(tool_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """tool_runs から propose_trade の args を全件抽出する（ADR-052・複数可）。
+
+    submit_journal が「最後の 1 回」を採るのと違い、売買提案は 1 ターンに複数あり得るので
+    全件拾う（買い A・売り B が同じ晩に出ても両方起票する）。args が dict でないものは捨てる。
+    """
+    out: list[dict[str, Any]] = []
+    for run in tool_runs:
+        if run.get("name") == "propose_trade":
+            args = run.get("args")
+            if isinstance(args, dict):
+                out.append(args)
+    return out
+
+
+def persist_trade_proposals_from_tool_runs(
+    conn: Connection,
+    *,
+    tool_runs: list[dict[str, Any]],
+    date: str,
+    journal_id: int | None = None,
+) -> list[int]:
+    """tool_runs から propose_trade を拾い buy/sell 提案を承認制で起票する（ADR-052）。
+
+    戻り値: 起票した proposals の id 一覧（drop/dedup された分は含まない）。
+
+    手順:
+    1. propose_trade の args を全件抽出（複数可）。
+    2. action/code/reason を検証（ProposeTradeArgs）。不正な args はスキップ。
+    3. resolve_trade_target で JP→US 解決。未知コードは起票せず warning（ADR-018＝queue に
+       幻覚/誤記を入れない）。body に company_name/market を焼く。
+    4. pending dedup（同一 (kind, code) の pending があればスキップ）。
+    5. insert_proposal（kind=action・body=JSON・rationale=reason・depends_on=None）。
+
+    接続規約（W2）: commit はしない。呼び出し側（nightly ジョブ／router）が begin() 境界を所有し、
+    journal＋proposal を 1 トランザクションに atomic に束ねる。
+    """
+    inserted: list[int] = []
+    for raw in _extract_trade_proposals(tool_runs):
+        try:
+            args = ProposeTradeArgs.model_validate(raw)
+        except ValidationError:
+            logger.warning("propose_trade: 引数が不正（%s）。起票せずスキップ", raw)
+            continue
+
+        target = resolve_trade_target(conn, args.code)
+        if target is None:
+            # 未知コード（幻覚/誤記の疑い）は queue に入れない（ADR-018）。
+            logger.warning(
+                "propose_trade: 銘柄 %s が stocks/us_stocks に無い。起票せずスキップ", args.code
+            )
+            continue
+
+        if repo.pending_trade_proposal_exists(conn, args.action, args.code):
+            logger.info(
+                "propose_trade: %s %s は既に pending。重複起票をスキップ", args.action, args.code
+            )
+            continue
+
+        body = json.dumps(
+            {"code": args.code, "company_name": target["company_name"], "market": target["market"]},
+            ensure_ascii=False,
+        )
+        proposal_id = repo.insert_proposal(
+            conn,
+            created_date=date,
+            kind=args.action,
+            body=body,
+            rationale=args.reason,
+            status="pending",
+            journal_id=journal_id,
+            depends_on=None,
+        )
+        inserted.append(proposal_id)
+
+    return inserted

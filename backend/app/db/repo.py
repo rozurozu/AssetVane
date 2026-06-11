@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import struct
 from datetime import UTC, datetime
 from typing import Any
@@ -1195,6 +1196,25 @@ def list_proposals(conn: Connection, status: str | None = None) -> list[dict[str
         stmt = stmt.where(proposals.c.status == status)
     stmt = stmt.order_by(proposals.c.created_date.desc(), proposals.c.id.desc())
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def pending_trade_proposal_exists(conn: Connection, kind: str, code: str) -> bool:
+    """同一 (kind, code) の pending な売買提案が既にあるか（ADR-052・重複起票防止）。
+
+    proposals は code 専用列を持たず body(JSON) に詰めるため、pending かつ同 kind の行を
+    引いて Python 側で body の code を突き合わせる（migration 不要）。reject/approve 済みは
+    対象外＝状況変化後の再提案は通す（毎晩の pending 氾濫だけを抑える）。
+    """
+    stmt = select(proposals.c.body).where(proposals.c.status == "pending", proposals.c.kind == kind)
+    for (body,) in conn.execute(stmt).all():
+        if not body:
+            continue
+        try:
+            if json.loads(body).get("code") == code:
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
 
 
 def get_proposal(conn: Connection, proposal_id: int) -> dict[str, Any] | None:

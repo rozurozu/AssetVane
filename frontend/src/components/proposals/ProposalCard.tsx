@@ -31,9 +31,18 @@ const KIND_CLS: Record<Proposal["kind"], string> = {
 };
 
 // body（kind 依存 JSON）を簡易に要約表示する（厳密整形は backend 確定後でよい）。
-function bodySummary(body: unknown): string | null {
+// buy/sell（ADR-052）は body={code, company_name, market} なので「会社名（code・market）」に整形。
+function bodySummary(body: unknown, kind: Proposal["kind"]): string | null {
   if (body == null) return null;
   if (typeof body === "string") return body;
+  if ((kind === "buy" || kind === "sell") && typeof body === "object") {
+    const b = body as { code?: string; company_name?: string; market?: string };
+    if (b.code) {
+      const name = b.company_name || b.code;
+      const meta = [b.code, b.market].filter(Boolean).join("・");
+      return `${name}（${meta}）`;
+    }
+  }
   try {
     return JSON.stringify(body);
   } catch {
@@ -46,7 +55,7 @@ export function ProposalCard({ proposal, dependencyMet, busy, onApprove, onRejec
   const isPending = p.status === "pending";
   // 依存提案が未承認なら承認できない（承認順制御・決定4）。
   const approveDisabled = busy || !dependencyMet;
-  const body = bodySummary(p.body);
+  const body = bodySummary(p.body, p.kind);
 
   return (
     <div className="rounded-lg border border-hairline bg-surface-1 p-3">

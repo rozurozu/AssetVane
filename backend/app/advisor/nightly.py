@@ -22,7 +22,10 @@ from datetime import UTC, datetime
 from sqlalchemy import Connection
 
 from app.advisor.engine import run_turn
-from app.advisor.journaling import persist_journal_from_tool_runs
+from app.advisor.journaling import (
+    persist_journal_from_tool_runs,
+    persist_trade_proposals_from_tool_runs,
+)
 from app.advisor.method_cards import METHOD_CARDS
 from app.advisor.prompt_builder import Message, build_messages
 from app.advisor.router import _CORE
@@ -40,7 +43,8 @@ _NIGHTLY_INSTRUCTION = (
     "方針変更を提案せよ。get_general_news で当日の一般ニュース（市況・マクロ・世界情勢）も取得し、"
     "市況・マクロ文脈を踏まえて分析せよ（ADR-034）。最後に必ず submit_journal で所見"
     "（observations）・提案（proposal）・方針変更案（proposed_policy_change）を提出すること。"
-    "数値は必ず Tool の戻り値のみを使う。"
+    "強い買い/売り材料がある銘柄があれば propose_trade で方向と根拠を起票せよ（無ければ"
+    "出さなくてよい・数値は出さない＝ADR-052）。数値は必ず Tool の戻り値のみを使う。"
 )
 
 
@@ -113,6 +117,12 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
         situation_briefing=json.dumps(briefing, ensure_ascii=False),
         policy=policy,
         llm_model=settings.llm_model,
+    )
+
+    # ニュース起点の buy/sell 提案を起票（ADR-052・journal とは独立＝縮退で journal_id=None でも
+    # trade は起票する）。同一トランザクション（呼び出し側の begin()）で束ねる（W2）。
+    persist_trade_proposals_from_tool_runs(
+        conn, tool_runs=tool_runs, date=today, journal_id=journal_id
     )
 
     # 縮退した晩（例外なし・observations 空＝実質何もしなかった）は journal を書かず理由を返す。

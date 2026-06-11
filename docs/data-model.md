@@ -409,7 +409,7 @@ yfinance `JPY=X` 日足終値を `FxAdapter`（`adapters/fx.py`・`UsEquityAdapt
 | `id` | INTEGER PK | |
 | `created_date` | TEXT | 提案日 |
 | `kind` | TEXT | `policy_change` / `buy` / `sell` / `rebalance` |
-| `body` | TEXT | 提案内容（JSON。変更案や銘柄・比率）|
+| `body` | TEXT | 提案内容（JSON・`kind` 依存）。`policy_change`=`{field, to, from?, reason?}`／`buy`・`sell`=`{code, company_name, market}`（ニュース起点の売買アイデア・[ADR-052](decisions.md)。**株数・金額などの数値は持たない**＝[ADR-014](decisions.md)）|
 | `rationale` | TEXT | 根拠（AI の説明）|
 | `status` | TEXT | `pending` / `approved` / `rejected` |
 | `outcome` | TEXT | 採否後の結果メモ（任意・振り返り用）|
@@ -419,6 +419,7 @@ yfinance `JPY=X` 日足終値を `FxAdapter`（`adapters/fx.py`・`UsEquityAdapt
 
 - インデックス `status`（未処理の提案を拾う）。
 - `depends_on` は提案間の承認順制御に使う（例: `policy_change` を承認してから `buy` を承認）。Dashboard が「依存」を表現する（[screens.md §3](screens.md)・`_arbitration.md` 決定4）。`0006_advisor_state` の DDL に含める。
+- **`buy`/`sell` の起票（[ADR-052](decisions.md)）**: Advisor の `propose_trade` Tool から承認制で起票する（migration なし＝既存列で表現）。`body.code` は `stocks`→`us_stocks` で解決済み（未知コードは起票しない）。同一 `(kind, code)` の `pending` は重複起票しない（`reject`/`approve` 済みは再提案可）。`depends_on` は現状 None（自動リンクなし）。承認しても約定しない＝`status` 遷移のみ（提示専用・[ADR-009](decisions.md)）。
 
 ### `llm_usage` — LLM コスト計上台帳（[ADR-028](decisions.md)）
 LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 `cost_usd`** をコストガードレール（$50・3 値トグル）の判定に使う。OpenRouter は実コスト（`usage.cost`）を返すので**単価表は持たない**。Ollama（ローカル）は cost 無し → 0 計上。`0006_advisor_state` の DDL に含める。

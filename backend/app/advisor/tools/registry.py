@@ -34,6 +34,7 @@ from app.advisor.tools.schemas import (
     InvestigateStockArgs,
     ListThemesArgs,
     OptimizePortfolioArgs,
+    ProposeTradeArgs,
     ScreenByThemeArgs,
     ScreenStocksArgs,
     ScreenUsValuationArgs,
@@ -233,6 +234,20 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(GetNewsContextArgs),
         handler=handlers.handle_get_news_context,
+        min_phase=4,
+    ),
+    "propose_trade": ToolDef(
+        name="propose_trade",
+        description=(
+            "ニュース起点の買い/売りアイデアを承認制の提案として起票する（提示専用・ADR-052/009）。"
+            "get_news_context などで根拠（3 層の文脈）を掴んだうえで、明確な買い/売り材料が"
+            "あるときだけ呼ぶ（無ければ呼ばなくてよい・毎回出さない）。"
+            "渡すのは方向（action=buy/sell）・銘柄（code＝JP 5 桁または US ティッカー）・根拠"
+            "（reason）だけ。株数・金額・目標価格などの数値は出さない（サイズは別途最適化に委ねる"
+            "＝ADR-014）。承認しても発注はしない（ユーザーが手動約定）。"
+        ),
+        parameters=_schema(ProposeTradeArgs),
+        handler=handlers.handle_propose_trade,
         min_phase=4,
     ),
     "fetch_news": ToolDef(

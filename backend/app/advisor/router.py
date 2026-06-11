@@ -20,7 +20,10 @@ from pydantic import BaseModel
 
 from app.advisor.codex_engine import CodexEngineError
 from app.advisor.engine import run_turn
-from app.advisor.journaling import persist_journal_from_tool_runs
+from app.advisor.journaling import (
+    persist_journal_from_tool_runs,
+    persist_trade_proposals_from_tool_runs,
+)
 from app.advisor.llm import CostGuardError
 from app.advisor.method_cards import METHOD_CARDS
 from app.advisor.prompt_builder import Message, ScreenContext, build_messages
@@ -108,23 +111,30 @@ async def chat(req: ChatRequest) -> ChatResponse:
         response_tool_runs.append(ToolRun(name=name, args=args))
 
     # チャットが submit_journal を呼んだときだけ投資日記に記録する（明示要求時のみ＝ADR-029）。
-    # 通常ターン（submit 無し）では書き込み接続を開かない（夜AI と違い reply フォールバックも
-    # しない＝昼は黙って自動保存しないため、submit が無ければ何も残さない）。橋渡しは nightly と
+    # propose_trade（ADR-052）は journal とは独立に buy/sell 提案を起票する＝submit が無くても
+    # 起票するが、journal は has_submit のときだけ書く（「明示 submit がなければ日記は残さない」
+    # 不変条件を保つ）。通常ターン（どちらも無し）では書き込み接続を開かない。橋渡しは nightly と
     # 共通の journaling サービスに一本化（W2＝begin() で journal＋proposal を atomic に束ねる）。
     journal_id: int | None = None
     has_submit = any(r.get("name") == "submit_journal" for r in tool_runs)
-    if has_submit:
+    has_trade = any(r.get("name") == "propose_trade" for r in tool_runs)
+    if has_submit or has_trade:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         with get_engine().begin() as conn:
-            journal_id = persist_journal_from_tool_runs(
-                conn,
-                tool_runs=tool_runs,
-                reply=reply,
-                source="chat",
-                date=today,
-                situation_briefing=None,  # 軸2 は画面コンテキストのみで監査 briefing は持たない
-                policy=policy,
-                llm_model=settings.llm_model,
+            if has_submit:
+                journal_id = persist_journal_from_tool_runs(
+                    conn,
+                    tool_runs=tool_runs,
+                    reply=reply,
+                    source="chat",
+                    date=today,
+                    situation_briefing=None,  # 軸2 は画面コンテキストのみで監査 briefing は持たない
+                    policy=policy,
+                    llm_model=settings.llm_model,
+                )
+            # buy/sell 提案を起票（journal_id があれば紐付け・無ければ独立＝journal_id=None）。
+            persist_trade_proposals_from_tool_runs(
+                conn, tool_runs=tool_runs, date=today, journal_id=journal_id
             )
 
     return ChatResponse(reply=reply, tool_runs=response_tool_runs, journal_id=journal_id)
