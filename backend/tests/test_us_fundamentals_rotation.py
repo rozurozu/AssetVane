@@ -3,8 +3,9 @@
 担保: list_us_symbols_for_fundamentals が「未取得最優先→古い順」で limit 件返すこと・ジョブが
 各銘柄の fetch_meta['us_fundamentals:<symbol>'] を前進させること・YoY 率など us_stocks に列の無い
 キーを書き込まず財務素だけ partial update すること・business_summary が非空のときだけ
-company_descriptions へ相乗り保存されること（ADR-050 段階A・捏造しない＝ADR-014）。
-fake adapter で実 HTTP に出ない（testing-strategy）。
+company_descriptions へ相乗り保存されること（ADR-050 段階A・捏造しない＝ADR-014）・空 `.info` で
+アダプタが raise した銘柄は partial UPSERT もローテカーソル前進もしないこと
+（tasks/review-2026-06-12.md C-4）。fake adapter で実 HTTP に出ない（testing-strategy）。
 """
 
 from __future__ import annotations
@@ -116,6 +117,41 @@ def test_partial_failure_keeps_going(temp_db, monkeypatch) -> None:
         aaa = repo.get_us_stock(conn, "AAA")
     assert bad_meta is not None and bad_meta["last_attempt_ok"] == 0  # 失敗を記録
     assert aaa["eps"] == 5.0  # 成功した銘柄は焼けている
+
+
+def test_empty_info_raise_keeps_existing_values_and_cursor(temp_db, monkeypatch) -> None:
+    """空 `.info` でアダプタが raise した銘柄は partial UPSERT もローテカーソル前進もしない（C-4）。
+
+    実アダプタ（YahooUsEquitySource）に空 `.info` を注入して raise 経路を実際に通し、
+    過去に焼けた財務値（eps/net_sales）が NULL で潰れないこと・
+    fetch_meta['us_fundamentals:<symbol>'] の last_fetched_date が据え置かれること
+    （古い順巡回で翌晩も再訪される）・ok=False（ADR-018）を担保する。
+    """
+    from app.adapters.us_equity import UsEquityAdapter, YahooUsEquitySource
+
+    repo.upsert_us_stocks([{"symbol": "AAA", "company_name": "A", "is_etf": 0, "updated_at": "t"}])
+    # 過去の巡回で焼けた財務値とローテカーソルを再現する。
+    repo.upsert_us_stocks([{"symbol": "AAA", "eps": 5.0, "net_sales": 200.0}])
+    repo.upsert_fetch_meta("us_fundamentals:AAA", "2026-01-01")
+    monkeypatch.setattr(settings, "us_fundamentals_nightly_max", 10)
+
+    # 空 `.info`（bot 検知/レート制限相当）→ アダプタが UsEquityAdapterError を raise する。
+    adapter = UsEquityAdapter(sources=[YahooUsEquitySource(fetch_info=lambda _s: {})])
+    result = fetch_us_fundamentals.run(adapter=adapter)
+
+    assert result.ok is False
+    assert "AAA" in result.detail
+
+    with get_engine().connect() as conn:
+        aaa = repo.get_us_stock(conn, "AAA")
+        meta = repo.get_fetch_meta(conn, "us_fundamentals:AAA")
+    # 既存の財務値が NULL で潰れていない（partial UPSERT が走っていない）。
+    assert aaa["eps"] == 5.0
+    assert aaa["net_sales"] == 200.0
+    # ローテカーソルは据え置き（前進しない）＋失敗が記録される。
+    assert meta is not None
+    assert meta["last_fetched_date"] == "2026-01-01"
+    assert meta["last_attempt_ok"] == 0
 
 
 def test_business_summary_upserted_to_company_descriptions(temp_db, monkeypatch) -> None:

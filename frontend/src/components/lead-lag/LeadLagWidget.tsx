@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/Card";
 import { DataTable, Td } from "@/components/ui/DataTable";
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import { getLeadLag } from "@/lib/api";
-import { pct } from "@/lib/format";
+import { fmtRatio, pct } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 
 /** 表示する Top N（翌日強含み業種・score 降順）。 */
@@ -74,9 +74,18 @@ export function LeadLagWidget() {
                 </span>
               </Td>
               <Td right>
-                <span className={`num ${row.signal >= 0 ? "text-up" : "text-down"}`}>
-                  {row.signal >= 0 ? "+" : ""}
-                  {row.signal.toFixed(2)}
+                {/* 縮退時は signal=null（backend の正規応答）。null は中立色で "—" 表示。 */}
+                <span
+                  className={`num ${
+                    row.signal == null
+                      ? "text-ink-subtle"
+                      : row.signal >= 0
+                        ? "text-up"
+                        : "text-down"
+                  }`}
+                >
+                  {row.signal != null && row.signal >= 0 ? "+" : ""}
+                  {fmtRatio(row.signal, 2)}
                 </span>
               </Td>
             </tr>

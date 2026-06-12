@@ -2,8 +2,9 @@
 
 担保: fake fetch_quotes でシンボルをバッチ分割して UPSERT すること・全銘柄共通カーソル
 fetch_meta['us_daily_quotes'] が取得最大 date まで前進すること・部分失敗で後続を止めず ok を
-正しく決めること・full_backfill と差分の開始日分岐。fake adapter で実 HTTP に出ない
-（testing-strategy）。
+正しく決めること・full_backfill と差分の開始日分岐・差分開始日がカーソルに
+_REFETCH_OVERLAP_DAYS 日重なること（鮮度プローブ・tasks/review-2026-06-12.md C-1/C-2・
+test_fetch_index.py のミラー）。fake adapter で実 HTTP に出ない（testing-strategy）。
 """
 
 from __future__ import annotations
@@ -109,7 +110,7 @@ def test_total_failure_is_not_ok(temp_db, monkeypatch) -> None:
 
 
 def test_full_backfill_vs_incremental_start(temp_db, monkeypatch) -> None:
-    """full_backfill は BACKFILL_YEARS 分頭から・差分はカーソル翌日から（開始日分岐）。"""
+    """full_backfill は BACKFILL_YEARS 分頭から・差分はカーソルに重ねた地点から（開始日分岐）。"""
     _seed_universe(["AAA"])
     monkeypatch.setattr(settings, "backfill_years", 2)
     # まず差分用カーソルを置く。
@@ -117,8 +118,9 @@ def test_full_backfill_vs_incremental_start(temp_db, monkeypatch) -> None:
 
     fake = _FakeAdapter({"AAA": [_q("AAA", "2026-06-09", 10.0)]})
     fetch_us_quotes.run(adapter=fake, full_backfill=False)  # type: ignore[arg-type]
-    # 差分: カーソル 2026-06-08 の翌日 2026-06-09 から（曜日関係なく翌日）。
-    assert fake.calls[-1][1] == "2026-06-09"
+    # 差分: カーソル 2026-06-08 から _REFETCH_OVERLAP_DAYS 日重ねた 2026-06-03 から
+    # （鮮度プローブ・C-1。週末でも直近営業日が窓に入る）。
+    assert fake.calls[-1][1] == "2026-06-03"
 
     fake2 = _FakeAdapter({"AAA": [_q("AAA", "2026-06-09", 10.0)]})
     fetch_us_quotes.run(adapter=fake2, full_backfill=True)  # type: ignore[arg-type]
@@ -127,3 +129,37 @@ def test_full_backfill_vs_incremental_start(temp_db, monkeypatch) -> None:
 
     expected_year = date.today().replace(year=date.today().year - 2).year
     assert fake2.calls[-1][1].startswith(str(expected_year))
+
+
+def test_start_date_overlaps_last_fetched(temp_db) -> None:
+    """meta ありのとき開始日は last_fetched より前（鮮度プローブで重ねる・C-1/C-2）。
+
+    test_fetch_index.py の test_start_date_for_symbol_overlaps_last_fetched のミラー。
+    重ね窓により 02:00 JST の途中足も翌晩に確定足で UPSERT 上書きされる（自己修復・C-2）。
+    """
+    from datetime import date, timedelta
+
+    from app.batch.jobs.fetch_us_quotes import _REFETCH_OVERLAP_DAYS
+
+    repo.upsert_fetch_meta("us_daily_quotes", "2026-06-05")
+    start = fetch_us_quotes._start_date(full_backfill=False, today="2026-06-08")
+    assert start == (date(2026, 6, 5) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
+    assert start <= "2026-06-05"  # 最終取得日に重なる
+
+
+def test_no_new_data_keeps_cursor_and_ok(temp_db) -> None:
+    """重ね窓で最終取得日のバーだけ返る（新規データ無し）→ ok=True・カーソルは据え置き。
+
+    test_fetch_index.py の test_fetch_index_run_no_new_data_is_ok のミラー（C-1）。
+    アダプタは ≥1 行返している（0 行 raise の契約に整合）ので失敗ではない。
+    """
+    _seed_universe(["AAA"])
+    repo.upsert_fetch_meta("us_daily_quotes", "2026-06-08")
+
+    fake = _FakeAdapter({"AAA": [_q("AAA", "2026-06-08", 10.0)]})
+    result = fetch_us_quotes.run(adapter=fake)  # type: ignore[arg-type]
+
+    assert result.ok is True
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, "us_daily_quotes")
+    assert meta["last_fetched_date"] == "2026-06-08"  # 新規無しなので前進しない（後退もしない）

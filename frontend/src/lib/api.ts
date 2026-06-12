@@ -1109,7 +1109,7 @@ export interface LeadLagRow {
   code: string;
   label: string;
   score: number;
-  signal: number;
+  signal: number | null; // 生のシグナル値（縮退時は null＝routers/lead_lag.py の LeadLagRankItem）
 }
 
 /** リードラグのモデル/検証メタ（品質表示・遅延判定）。JSON キーは "lambda"（予約語だがそのまま）。 */

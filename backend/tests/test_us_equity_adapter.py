@@ -2,10 +2,11 @@
 
 担保: NASDAQ Trader directory パーサの普通株抽出・is_etf 判定・フッタ行除去（fetch_universe）／
 `.info` の内部列正規化・欠損→None・operating_profit 近似・YoY 素の受け渡し・business_summary
-（`.info.longBusinessSummary` 素のまま・ADR-050 段階A）の受け渡し（fetch_fundamentals）／
-OHLCV の内部列正規化（fetch_quotes）／ファサードが UsEquityNotSupported ソースをスキップして次へ
-回すこと。実 API（yfinance/NASDAQ）は叩かず、サンプル text/dict と fake fetch を注入する
-（testing-strategy）。
+（`.info.longBusinessSummary` 素のまま・ADR-050 段階A）の受け渡し・空 `.info`（主要キー全欠損）は
+UsEquityAdapterError を raise（quotes と契約対称・ADR-018・tasks/review-2026-06-12.md C-4）
+（fetch_fundamentals）／OHLCV の内部列正規化（fetch_quotes）／ファサードが UsEquityNotSupported
+ソースをスキップして次へ回すこと。実 API（yfinance/NASDAQ）は叩かず、サンプル text/dict と
+fake fetch を注入する（testing-strategy）。
 """
 
 from __future__ import annotations
@@ -113,7 +114,11 @@ def test_fetch_fundamentals_normalizes_info_fields() -> None:
 
 
 def test_fetch_fundamentals_missing_fields_become_none() -> None:
-    """欠損フィールドは None に倒れ・近似の素が欠ければ operating_profit も None（捏造しない）。"""
+    """欠損フィールドは None に倒れ・近似の素が欠ければ operating_profit も None（捏造しない）。
+
+    主要キーが 1 つでも残っていれば（ここでは gics_sector）正常返却する＝全欠損 raise（C-4）が
+    部分欠損のスパースな銘柄を巻き込まないこと。
+    """
     source = YahooUsEquitySource(fetch_info=lambda _s: {"sector": "Energy"})
     snap = source.fetch_fundamentals("XOM")
 
@@ -126,6 +131,28 @@ def test_fetch_fundamentals_missing_fields_become_none() -> None:
     assert snap["fin_disclosed_date"] is None
     assert snap["revenue_growth_yoy"] is None
     assert snap["business_summary"] is None  # longBusinessSummary 欠損は None（捏造しない）
+
+
+def test_fetch_fundamentals_empty_info_raises() -> None:
+    """空 `.info`（bot 検知/レート制限時の空 dict）は UsEquityAdapterError を raise する（C-4）。
+
+    quotes の「0 行＝raise」と契約対称（ADR-018: 黙って欠損にしない）。全 None の正常返却は
+    呼び出し側の partial UPSERT で既存財務値を NULL 上書きしてしまうため許さない。
+    """
+    source = YahooUsEquitySource(fetch_info=lambda _s: {})
+    with pytest.raises(UsEquityAdapterError):
+        source.fetch_fundamentals("AAPL")
+
+
+def test_fetch_fundamentals_all_major_keys_missing_raises() -> None:
+    """主要キーに対応しない無関係キーだけの `.info`（実質空）も raise する（C-4）。
+
+    yfinance の bot 検知応答は {"trailingPegRatio": None} 等のゴミだけ返ることがある。
+    内部列に正規化すると全 None になるため、空 dict と同様に契約違反として倒す。
+    """
+    source = YahooUsEquitySource(fetch_info=lambda _s: {"trailingPegRatio": None, "maxAge": 86400})
+    with pytest.raises(UsEquityAdapterError):
+        source.fetch_fundamentals("AAPL")
 
 
 def test_fetch_quotes_normalizes_ohlcv() -> None:

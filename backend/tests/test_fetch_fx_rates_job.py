@@ -3,8 +3,9 @@
 担保:
   - fake FxAdapter で fx_rates に行が入り fetch_meta['fx:USDJPY'] が前進すること。
   - カーソル不在→初期窓（backfill_years 前〜today）で取得すること。
-  - カーソルあり→翌日から差分取得すること。
-  - 0 行返却（休場等）でも ok=True かつ fetch_meta が today に前進すること。
+  - カーソルあり→_REFETCH_OVERLAP_DAYS 日重ねた地点から差分取得すること（鮮度プローブ・
+    tasks/review-2026-06-12.md C-1/C-2・test_fetch_index.py のミラー）。
+  - 0 行の正常返却はアダプタ契約違反（ADR-018: 0 行＝raise）として ok=False・カーソル据え置き。
   - FxAdapter が例外を投げると ok=False になること。
   - 実 HTTP に出ない（testing-strategy）。
 """
@@ -105,8 +106,17 @@ def test_cursor_absent_uses_backfill_start(temp_db, monkeypatch) -> None:
     assert "2025-06" in call[1]  # 1 年前ゾーン（2025-06-xx）
 
 
-def test_cursor_present_uses_next_day(temp_db) -> None:
-    """fetch_meta に last_fetched_date がある場合、その翌日 from_ で取得する。"""
+def test_cursor_present_overlaps_last_fetched(temp_db) -> None:
+    """fetch_meta あり→last_fetched_date に重ねた from_ で取得する（鮮度プローブ・C-1/C-2）。
+
+    test_fetch_index.py の test_start_date_for_symbol_overlaps_last_fetched のミラー。
+    重ね窓により週末でも直近営業日が窓に入り、02:00 JST の途中値も翌晩に確定値で
+    UPSERT 上書きされる（自己修復・C-2）。
+    """
+    from datetime import date, timedelta
+
+    from app.batch.jobs.fetch_fx_rates import _REFETCH_OVERLAP_DAYS
+
     repo.upsert_fetch_meta("fx:USDJPY", "2026-06-07")
 
     rows = [_fx_row("2026-06-08", 152.0)]
@@ -116,44 +126,50 @@ def test_cursor_present_uses_next_day(temp_db) -> None:
 
     assert result.ok is True
     call = adapter._fake_source.calls[0]
-    # from_ は 2026-06-07 の翌日 = 2026-06-08
-    assert call[1] == "2026-06-08"
+    # from_ は 2026-06-07 から _REFETCH_OVERLAP_DAYS 日重ねた地点（= 2026-06-02）。
+    assert call[1] == (date(2026, 6, 7) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
+    assert call[1] <= "2026-06-07"  # 最終取得日に重なる
 
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "fx:USDJPY")
     assert meta["last_fetched_date"] == "2026-06-08"
 
 
-def test_zero_rows_ok_and_cursor_advances_to_today(temp_db, monkeypatch) -> None:
-    """0 行返却（休場等）でも ok=True で、fetch_meta が today まで前進する（ADR-018）。"""
-    import datetime
+def test_no_new_data_keeps_cursor_and_ok(temp_db) -> None:
+    """重ね窓で最終取得日のバーだけ返る（新規データ無し）→ ok=True・カーソルは据え置き。
 
-    today = "2026-06-10"
-    monkeypatch.setattr(fetch_fx_rates, "_start_date", lambda *, full_backfill, today: "2026-06-10")
+    test_fetch_index.py の test_fetch_index_run_no_new_data_is_ok のミラー（C-1）。
+    アダプタは ≥1 行返している（0 行 raise の契約に整合）ので失敗ではない。
+    """
+    repo.upsert_fetch_meta("fx:USDJPY", "2026-06-07")
 
-    adapter = _make_adapter([])
-
-    with monkeypatch.context() as m:
-        m.setattr(
-            "app.batch.jobs.fetch_fx_rates.date",
-            type(
-                "_D",
-                (),
-                {
-                    "today": staticmethod(lambda: datetime.date(2026, 6, 10)),
-                    "fromisoformat": datetime.date.fromisoformat,
-                },
-            )(),
-        )
-        result = fetch_fx_rates.run(adapter=adapter)
+    adapter = _make_adapter([_fx_row("2026-06-07", 150.0)])
+    result = fetch_fx_rates.run(adapter=adapter)
 
     assert result.ok is True
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, "fx:USDJPY")
+    assert meta["last_fetched_date"] == "2026-06-07"  # 新規無しなので前進しない（後退もしない）
+
+
+def test_zero_rows_is_contract_violation_not_ok(temp_db) -> None:
+    """0 行の正常返却は契約違反として ok=False・カーソルは前進しない（ADR-018・C-1）。
+
+    アダプタは 0 行で FxAdapterError を raise する契約のため、0 行が素通りするのは壊れた応答
+    （全行 date 欠落等）だけ。旧「休場としてカーソル前進」分岐の撤去を担保する。
+    """
+    repo.upsert_fetch_meta("fx:USDJPY", "2026-06-07")
+
+    adapter = _make_adapter([])
+    result = fetch_fx_rates.run(adapter=adapter)
+
+    assert result.ok is False
     assert result.rows == 0
+    assert "契約違反" in result.detail
 
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "fx:USDJPY")
-    # fetch_meta が today(2026-06-10) に前進していること
-    assert meta["last_fetched_date"] == today
+    assert meta["last_fetched_date"] == "2026-06-07"  # 据え置き（today へ前進しない）
 
 
 def test_adapter_exception_returns_not_ok(temp_db) -> None:

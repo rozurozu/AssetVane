@@ -3,11 +3,12 @@
 ADR-010/057（FX アダプタ・FX/保有波及）。ADR-002（UPSERT 冪等）。ADR-018（部分失敗の握り）。
 fetch_us_quotes.py の差分カーソル前進の作法をミラーした FX 版。
 
-差分取得: `fetch_meta['fx:USDJPY']` の `last_fetched_date` の翌日〜today を FxAdapter().fetch_rates
-で取り、`repo.upsert_fx_rates(rows)` して取得最大日で fetch_meta を前進させる。
-fetch_meta 不在/NULL なら初期窓（今日 − backfill_years 年）から取得する（fetch_us_quotes 同型）。
-
-0 行でも ok=True（休場日＝差分なしは正常）。
+差分取得: `fetch_meta['fx:USDJPY']` の `last_fetched_date` に _REFETCH_OVERLAP_DAYS 日重ねた
+地点〜today を FxAdapter().fetch_rates で取り、`repo.upsert_fx_rates(rows)` して取得最大日で
+fetch_meta を前進させる。fetch_meta 不在/NULL なら初期窓（今日 − backfill_years 年）から取得する
+（fetch_us_quotes 同型）。重ね窓により週末でも直近営業日が窓に必ず入るため、アダプタの
+「0 行＝raise」契約（ADR-018: 黙って 0 行にしない）が本当の障害検知として機能する
+（tasks/review-2026-06-12.md C-1）。
 取得に失敗した場合は ok=False を返す（snapshot_assets が当夜の FX を読めないことを runner が通知）。
 
 NIGHTLY_JOBS での配置: snapshot_assets の**直前**（fetch_fund_navs の隣）に置くこと。
@@ -30,14 +31,24 @@ logger = logging.getLogger(__name__)
 
 _SOURCE = "fx:USDJPY"  # fetch_meta の source キー
 
+# 差分取得の鮮度プローブ用の重ね日数（fetch_index.py 同型・tasks/review-2026-06-12.md C-1）。
+# 開始日を最終取得日からこの日数だけ前に戻して取り直す。週末・連休でも直近営業日のバーが必ず
+# 窓に入り ≥1 行返るため、アダプタの「0 行＝raise」契約（ADR-018: 黙って 0 行にしない）が
+# 本当の障害検知として機能する（週末ごとの偽失敗を防ぐ）。さらに 02:00 JST 実行時点の当日バーが
+# 「途中値」のことがあるが、重ね窓の再取得により翌晩以降に確定値で UPSERT 上書きされ自己修復する
+# （同 C-2）。再取得は UPSERT で冪等（ADR-002）。
+_REFETCH_OVERLAP_DAYS = 5
+
 
 def _start_date(*, full_backfill: bool, today: str) -> str:
     """取得開始日を決める（fetch_us_quotes._start_date 同型・単一ペアのカーソル）。
 
     ADR-057: FX 差分取得の再開点。
     full_backfill: today − backfill_years 年。
-    差分: fetch_meta['fx:USDJPY'].last_fetched_date の翌日。
-    fetch_meta 不在/NULL なら full 相当（today − backfill_years 年）。
+    差分: fetch_meta['fx:USDJPY'].last_fetched_date に _REFETCH_OVERLAP_DAYS 日重ねた地点
+    （鮮度プローブ・C-1/C-2）。fetch_meta 不在/NULL なら full 相当（today − backfill_years 年）。
+    翌日からではなく重ねて取り直すことで、週末でも直近営業日が窓に必ず入り、アダプタの
+    「0 行＝raise」（ADR-018）が偽失敗にならない。再取得は UPSERT で冪等（ADR-002）。
     """
     last = date.fromisoformat(today)
     if full_backfill:
@@ -49,7 +60,7 @@ def _start_date(*, full_backfill: bool, today: str) -> str:
 
     if last_fetched is None:
         return last.replace(year=last.year - settings.backfill_years).isoformat()
-    return (date.fromisoformat(last_fetched) + timedelta(days=1)).isoformat()
+    return (date.fromisoformat(last_fetched) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
 
 
 def run(*, full_backfill: bool = False, adapter: FxAdapter | None = None) -> JobResult:
@@ -60,7 +71,8 @@ def run(*, full_backfill: bool = False, adapter: FxAdapter | None = None) -> Job
     ADR-018: 例外はジョブ境界で握り JobResult(ok=False) に畳む。
 
     `adapter` 引数でテスト用 fake を注入できる（実 HTTP に出ない＝testing-strategy）。
-    0 行でも ok=True（休場日は差分なしで正常）。取得失敗は ok=False。
+    重ね窓（_REFETCH_OVERLAP_DAYS）により週末でも直近営業日が窓に入るため、0 行は正常では
+    起きない（アダプタが raise する契約＝ADR-018）。取得失敗は ok=False。
     """
     today = date.today().isoformat()
     start = _start_date(full_backfill=full_backfill, today=today)
@@ -90,16 +102,17 @@ def run(*, full_backfill: bool = False, adapter: FxAdapter | None = None) -> Job
     rows = [r for r in rows if r.get("date")]
 
     if not rows:
-        # 0 行は休場日等の正常ケース。カーソルを today まで前進させ再実行で空振りを繰り返さない。
-        repo.upsert_fetch_meta(_SOURCE, today)
-        logger.info(
-            "fetch_fx_rates: 0 行（start=%s〜%s・休場等）。fetch_meta を前進。", start, today
+        # アダプタは 0 行で FxAdapterError を投げる契約（ADR-018: 黙って 0 行にしない）のため、
+        # ここに来るのは契約違反（全行 date 欠落等の壊れた応答）。カーソルは前進させず失敗で返す
+        # （tasks/review-2026-06-12.md C-1: 旧「休場として前進」分岐は契約と矛盾するため撤去）。
+        logger.error(
+            "fetch_fx_rates: アダプタが 0 行を正常返却（契約違反・start=%s〜%s）", start, today
         )
         return JobResult(
             name="fetch_fx_rates",
-            ok=True,
+            ok=False,
             rows=0,
-            detail=f"0 行（start={start}〜{today}）",
+            detail=f"アダプタ契約違反: 0 行（start={start}〜{today}）",
         )
 
     upserted = repo.upsert_fx_rates(rows)

@@ -258,6 +258,12 @@ class YahooUsEquitySource(UsEquitySource):
         無いため None（後続ウェーブで取得日等を充てる判断）。business_summary は
         `.info.longBusinessSummary` を素のまま渡す（既に短く compact 化不要＝ADR-050 段階A・
         テーマタグの信号源。欠損は None）。
+
+        `.info` が空（yfinance の bot 検知/レート制限時は空 dict が返る）＝主要キー
+        （company_name/eps/shares_net 等）が全欠損のときは UsEquityAdapterError を raise する
+        （quotes の「0 行＝raise」と対称・ADR-018: 黙って欠損にしない・
+        tasks/review-2026-06-12.md C-4。全 None の正常返却は呼び出し側の partial UPSERT で
+        既存財務値を NULL 上書きしてしまう）。
         """
         self._throttle()
         try:
@@ -275,7 +281,7 @@ class YahooUsEquitySource(UsEquitySource):
         if operating_margin is not None and net_sales is not None:
             operating_profit = operating_margin * net_sales
 
-        return {
+        snapshot: dict[str, Any] = {
             "company_name": _first(info, ["longName", "shortName", "displayName"]),
             "gics_sector": _first(info, ["sector"]),
             "industry": _first(info, ["industry"]),
@@ -293,6 +299,14 @@ class YahooUsEquitySource(UsEquitySource):
             # テーマタグの信号源（`.info.longBusinessSummary` 素のまま・ADR-050 段階A）。
             "business_summary": _first(info, ["longBusinessSummary"]),
         }
+        # 主要キーが全欠損＝`.info` が空/bot 検知応答とみなして raise（quotes と契約対称・C-4）。
+        # fin_disclosed_date は常に None のため判定から除外する。
+        if all(v is None for k, v in snapshot.items() if k != "fin_disclosed_date"):
+            raise UsEquityAdapterError(
+                f"Yahoo（yfinance）symbol={symbol} の `.info` が空でした"
+                "（bot 検知/レート制限の疑い・ADR-018: 黙って欠損にしない）。"
+            )
+        return snapshot
 
 
 # ソース名 → クラスのレジストリ（settings.us_equity_source を解決）。今は yahoo のみ。
