@@ -1,16 +1,27 @@
 "use client";
 
-// 米株取引入力フォーム（Phase 7(B-2)・ADR-055）。投信 FundTransactionForm のミラー。
-// symbol・side（buy/sell）・shares・price(USD)・traded_at・fx_rate（任意）・note（任意）。
+// 米株取引入力フォーム（Phase 7(B-2)・ADR-055/057）。投信 FundTransactionForm のミラー。新規／編集兼用。
+// symbol・side（buy/sell）・shares・price(USD)・traded_at・fx_rate（任意）・fee（USD・任意＝C-12）・note（任意）。
 // fx_rate 省略時はサーバが約定日レートを解決（未取得なら 400「FX レート未取得」を表示）。
-// 送信成功で onDone(holdings) を呼ぶ（AddUsTransaction は UsHolding[] を返す＝backend 再計算済み）。
+// transactionId なし＝新規（addUsTransaction）。あり＝編集（updateUsTransaction＝C-14・
+// tasks/review-2026-06-12.md）。送信成功で onDone(holdings) を呼ぶ（新規・編集とも UsHolding[] を返す
+// ＝backend 再計算済み）。
 
 import { inputCls, labelCls } from "@/components/ui/Field";
-import { type UsHolding, type UsTransactionInput, addUsTransaction } from "@/lib/api";
-import { useState } from "react";
+import {
+  type UsHolding,
+  type UsTransaction,
+  type UsTransactionInput,
+  addUsTransaction,
+  updateUsTransaction,
+} from "@/lib/api";
+import { useEffect, useState } from "react";
 
 type Props = {
   onDone: (holdings: UsHolding[]) => void;
+  initial?: UsTransaction; // 編集時の既存取引値（無ければ新規）
+  transactionId?: number; // 指定時＝編集モード（updateUsTransaction を使う）
+  onCancel?: () => void; // 編集モードでキャンセルしたとき呼ぶ
 };
 
 type FormState = {
@@ -20,6 +31,7 @@ type FormState = {
   price: string; // USD
   traded_at: string; // YYYY-MM-DD
   fx_rate: string; // USDJPY（任意・空欄でサーバ解決）
+  fee: string; // 手数料（USD・任意＝C-12）
   note: string;
 };
 
@@ -31,7 +43,22 @@ function initialState(): FormState {
     price: "",
     traded_at: new Date().toISOString().slice(0, 10),
     fx_rate: "",
+    fee: "",
     note: "",
+  };
+}
+
+/** UsTransaction（API の型）を編集フォームの FormState に変換する。 */
+function toFormState(t: UsTransaction): FormState {
+  return {
+    side: t.side,
+    symbol: t.symbol,
+    shares: String(t.shares),
+    price: String(t.price),
+    traded_at: t.traded_at,
+    fx_rate: t.fx_rate != null ? String(t.fx_rate) : "",
+    fee: t.fee != null ? String(t.fee) : "",
+    note: t.note ?? "",
   };
 }
 
@@ -43,13 +70,20 @@ function validate(form: FormState): string | null {
   if (form.fx_rate.trim() !== "" && Number(form.fx_rate) <= 0) {
     return "FX レートは正数を入力するのだ（空欄でサーバが解決）";
   }
+  if (form.fee.trim() !== "" && Number(form.fee) < 0) return "手数料は 0 以上を入力するのだ";
   return null;
 }
 
-export function UsTransactionForm({ onDone }: Props) {
-  const [form, setForm] = useState<FormState>(initialState());
+export function UsTransactionForm({ onDone, initial, transactionId, onCancel }: Props) {
+  const editing = transactionId != null;
+  const [form, setForm] = useState<FormState>(initial ? toFormState(initial) : initialState());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // initial が差し替わったら（別の行を編集し始めたら）フォームに反映する。
+  useEffect(() => {
+    if (initial) setForm(toFormState(initial));
+  }, [initial]);
 
   function set<K extends keyof FormState>(k: K, v: FormState[K]) {
     setForm((prev) => ({ ...prev, [k]: v }));
@@ -70,13 +104,16 @@ export function UsTransactionForm({ onDone }: Props) {
         side: form.side,
         shares: Number(form.shares),
         price: Number(form.price),
-        fee: null,
+        fee: form.fee.trim() !== "" ? Number(form.fee) : null,
         traded_at: form.traded_at,
         fx_rate: form.fx_rate.trim() !== "" ? Number(form.fx_rate) : null,
         note: form.note.trim() || null,
       };
-      const holdings = await addUsTransaction(input);
-      setForm(initialState());
+      // 編集モードは update（フォームは onCancel が片付ける）。新規は add（連続入力できるよう初期化）。
+      const holdings = editing
+        ? await updateUsTransaction(transactionId, input)
+        : await addUsTransaction(input);
+      if (!editing) setForm(initialState());
       onDone(holdings);
     } catch (e) {
       // 400「FX レート未取得」もここで表示（ApiError.message に detail が入る）。
@@ -124,6 +161,7 @@ export function UsTransactionForm({ onDone }: Props) {
           placeholder="例: AAPL"
           className={inputCls}
           autoComplete="off"
+          disabled={editing} // 編集時は対象銘柄を変えない（投信の isin と同じ扱い）
         />
       </div>
 
@@ -192,19 +230,36 @@ export function UsTransactionForm({ onDone }: Props) {
         </div>
       </div>
 
-      {/* メモ（任意） */}
-      <div>
-        <label htmlFor="ustx-note" className={labelCls}>
-          メモ（任意）
-        </label>
-        <input
-          id="ustx-note"
-          type="text"
-          value={form.note}
-          onChange={(e) => set("note", e.target.value)}
-          placeholder="例: S&P500 積み立て"
-          className={inputCls}
-        />
+      {/* 手数料・メモ 横並び（fee は C-12＝tasks/review-2026-06-12.md・投信フォームのミラー）*/}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label htmlFor="ustx-fee" className={labelCls}>
+            手数料（USD・任意）
+          </label>
+          <input
+            id="ustx-fee"
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.fee}
+            onChange={(e) => set("fee", e.target.value)}
+            placeholder="0"
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label htmlFor="ustx-note" className={labelCls}>
+            メモ（任意）
+          </label>
+          <input
+            id="ustx-note"
+            type="text"
+            value={form.note}
+            onChange={(e) => set("note", e.target.value)}
+            placeholder="例: S&P500 積み立て"
+            className={inputCls}
+          />
+        </div>
       </div>
 
       {/* エラー表示（400「FX レート未取得」もここに表示） */}
@@ -212,13 +267,31 @@ export function UsTransactionForm({ onDone }: Props) {
         <div className="rounded-md bg-down-weak px-3 py-2 text-[13px] text-down">{error}</div>
       )}
 
-      <button
-        type="submit"
-        disabled={submitting}
-        className="w-full rounded-md border border-accent bg-accent px-4 py-2 font-semibold text-[13px] text-white disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {submitting ? "送信中…" : "取引を記録するのだ"}
-      </button>
+      {/* 送信ボタン（編集時はキャンセルも並べる）*/}
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={submitting}
+          className="flex-1 rounded-md border border-accent bg-accent px-4 py-2 font-semibold text-[13px] text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {submitting
+            ? editing
+              ? "更新中…"
+              : "送信中…"
+            : editing
+              ? "更新するのだ"
+              : "取引を記録するのだ"}
+        </button>
+        {editing && onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md border border-hairline px-4 py-2 text-[13px] text-ink-muted hover:text-ink"
+          >
+            キャンセル
+          </button>
+        )}
+      </div>
     </form>
   );
 }

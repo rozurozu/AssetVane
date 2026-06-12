@@ -34,6 +34,10 @@ export default function WatchlistPage() {
   // 行ごとの「処理中」状態（調査中/削除中の id 集合）。
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
 
+  // 調査/削除の失敗メッセージ（一覧上部に表示・DossierSection の actionErr と対称＝
+  // tasks/review-2026-06-12.md C-13）。次の操作開始時にクリアする。
+  const [actionErr, setActionErr] = useState<string | null>(null);
+
   // 調査間隔の保存中（PATCH 飛行中）の id 集合。調査/削除とは独立に扱う。
   const [intervalBusyIds, setIntervalBusyIds] = useState<Set<number>>(new Set());
 
@@ -90,8 +94,10 @@ export default function WatchlistPage() {
   }
 
   // 調査/再調査（同期・完了まで待つ＝L-23）。完了後に当該行の最終調査日を更新。
+  // 失敗時は行を残し、一覧上部にエラーを表示する（C-13・別途リトライ可）。
   async function onInvestigate(item: WatchlistItem) {
     setBusy(item.id, true);
+    setActionErr(null);
     try {
       const res = await investigateStock(item.code);
       setItems((prev) =>
@@ -101,8 +107,8 @@ export default function WatchlistPage() {
             : w,
         ),
       );
-    } catch {
-      // 失敗時は何もしない（行は残す・別途リトライ可）。
+    } catch (e) {
+      setActionErr(`調査に失敗（${item.code}）: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(item.id, false);
     }
@@ -128,12 +134,16 @@ export default function WatchlistPage() {
   }
 
   // 削除（存在しない id でも 200・楽観的に行を除去）。
+  // 失敗時は行を残し、一覧上部にエラーを表示する（C-13）。
   async function onRemove(item: WatchlistItem) {
     setBusy(item.id, true);
+    setActionErr(null);
     try {
       await removeWatchlist(item.id);
       setItems((prev) => (prev ?? []).filter((w) => w.id !== item.id));
-    } catch {
+    } catch (e) {
+      setActionErr(`削除に失敗（${item.code}）: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
       setBusy(item.id, false);
     }
   }
@@ -176,6 +186,12 @@ export default function WatchlistPage() {
       </div>
 
       <section className="rounded-lg border border-hairline bg-surface-1">
+        {/* 調査/削除の失敗を一覧上部に表示（DossierSection と対称・C-13）。 */}
+        {actionErr && (
+          <div className="border-hairline-soft border-b px-3 py-2 text-[12px] text-down">
+            ⚠ {actionErr}
+          </div>
+        )}
         <StatusBlock
           loading={loading}
           error={error}

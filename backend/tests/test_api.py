@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.advisor.tools.registry import CURRENT_PHASE
 from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
@@ -32,6 +33,14 @@ def test_health(client) -> None:
     assert cost["mode"] == "warn"
     assert cost["month_total_usd"] == 0.0
     assert cost["exceeded"] is False
+
+
+def test_health_phase_matches_current_phase(client) -> None:
+    """/health の phase は Tool ゲートの単一の真実 CURRENT_PHASE と一致する。
+
+    ハードコードに戻ってドリフトしないことの担保（tasks/review-2026-06-12.md C-9）。
+    """
+    assert client.get("/health").json()["phase"] == CURRENT_PHASE
 
 
 def test_health_llm_cost_exceeded(client, monkeypatch: pytest.MonkeyPatch) -> None:

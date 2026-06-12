@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from app.advisor import router as advisor_router
 from app.advisor.mcp_server import mount_mcp, session_manager_lifespan
+from app.advisor.tools.registry import CURRENT_PHASE
 from app.batch import run_nightly
 from app.config import settings
 from app.db import repo
@@ -161,7 +162,9 @@ def health() -> dict[str, object]:
         "status": "ok",
         "service": "assetvane-backend",
         "version": app.version,
-        "phase": 6,
+        # 投入フェーズは Tool ゲートの単一の真実 CURRENT_PHASE を参照する
+        # （ハードコードしない＝tasks/review-2026-06-12.md C-9）。
+        "phase": CURRENT_PHASE,
         "db": "ok" if healthcheck() else "error",
         "env": settings.env_status(),
         "llm_cost": {

@@ -9,8 +9,12 @@ from __future__ import annotations
 import io
 import zipfile
 
+import pytest
+
 from app.adapters.edinet import (
+    EdinetAdapterError,
     _extract_business_text,
+    _extract_results,
     _normalize_doc,
     _strip_html,
 )
@@ -52,6 +56,39 @@ def test_normalize_doc_maps_external_keys() -> None:
         "submit_datetime": "2025-06-25 09:00",
         "csv_flag": "1",
     }
+
+
+def test_extract_results_raises_on_abnormal_metadata_status() -> None:
+    """metadata.status が "200" 以外の異常応答は EdinetAdapterError に倒す。
+
+    EDINET は障害を HTTP 200＋metadata.status で返すことがあり、提出ゼロの日と同一視すると
+    クロールカーソルが前進して有報を静かに取りこぼす（黙って 0 行にしない＝ADR-018・
+    tasks/review-2026-06-12.md C-8）。
+    """
+    payload = {
+        "metadata": {"status": "500", "message": "Internal Server Error"},
+        # 障害応答でも results キーが付くことがある想定（status が真実）。
+        "results": [],
+    }
+    with pytest.raises(EdinetAdapterError, match="500"):
+        _extract_results(payload, date="2026-06-11")
+    # metadata 自体が欠けた想定外応答も raise（status 検証を素通りさせない）。
+    with pytest.raises(EdinetAdapterError):
+        _extract_results({"results": []}, date="2026-06-11")
+
+
+def test_extract_results_status_200_without_results_is_empty() -> None:
+    """status "200" で results 欠落（キー無し/None）は提出ゼロの日＝正規の空 []（C-8）。"""
+    assert _extract_results({"metadata": {"status": "200"}}, date="2026-06-11") == []
+    assert (
+        _extract_results({"metadata": {"status": "200"}, "results": None}, date="2026-06-11") == []
+    )
+    # 正常応答（results あり）はそのまま返る。
+    docs = [{"docID": "S100ABCD"}]
+    assert (
+        _extract_results({"metadata": {"status": "200"}, "results": docs}, date="2026-06-11")
+        == docs
+    )
 
 
 def test_strip_html_removes_tags_and_unescapes() -> None:

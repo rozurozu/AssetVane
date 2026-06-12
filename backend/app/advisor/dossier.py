@@ -20,6 +20,12 @@ ADR-050: テーマタグ段階B。ドシエ要約（summary_md）を company_des
 atomic に束ねる境界は **呼び出し側**（REST ルータ／夜間巡回ジョブ）が
 `with get_engine().begin() as conn:` で所有する（repo の W2 規約と同じ流儀＝書き手は FastAPI
 1 プロセス）。
+
+書きロック保持の最小化（tasks/review-2026-06-12.md C-6）: pysqlite は**最初の DML まで
+BEGIN（SQLite の書きロック取得）を遅延**するため、ニュース取得・LLM 要約（数十秒かかる
+await）を**全部終えてから**書き込みだけを末尾に束ねる段取りに再構成した。これで呼び出し側
+begin() 配下でも書きロックの保持は upsert 群の一瞬だけになり、昼チャット経由の調査中に他の
+書き込み（取引登録等）が busy_timeout=5000ms を超えて `database is locked` になる事態を防ぐ。
 """
 
 from __future__ import annotations
@@ -77,6 +83,14 @@ async def investigate_stock(
     `fetch_news` に渡す社名はこの呼び出し側で `repo.get_stock` から解決する（解決できない
     場合は code をそのまま社名として渡す＝検索が空振りしても落とさない）。
 
+    トランザクション内の段取り（tasks/review-2026-06-12.md C-6）: ニュース取得・LLM 要約
+    （await）を**全部終えてから**書き込み（最初の DML）を末尾に束ねる。pysqlite は最初の DML
+    まで BEGIN（SQLite の書きロック取得）を遅延するため、これで書きロックの保持が upsert 群の
+    一瞬だけになり、LLM の数十秒間に他の書き込みを `database is locked` で阻害しない。
+    意味の変化（意図したもの）: 従来は LLM 要約**前**に news を upsert していたが、再構成後は
+    LLM 失敗（例外・タイムアウト）時に DML 自体が発行されず、news もドシエも DB には何も
+    書かれない（原子的）。
+
     Args:
         conn: 書き込み接続（呼び出し側が `with get_engine().begin()` で所有・commit しない）。
         code: 調査対象の銘柄コード。
@@ -85,6 +99,8 @@ async def investigate_stock(
         `{code, summary_md, key_facts, last_investigated_at, n_sources_added}`（spec §4 正本）。
         key_facts は JSON 文字列（dossier_sources/stock_dossiers に保存した生の形）。
     """
+    # ── 前段: 読み取り＋await のみ（DML を発行しない＝書きロックを取らない・C-6） ──
+
     # 1. 財務の事実（data レーン・ADR-014）。AI には計算させず、この事実を要約に渡す。
     financials = repo.get_financials(conn, code)
 
@@ -98,7 +114,17 @@ async def investigate_stock(
     #    統合コーパス news の存在確認（ADR-044・旧 dossier_source_exists を置換）。
     new_articles = [a for a in articles if not repo.news_exists(conn, a["url"])]
 
-    # 4. 新着のみ統合コーパス news に記録（本文は保存しない＝summary と url のみ・ADR-020/044）。
+    # 4. 既存ドシエ（living document）を読む。
+    existing = repo.get_dossier(conn, code)
+
+    # 5. LLM 単発で要約更新（Tool ループ不要・記事は「短い要約」のみ渡す・ADR-014/020）。
+    #    ここまで DML を 1 つも発行していないので、LLM が失敗してもまだ DB には何も書かれて
+    #    いない（原子的・tasks/review-2026-06-12.md C-6）。
+    summary_md, key_facts = await summarize_dossier(existing, financials, new_articles)
+
+    # ── 後段: 書き込みだけを束ねる（最初の DML はここ＝書きロック保持は upsert 群の間のみ） ──
+
+    # 6. 新着のみ統合コーパス news に記録（本文は保存しない＝summary と url のみ・ADR-020/044）。
     #    銘柄ニュースは level="stock"＋code でタグ付けし、旧 source_type は news の source へ移す
     #    （fetched_at は upsert_news が UTC now を補填する）。
     news_rows = [
@@ -117,12 +143,6 @@ async def investigate_stock(
         for a in new_articles
     ]
     repo.upsert_news(conn, news_rows)
-
-    # 5. 既存ドシエ（living document）を読む。
-    existing = repo.get_dossier(conn, code)
-
-    # 6. LLM 単発で要約更新（Tool ループ不要・記事は「短い要約」のみ渡す・ADR-014/020）。
-    summary_md, key_facts = await summarize_dossier(existing, financials, new_articles)
 
     # 7. ドシエ本体を UPSERT（last_investigated_at を前進・stale 起点）。
     now = _now_iso()

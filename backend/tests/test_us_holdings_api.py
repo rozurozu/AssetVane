@@ -3,6 +3,8 @@
 担保（Phase 7(B-2)・ADR-057）:
 - POST /us-transactions（AAPL buy）→ GET /us-holdings で JPY 評価額が返る。
 - fx_rate 未指定＋fx_rates 空 → 400。
+- PUT /us-transactions/{id} で編集 → us_holdings 再計算（C-14＝tasks/review-2026-06-12.md・
+  JP test_put_transaction_recalcs_holdings のミラー）。存在しない id は 404。
 - DELETE /us-transactions/{id} で全売却 → us_holdings から消える。
 - GET /asset-overview に「米国株」スライスが乗り total に合算。
 - AI Tool handle_get_us_holdings が JPY 評価を返す。
@@ -157,6 +159,148 @@ def test_post_us_transaction_returns_400_when_no_fx(client) -> None:
             "shares": 1.0,
             "price": 190.0,
             "traded_at": "2026-06-10",
+            # fx_rate を渡さない
+        },
+    )
+    assert resp.status_code == 400
+    assert "FX" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# PUT /us-transactions/{id}（編集 → us_holdings 再導出・C-14）
+# ---------------------------------------------------------------------------
+
+
+def test_put_us_transaction_recalcs_holdings(client) -> None:
+    """PUT で株数・単価・fee・fx_rate を変更すると us_holdings が再計算される（ADR-057/019）。"""
+    _seed_master("AAPL")
+    _seed_fx(155.0)
+    _seed_quote("AAPL", 200.0)
+
+    create = client.post(
+        "/us-transactions",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "shares": 10.0,
+            "price": 190.0,
+            "traded_at": "2026-06-10",
+            "fx_rate": 154.0,
+        },
+    )
+    assert create.status_code == 201
+    txn_id = client.get("/us-transactions").json()[0]["id"]
+
+    # 株数 20・単価 195・fee 1.5・fx_rate 150 に編集
+    resp = client.put(
+        f"/us-transactions/{txn_id}",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "shares": 20.0,
+            "price": 195.0,
+            "fee": 1.5,
+            "traded_at": "2026-06-10",
+            "fx_rate": 150.0,
+        },
+    )
+    assert resp.status_code == 200
+    holdings = resp.json()
+    assert len(holdings) == 1
+    h = holdings[0]
+    assert h["shares"] == 20.0
+    assert h["avg_cost"] == pytest_approx(195.0)
+    # avg_cost_jpy = 195 × 150 = 29250 → cost_jpy = 20 × 29250 = 585000
+    assert h["cost_jpy"] == pytest_approx(585_000.0)
+
+    # 取引履歴にも編集が反映される（fee / fx_rate）
+    txn = client.get("/us-transactions").json()[0]
+    assert txn["shares"] == 20.0
+    assert txn["fee"] == pytest_approx(1.5)
+    assert txn["fx_rate"] == pytest_approx(150.0)
+
+
+def test_put_us_transaction_404_when_not_found(client) -> None:
+    """存在しない取引 id への PUT は 404（C-14・JP test_put_transaction_404 のミラー）。"""
+    _seed_master("AAPL")
+    _seed_fx(155.0)
+    resp = client.put(
+        "/us-transactions/99999",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "shares": 1.0,
+            "price": 190.0,
+            "traded_at": "2026-06-10",
+            "fx_rate": 154.0,
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_put_us_transaction_symbol_change_recalcs_both(client) -> None:
+    """symbol を変える PUT は旧 symbol 側の保有も再導出する（米株 recalc は symbol 単位・C-14）。"""
+    _seed_master("AAPL")
+    _seed_master("MSFT")
+    _seed_fx(155.0)
+
+    client.post(
+        "/us-transactions",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "shares": 5.0,
+            "price": 190.0,
+            "traded_at": "2026-06-10",
+            "fx_rate": 154.0,
+        },
+    )
+    txn_id = client.get("/us-transactions").json()[0]["id"]
+
+    resp = client.put(
+        f"/us-transactions/{txn_id}",
+        json={
+            "symbol": "MSFT",
+            "side": "buy",
+            "shares": 5.0,
+            "price": 400.0,
+            "traded_at": "2026-06-10",
+            "fx_rate": 154.0,
+        },
+    )
+    assert resp.status_code == 200
+    holdings = resp.json()
+    # 旧 AAPL の保有行は消え、MSFT のみ残る
+    assert [h["symbol"] for h in holdings] == ["MSFT"]
+
+
+def test_put_us_transaction_400_when_no_fx(client) -> None:
+    """fx_rate 省略かつ fx_rates が空のとき PUT も 400（POST と同じ解決順・C-14）。"""
+    _seed_master("AAPL")
+    _seed_fx(155.0, date="2026-06-10")
+
+    client.post(
+        "/us-transactions",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "shares": 1.0,
+            "price": 190.0,
+            "traded_at": "2026-06-10",
+            "fx_rate": 154.0,
+        },
+    )
+    txn_id = client.get("/us-transactions").json()[0]["id"]
+
+    # 約定日を FX 未取得日（過去側）に変えつつ fx_rate を省略 → 400
+    resp = client.put(
+        f"/us-transactions/{txn_id}",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "shares": 1.0,
+            "price": 190.0,
+            "traded_at": "2026-06-01",
             # fx_rate を渡さない
         },
     )

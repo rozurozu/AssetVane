@@ -1396,7 +1396,7 @@ export type UsQuote = {
   adj_close: number | null;
 };
 
-// --- Phase 7(B-2) 米国株保有管理（ADR-055・GET /us-holdings・GET/POST/DELETE /us-transactions）---
+// --- Phase 7(B-2) 米国株保有管理（ADR-055・GET /us-holdings・GET/POST/PUT/DELETE /us-transactions）---
 // backend routers/us_holdings.py の Pydantic（UsHoldingOut / UsTransactionOut）と 1:1。
 // price は USD・fx_rate は USDJPY レート（省略時はサーバが約定日レートを解決）。
 // 評価系（market_value_jpy 等）は FX 未取得 or close 未取得のとき null になる。
@@ -1434,7 +1434,7 @@ export type UsTransaction = {
   note: string | null;
 };
 
-/** `POST /us-transactions` リクエスト（UsTransactionIn と 1:1）。
+/** `POST/PUT /us-transactions` リクエスト（UsTransactionIn と 1:1）。
  * fx_rate 省略時はサーバが約定日レートを解決。未取得なら 400「FX レート未取得」が throw される。 */
 export type UsTransactionInput = {
   symbol: string;
@@ -1505,6 +1505,13 @@ export function listUsTransactions(signal?: AbortSignal): Promise<UsTransaction[
  * fx_rate 省略時はサーバが約定日レートを解決（未取得なら 400「FX レート未取得」が ApiError で throw）。 */
 export function addUsTransaction(input: UsTransactionInput): Promise<UsHolding[]> {
   return postJSON<UsHolding[]>("/us-transactions", input);
+}
+
+/** 米株取引を更新（PUT /us-transactions/{id}・C-14＝tasks/review-2026-06-12.md）。
+ * 更新後の全保有 UsHolding[] を返す。存在しない id は 404。
+ * fx_rate 省略時はサーバが約定日レートを解決（未取得なら 400「FX レート未取得」が ApiError で throw）。 */
+export function updateUsTransaction(id: number, input: UsTransactionInput): Promise<UsHolding[]> {
+  return putJSON<UsHolding[]>(`/us-transactions/${id}`, input);
 }
 
 /** 米株取引を削除（DELETE /us-transactions/{id}）。更新後の全保有 UsHolding[] を返す。 */

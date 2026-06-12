@@ -1,6 +1,7 @@
 """米株保有・取引の REST ルータ（Phase 7(B-2)／ADR-057）。
 
-GET /us-holdings・GET /us-transactions・POST /us-transactions・DELETE /us-transactions/{txn_id}。
+GET /us-holdings・GET /us-transactions・POST/PUT/DELETE /us-transactions（PUT は C-14＝
+tasks/review-2026-06-12.md・JP/投信の編集 PUT のミラー）。
 取引登録→holdings 再導出→評価額付き保有を返す形は routers/funds.py の post_fund_transaction と
 同構造。評価額（JPY）は value_us_holdings が計算し、router は事実を Pydantic に詰めるだけ
 （AI に数値を計算させない・ADR-014）。DB に触れるのは FastAPI だけ（ADR-005）。
@@ -26,7 +27,7 @@ router = APIRouter(tags=["us-holdings"])
 
 
 class UsTransactionIn(BaseModel):
-    """POST /us-transactions の body（ADR-057）。
+    """POST/PUT /us-transactions の body（ADR-057・PUT は C-14＝tasks/review-2026-06-12.md）。
 
     fx_rate 省略時は約定日の fx_rates を自動解決する。それも無ければ 400。
     """
@@ -175,6 +176,67 @@ def post_us_transaction(body: UsTransactionIn) -> list[UsHoldingOut]:
     with get_engine().begin() as conn:
         repo.insert_us_transaction(conn, row)
         recalc_us_holdings(conn, body.symbol)
+        return _build_us_holdings(conn)
+
+
+@router.put("/us-transactions/{txn_id}", response_model=list[UsHoldingOut])
+def put_us_transaction(txn_id: int, body: UsTransactionIn) -> list[UsHoldingOut]:
+    """米株取引を更新し us_holdings を再計算して返す（ADR-057・ADR-019・C-14）。
+
+    JP PUT /transactions・投信 PUT /fund-transactions のミラー（tasks/review-2026-06-12.md C-14）。
+    1. 存在確認＆旧 symbol を取得（無ければ 404）。
+    2. body.symbol の存在確認（us_stocks に無ければ 404）。
+    3. fx_rate 解決: POST と同じ（body 明示 → 約定日の fx_rates → どちらも無ければ 400）。
+    4. us_transactions を UPDATE（fee/note は None でもクリアとして書く）。
+    5. recalc_us_holdings で us_holdings を入れ替え（ADR-019）。symbol を変更した編集は
+       旧 symbol 側も再導出する（米株の recalc は symbol 単位のため・JP は portfolio 単位で不要）。
+    6. 更新後 us_holdings を JPY 評価額付きで返す。
+    1〜6 は同じトランザクション内で行い、中間状態を残さない。
+    """
+    # side 検証（Pydantic では弾けない enum 値を事前確認・POST と同型）
+    if body.side not in {"buy", "sell"}:
+        raise HTTPException(status_code=400, detail="side は 'buy' または 'sell' のみ有効です。")
+
+    with get_engine().begin() as conn:
+        existing = repo.get_us_transaction(conn, txn_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"米株取引 {txn_id} は存在しません。")
+        old_symbol = str(existing["symbol"])
+
+        # symbol の存在確認（us_stocks FK 親の事前チェック・POST と同型）
+        if repo.get_us_stock(conn, body.symbol) is None:
+            raise HTTPException(status_code=404, detail=f"未知の米株 symbol: {body.symbol}")
+
+        # fx_rate 解決（POST と同じ順: body 明示 → 約定日の fx_rates → 400）
+        if body.fx_rate is not None:
+            fx_rate = body.fx_rate
+        else:
+            fx_row = repo.get_fx_rate_on(conn, "USDJPY", body.traded_at)
+            if fx_row is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "FX レート未取得（先に fetch_fx_rates を回すか fx_rate を明示してください）"
+                    ),
+                )
+            fx_rate = float(fx_row["rate"])
+
+        # 取引更新と us_holdings 再導出を atomic にする（ADR-019）。
+        # fee/note は JP/投信 PUT と同様に無条件で書く（None＝クリアできるように）。
+        row: dict = {
+            "symbol": body.symbol,
+            "side": body.side,
+            "shares": body.shares,
+            "price": body.price,
+            "fee": body.fee,
+            "traded_at": body.traded_at,
+            "fx_rate": fx_rate,
+            "note": body.note,
+        }
+        repo.update_us_transaction(conn, txn_id, row)
+        recalc_us_holdings(conn, body.symbol)
+        if old_symbol != body.symbol:
+            recalc_us_holdings(conn, old_symbol)
         return _build_us_holdings(conn)
 
 

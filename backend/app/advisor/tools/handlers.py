@@ -693,6 +693,8 @@ async def handle_propose_trade(args: dict[str, object]) -> dict[str, Any]:
     ここでは引数を検証し、銘柄を JP→US で解決して AI に手応え（company_name/market）を返す。
     未知コードは {"error": ...} を返して AI に修正を促す（起票の真の権限は persist 側の drop＝
     防御多重化・ADR-018）。数値（株数・金額）は受けない＝方向と根拠だけ（ADR-014）。
+    DB アクセス（銘柄解決）も try で握って {"error": ...} に倒す（handlers 規約＝dispatch
+    ループを落とさない・tasks/review-2026-06-12.md C-5）。
     """
     try:
         parsed = ProposeTradeArgs.model_validate(args)
@@ -700,8 +702,12 @@ async def handle_propose_trade(args: dict[str, object]) -> dict[str, Any]:
         logger.warning("handle_propose_trade: 引数が不正（%s）", args)
         return {"error": str(exc)}
 
-    with get_engine().connect() as conn:
-        target = resolve_trade_target(conn, parsed.code)
+    try:
+        with get_engine().connect() as conn:
+            target = resolve_trade_target(conn, parsed.code)
+    except Exception as exc:
+        logger.exception("handle_propose_trade 失敗")
+        return {"error": str(exc)}
     if target is None:
         return {
             "error": f"銘柄 {parsed.code} が見つからない（JP 5 桁コードか US ティッカーを確認）。"

@@ -142,8 +142,10 @@ class EdinetAdapter:
         """指定提出日（YYYY-MM-DD）の書類一覧を正規化して返す（書類一覧 API・type=2）。
 
         外部キー名（docID/secCode/docTypeCode/...）→ 内部名（doc_id/sec_code/...）の正規化を
-        このアダプタに閉じ込める（ADR-010）。`results` が無い/空の日（休場・提出ゼロ）は空リスト。
-        提出ゼロは正規の空であり例外にしない（呼び出し側はカーソルを進めてよい）。
+        このアダプタに閉じ込める（ADR-010）。EDINET は障害を HTTP 200＋`metadata.status` で
+        返すことがあるため、status "200" 以外は EdinetAdapterError に倒す（黙って 0 行に
+        しない＝ADR-018・tasks/review-2026-06-12.md C-8）。検証を通った後の `results` 欠落は
+        提出ゼロの日（休場等）＝正規の空として空リストを返す（呼び出し側はカーソルを進めてよい）。
 
         Returns:
             各 dict = {doc_id, sec_code, doc_type_code, filer_name, period_end,
@@ -160,9 +162,7 @@ class EdinetAdapter:
                     f"documents.json の JSON 解析に失敗（date={date}）: {exc}"
                 ) from exc
 
-        results = payload.get("results")
-        if not isinstance(results, list):
-            return []
+        results = _extract_results(payload, date=date)
         return [_normalize_doc(raw) for raw in results if isinstance(raw, dict)]
 
     def fetch_business_description(self, doc_id: str) -> dict[str, Any] | None:
@@ -187,6 +187,39 @@ class EdinetAdapter:
         if not text:
             return None
         return {"doc_id": doc_id, "text": text}
+
+
+def _extract_results(payload: Any, *, date: str) -> list[Any]:
+    """書類一覧レスポンスから results を取り出す（metadata.status 検証込み・ADR-018）。
+
+    EDINET API は障害を HTTP 200＋`metadata.status`（"200" 以外）で返すことがある。これを
+    「提出ゼロの日」と同一視するとクロールカーソルが前進し、その提出日の有報を静かに
+    取りこぼすため、status "200" 以外は EdinetAdapterError に倒す（黙って 0 行にしない＝
+    ADR-018・tasks/review-2026-06-12.md C-8）。検証を通った後の `results` 欠落（キー無し/None）
+    は提出ゼロの日＝正規の空として [] を返す。status "200" なのに results が list でない形は
+    想定外の応答としてこれも raise する（取りこぼし防止を優先）。
+    """
+    if not isinstance(payload, dict):
+        raise EdinetAdapterError(
+            f"documents.json の応答が想定外（date={date}・{type(payload).__name__}）"
+        )
+    metadata = payload.get("metadata")
+    status = metadata.get("status") if isinstance(metadata, dict) else None
+    # EDINET v2 の status は文字列 "200" だが、数値で返る変化にも備えて str 比較で吸収する。
+    if str(status) != "200":
+        message = metadata.get("message") if isinstance(metadata, dict) else None
+        raise EdinetAdapterError(
+            f"documents.json が異常応答（date={date}・metadata.status={status!r}"
+            f"・message={message!r}）。提出ゼロの日とは区別しカーソルを進めない。"
+        )
+    results = payload.get("results")
+    if results is None:
+        return []
+    if not isinstance(results, list):
+        raise EdinetAdapterError(
+            f"documents.json の results が list でない（date={date}・{type(results).__name__}）"
+        )
+    return results
 
 
 def _normalize_doc(raw: dict[str, Any]) -> dict[str, Any]:

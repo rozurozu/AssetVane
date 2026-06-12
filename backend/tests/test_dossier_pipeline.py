@@ -9,6 +9,7 @@
 - 旧 source_type を news.source へ移し level="stock"＋code でタグ付けする（ADR-044）。
 - since（today-7d）が fetch_news に正しく渡る（取得下限）。
 - summarize_dossier に渡るのが「記事の要約と財務事実のみ」で、全文を載せない（ADR-014）。
+- LLM 要約失敗時は DML 自体が発行されず部分書き込みが残らない（C-6・tasks/review-2026-06-12.md）。
 
 LLM（engine.generate_once）と fetch_news は必ずモック（ネットを叩かない＝testing-strategy）。
 DB は一時 SQLite。dossier は provider 解決を engine.generate_once（遅延 import）経由で呼ぶため、
@@ -242,6 +243,47 @@ def test_summarize_receives_only_digests_not_full_text(
     assert "body" not in payload["new_articles"][0]
     assert _ARTICLE["body"] not in user_msg["content"]
     assert cap["source"] == "dossier"
+
+
+def test_investigate_no_partial_write_when_summarize_fails(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """LLM 要約が例外を投げたら DB へ部分書き込みが残らない（news もドシエも書かれない）。
+
+    tasks/review-2026-06-12.md C-6 の再構成（await を全部終えてから書き込みを束ねる）の担保。
+    upsert_news が LLM 失敗時に一度も呼ばれないこと（＝要約前に DML を発行せず SQLite の
+    書きロックを取らないこと）と、呼び出し側 begin() のロールバック後に DB が空のままで
+    あることの両方を確認する。
+    """
+    repo.upsert_stocks([STOCK])
+    _stub_fetch_news(monkeypatch, [_ARTICLE])
+
+    async def _broken_generate(messages, *, source="chat"):  # noqa: ANN001
+        raise RuntimeError("LLM 呼び出し失敗（タイムアウト想定）")
+
+    monkeypatch.setattr(engine, "generate_once", _broken_generate)
+
+    # upsert_news の呼び出しをスパイする（dossier は repo モジュール属性経由で呼ぶ）。
+    calls: list[int] = []
+    original_upsert_news = repo.upsert_news
+
+    def _spy_upsert_news(conn, rows):  # noqa: ANN001
+        calls.append(len(rows))
+        return original_upsert_news(conn, rows)
+
+    monkeypatch.setattr(repo, "upsert_news", _spy_upsert_news)
+
+    with pytest.raises(RuntimeError):
+        with get_engine().begin() as conn:
+            _run(dossier.investigate_stock(conn, "7203"))
+
+    # LLM 失敗時は news の DML 自体が発行されない（C-6: 要約前に書きロックを取らない）。
+    assert calls == []
+    # ロールバック後、news・ドシエ・company_descriptions のいずれも書かれていない（原子的）。
+    with get_engine().connect() as conn:
+        assert repo.get_dossier(conn, "7203") is None
+        assert repo.list_news(conn, level="stock", code="7203") == []
+        assert repo.get_company_description(conn, "JP", "7203") is None
 
 
 def test_summarize_keeps_existing_on_broken_json(

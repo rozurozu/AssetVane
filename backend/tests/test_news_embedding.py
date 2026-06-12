@@ -5,7 +5,8 @@
   list_news_needing_embedding（未埋め込み/モデル不一致/summary 空除外）・update_news_embedding。
 - service: search_news_corpus が機能オフ時 items 空＋reason／オン時（embed_texts mock）ランク返し。
   ingest_user_news の即時埋め込みが失敗しても貼付は成功する。
-- job: embed_news が未設定で skip／設定時（mock）に null 行を埋める。
+- job: embed_news が未設定で skip／設定時（mock）に null 行を埋める。機能有効なのに API 失敗なら
+  ok=False（tag 系と契約対称・ADR-018・tasks/review-2026-06-12.md C-7。成功済み埋め込みは永続）。
 - endpoint: GET /news/search が 200 で items を返す（embed_texts mock）。
 
 本物の DB に触れず一時 SQLite（temp_db / client）で回す。embedding は mock（ネットに出ない）。
@@ -234,7 +235,7 @@ def test_embed_news_skips_when_disabled(temp_db, monkeypatch) -> None:
 
 
 def test_embed_news_fills_null_rows(temp_db, monkeypatch) -> None:
-    """設定時（embed_texts mock）に未埋め込み行を埋める（ADR-045）。"""
+    """全バッチ成功時は ok=True で未埋め込み行を埋める（ADR-045・review-2026-06-12 C-7）。"""
     from app.batch.jobs import embed_news
 
     n1 = _insert_news("https://x/a", embedding=None)
@@ -256,6 +257,64 @@ def test_embed_news_fills_null_rows(temp_db, monkeypatch) -> None:
     assert rows[n1]["embedding"] is not None
     assert rows[n1]["embed_model"] == "m1"
     assert rows[n2]["embedding"] is not None
+
+
+def test_embed_news_failed_batch_returns_not_ok(temp_db, monkeypatch) -> None:
+    """機能有効なのに API 失敗なら ok=False（tag 系と契約対称・ADR-018・review-2026-06-12 C-7）。
+
+    ok=True のままだと runner の通知に乗らず意味検索が静かに陳腐化するため、
+    failed_batches > 0 で ok=False に倒すことを担保する。
+    """
+    from app.batch.jobs import embed_news
+
+    _insert_news("https://x/fail", embedding=None)
+
+    monkeypatch.setattr(embed_news, "embedding_enabled", lambda: True)
+    monkeypatch.setattr(settings, "embedding_model", "m1")
+
+    async def _boom(texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("embeddings API down")
+
+    monkeypatch.setattr(embed_news, "embed_texts", _boom)
+    result = embed_news.run()
+
+    assert result.ok is False
+    assert result.rows == 0
+    assert "バッチ失敗" in result.detail
+
+
+def test_embed_news_partial_success_persists_then_not_ok(temp_db, monkeypatch) -> None:
+    """途中失敗でも成功済み埋め込みは永続し ok=False（自己回復性維持・ADR-018・C-7）。
+
+    1 バッチ目成功→2 バッチ目失敗のとき、成功分の embedding は残り（翌晩は未埋め込み分だけ
+    再試行される）、結果は ok=False で通知に乗ることを担保する。
+    """
+    from app.batch.jobs import embed_news
+
+    _insert_news("https://x/a", embedding=None)
+    _insert_news("https://x/b", embedding=None)
+
+    monkeypatch.setattr(embed_news, "embedding_enabled", lambda: True)
+    monkeypatch.setattr(settings, "embedding_model", "m1")
+    monkeypatch.setattr(embed_news, "EMBED_BATCH", 1)  # 2 バッチに分割させる
+
+    calls = {"n": 0}
+
+    async def _fail_on_second(texts: list[str]) -> list[list[float]]:
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise RuntimeError("embeddings API down")
+        return [[0.5, 0.5] for _ in texts]
+
+    monkeypatch.setattr(embed_news, "embed_texts", _fail_on_second)
+    result = embed_news.run()
+
+    assert result.ok is False
+    assert result.rows == 1  # 1 バッチ目の成功分は数えられている
+    with get_engine().connect() as conn:
+        rows = conn.execute(news.select()).mappings().all()
+    embedded = [r for r in rows if r["embedding"] is not None]
+    assert len(embedded) == 1  # 成功済み埋め込みは rollback されず永続
 
 
 # ---------------------------------------------------------------------------

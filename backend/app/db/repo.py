@@ -2479,6 +2479,16 @@ def get_us_transaction(conn: Connection, txn_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def update_us_transaction(conn: Connection, txn_id: int, row: dict[str, Any]) -> None:
+    """us_transactions の id 行を更新する（ADR-019/057・update_transaction 同型・C-14）。
+
+    row には symbol/side/shares/price/fee/traded_at/fx_rate/note を含める。
+    commit はしない。取引更新と us_holdings 再導出を atomic にするため、呼び出し側が
+    `with get_engine().begin()` で境界を所有する（W2）。
+    """
+    conn.execute(us_transactions.update().where(us_transactions.c.id == txn_id).values(**row))
+
+
 def delete_us_transaction(conn: Connection, txn_id: int) -> None:
     """us_transactions の id 行を削除する（ADR-019/057）。
 

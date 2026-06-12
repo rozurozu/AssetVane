@@ -3,6 +3,8 @@
 担保すること:
 - embedding 未設定なら静かに skip（ok=True・rows=0・ADR-006）。
 - 設定時（embed_texts mock）に未埋め込みテーマへ embedding/embed_model が書かれる（ADR-045）。
+- 機能有効なのに API 失敗なら ok=False（tag 系と契約対称・ADR-018・
+  tasks/review-2026-06-12.md C-7。成功済み埋め込みは永続＝自己回復性維持）。
 - near_dup 閾値内（余弦距離 <= 0.15）なら near_duplicate_of がフラグされる。
 - 閾値外（直交ベクトル）ならフラグされない（None のまま）。
 - 自動マージはされない＝近接でも themes の行数は不変（候補提示のみ・ADR-050）。
@@ -46,8 +48,58 @@ def test_skips_when_disabled(temp_db, monkeypatch) -> None:
     assert "skip" in result.detail
 
 
+def test_failed_batch_returns_not_ok(temp_db, monkeypatch) -> None:
+    """機能有効なのに API 失敗なら ok=False（tag 系と契約対称・ADR-018・review-2026-06-12 C-7）。
+
+    ok=True のままだと runner の通知に乗らず語彙の埋め込みが静かに陳腐化するため、
+    failed_batches > 0 で ok=False に倒すことを担保する。
+    """
+    repo.insert_themes_if_absent(["生成AI"], "2026-06-01T00:00:00+00:00")
+    monkeypatch.setattr(embed_themes, "embedding_enabled", lambda: True)
+    monkeypatch.setattr(settings, "embedding_model", "m1")
+
+    async def _boom(texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("embeddings API down")
+
+    monkeypatch.setattr(embed_themes, "embed_texts", _boom)
+    result = embed_themes.run()
+
+    assert result.ok is False
+    assert result.rows == 0
+    assert "バッチ失敗" in result.detail
+
+
+def test_partial_success_persists_then_not_ok(temp_db, monkeypatch) -> None:
+    """途中失敗でも成功済み埋め込みは永続し ok=False（自己回復性維持・ADR-018・C-7）。
+
+    1 バッチ目成功→2 バッチ目失敗のとき、成功分の embedding/embed_model は残り
+    （翌晩は未埋め込み分だけ再試行される）、結果は ok=False で通知に乗ることを担保する。
+    """
+    repo.insert_themes_if_absent(["生成AI", "防衛"], "2026-06-01T00:00:00+00:00")
+    monkeypatch.setattr(embed_themes, "embedding_enabled", lambda: True)
+    monkeypatch.setattr(settings, "embedding_model", "m1")
+    monkeypatch.setattr(embed_themes, "_EMBED_BATCH", 1)  # 2 バッチに分割させる
+
+    calls = {"n": 0}
+
+    async def _fail_on_second(texts: list[str]) -> list[list[float]]:
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise RuntimeError("embeddings API down")
+        return [[1.0, 0.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(embed_themes, "embed_texts", _fail_on_second)
+    result = embed_themes.run()
+
+    assert result.ok is False
+    assert result.rows == 1  # 1 バッチ目の成功分は数えられている
+    rows = _theme_rows()
+    embedded = [r for r in rows.values() if r["embedding"] is not None]
+    assert len(embedded) == 1  # 成功済み埋め込みは rollback されず永続
+
+
 def test_embeds_and_writes_model(temp_db, monkeypatch) -> None:
-    """未埋め込みテーマに embedding/embed_model が書かれる（ADR-045/050）。"""
+    """全バッチ成功時は ok=True で embedding/embed_model が書かれる（ADR-045/050・C-7）。"""
     repo.insert_themes_if_absent(["生成AI", "防衛"], "2026-06-01T00:00:00+00:00")
     _setup_embedding(monkeypatch, {"生成AI": [1.0, 0.0, 0.0], "防衛": [0.0, 1.0, 0.0]})
 

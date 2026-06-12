@@ -298,7 +298,7 @@ FX 基盤と米株保有管理。**日本株保有（`/holdings`/`/transactions`
 | GET | `/us-holdings` | 米株の現在保有一覧（USD/JPY 両評価・含み損益つき）|
 | GET | `/us-transactions` | 米株の取引履歴（新しい順）|
 | POST | `/us-transactions` | 米株取引の記録 → `us_holdings` 再計算。`fx_rate` 解決順: body 明示 → 約定日 FX（`fx_rates` から取得）→ どちらもなければ 400 |
-| PUT | `/us-transactions/{id}` | 米株取引の編集 → 再計算後の保有を返す（存在しない id は 404）。**⚠ 未実装**（JP `/transactions`・投信 `/fund-transactions` の編集 PUT のミラーとして予定のまま実装漏れ。後続タスク＝`tasks/review-2026-06-12.md`）|
+| PUT | `/us-transactions/{id}` | 米株取引の編集 → `us_holdings` 再計算 → 再計算後の保有を返す（存在しない id は 404）。`fx_rate` 解決順は POST と同じ。symbol を変更した編集は旧 symbol 側の保有も再導出する |
 | DELETE | `/us-transactions/{id}` | 米株取引の削除 → 再計算後の保有を返す（存在しない id は 404）|
 
 ```ts

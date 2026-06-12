@@ -27,7 +27,7 @@ export function UsSection() {
       .catch((e) => setHoldingsErr(e instanceof Error ? e.message : String(e)));
   }, []);
 
-  // 取引（新規・削除）後に backend が返す最新保有で差し替える。
+  // 取引（新規・編集・削除）後に backend が返す最新保有で差し替える。
   function handleHoldingsChange(updated: UsHolding[]) {
     setHoldings(updated);
   }
@@ -51,7 +51,7 @@ export function UsSection() {
         <UsTransactionForm onDone={handleHoldingsChange} />
       </Card>
 
-      {/* 取引履歴（一覧＋削除） */}
+      {/* 取引履歴（一覧＋インライン編集＋削除） */}
       <UsTransactionHistory onHoldingsChange={handleHoldingsChange} />
     </div>
   );

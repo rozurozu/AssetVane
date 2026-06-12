@@ -47,6 +47,21 @@ export function fmtMarketCap(v: number | null | undefined): string {
   return `${Math.round(oku).toLocaleString("ja-JP")}億円`;
 }
 
+/** Date → "YYYY-MM-DD"（ローカルタイム・Topbar の遅延期限表示など）。例: 2026-06-12。 */
+export function fmtDateIso(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+// 曜日の和名（fmtDateWithWeekday 用・getDay() の並び＝日曜始まり）。
+const WEEKDAYS_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
+
+/** Date → "YYYY-MM-DD (曜)"（ローカルタイム・Topbar の本日表示）。例: 2026-06-12 (金)。 */
+export function fmtDateWithWeekday(d: Date): string {
+  return `${fmtDateIso(d)} (${WEEKDAYS_JA[d.getDay()]})`;
+}
+
 /** 編集入力の文字列 → number | undefined（空・非数は undefined・スクリーナーのレンジ入力）。 */
 export function toNum(s: string): number | undefined {
   const t = s.trim();

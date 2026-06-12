@@ -89,6 +89,25 @@ def test_handle_propose_trade_invalid_action_returns_error(temp_db: None) -> Non
     assert "error" in out
 
 
+def test_handle_propose_trade_db_error_returns_error(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DB アクセス（銘柄解決）が例外でも {"error"} を返し例外を漏らさない。
+
+    handlers 規約「例外は握って {"error"} を返す（dispatch ループを落とさない）」の検証
+    （tasks/review-2026-06-12.md C-5）。
+    """
+    _seed_stocks()
+
+    def _boom(conn: Any, code: str) -> dict[str, str] | None:
+        raise RuntimeError("DB が壊れた")
+
+    monkeypatch.setattr(handlers, "resolve_trade_target", _boom)
+    out = _run(handlers.handle_propose_trade({"action": "buy", "code": "72030", "reason": "x"}))
+    assert "error" in out
+    assert "ok" not in out
+
+
 # --- persist_trade_proposals_from_tool_runs --------------------------------
 
 
