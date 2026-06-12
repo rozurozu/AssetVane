@@ -6,7 +6,9 @@ HTTP 入出力のみを担う（ロジックは service.py / repo.py）。読み
 書き込みは `with get_engine().begin() as conn:` で原子化する（既存 portfolio.py/assets.py の流儀）。
 
 このルータ層の責務:
-- policy の `no_leverage` int↔bool・`sector_caps`/`exclusions` の JSON 文字列↔型 変換。
+- policy の DB 形変換は services/policy.py の単一点に委譲する（書き=encode_policy_field・
+  読みの正規化=normalize_policy_row・ADR-013）。レスポンス整形（core/rationale 分離）の
+  読み変換ヘルパ（_as_json_obj/_as_json_list）は本ルータに残す。
 - policy を core（最適化に効く構造化コア）と rationale（理念テキスト）に分離して返す（§8.2）。
 - proposals の承認/却下を service.resolve_proposal に委譲し、例外を 404/409 に翻訳する。
 """
@@ -236,19 +238,15 @@ def put_policy(req: PolicyUpdate) -> Policy:
     """policy を更新する（チャット承認後と Policy 画面直接編集の両入口・§8.2）。
 
     core 変更があれば当日 advisor_journal に policy_snapshot を残す（ADR-013）。
-    sector_caps/exclusions は json.dumps、no_leverage は bool→int で DB 形にする。
+    DB 形変換（sector_caps/exclusions の json.dumps・no_leverage の 0/1）は提案承認と
+    共通の encode_policy_field に委ねる（services/policy.py が単一点・ADR-013）。
     """
     fields: dict[str, Any] = {}
     has_core_change = False
     if req.core is not None:
         core_dump = req.core.model_dump(exclude_unset=True)
         for key, value in core_dump.items():
-            if key in ("sector_caps", "exclusions"):
-                fields[key] = json.dumps(value, ensure_ascii=False)
-            elif key == "no_leverage":
-                fields[key] = 1 if value else 0
-            else:
-                fields[key] = value
+            fields[key] = policy_service.encode_policy_field(key, value)
         has_core_change = bool(core_dump)
     if req.rationale is not None:
         fields["rationale"] = req.rationale
@@ -257,9 +255,14 @@ def put_policy(req: PolicyUpdate) -> Policy:
         if fields:
             repo.upsert_policy(conn, fields)
         # core 変更があれば当日 journal に snapshot を残す（理念のみの更新では残さない・§6.5）。
+        # snapshot は dumps 前に JSON 列を型へ直す（二重エンコード防止・ADR-013）。
         if has_core_change:
             updated = repo.get_policy(conn)
-            snapshot = json.dumps(updated, ensure_ascii=False) if updated is not None else None
+            snapshot = (
+                json.dumps(policy_service.normalize_policy_row(updated), ensure_ascii=False)
+                if updated is not None
+                else None
+            )
             repo.insert_journal(
                 conn,
                 date=datetime.now(UTC).strftime("%Y-%m-%d"),

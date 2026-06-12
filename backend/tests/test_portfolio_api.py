@@ -589,6 +589,24 @@ def test_asset_overview_with_stocks_and_cash(client) -> None:
     assert 0 <= (targets.get("max_position_weight") or 0) <= 1
 
 
+def test_asset_overview_with_policy_row(client) -> None:
+    """policy 行が存在しても GET /asset-overview は 200（2026-06-12 の 500 回帰・ADR-013）。
+
+    PUT /policy で行を作ると sector_caps が DB に JSON 文字列で入る。読み出しで dict に
+    正規化しないと、truthy な文字列 '{}' が compute_deviations の `.items()` で
+    AttributeError を起こし 500 になっていた（services/policy.get_policy のパース漏れ）。
+    """
+    # 実機で 500 を引き起こした操作と同じ入口（policy 行の作成）。
+    res = client.put("/policy", json={"core": {"sector_caps": {}, "exclusions": []}})
+    assert res.status_code == 200
+
+    resp = client.get("/asset-overview")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body["deviations"], list)
+    assert "policy_targets" in body
+
+
 # ---------------------------------------------------------------------------
 # GET /portfolio/{id}/metrics
 # ---------------------------------------------------------------------------
@@ -664,6 +682,36 @@ def test_portfolio_metrics_with_holdings(client) -> None:
     assert isinstance(body["deviations"], list)
 
 
+def test_portfolio_metrics_with_policy_row(client) -> None:
+    """policy 行（sector_caps 付き）が存在しても GET metrics は 200 で sector_cap 逸脱が出る。
+
+    compute_portfolio_metrics は内部でも compute_deviations を呼ぶため、asset-overview と
+    独立にこの経路でも JSON 文字列の sector_caps で落ちていた（ADR-013・500 回帰）。
+    """
+    repo.upsert_stocks([STOCK_A])
+    _seed_daily_quotes("72030", [2000, 2100, 2200])
+    pid = _get_portfolio_id(client)
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 2000,
+            "traded_at": "2026-01-10",
+        },
+    )
+    res = client.put("/policy", json={"core": {"sector_caps": {"3700": 0.5}}})
+    assert res.status_code == 200
+
+    resp = client.get(f"/portfolio/{pid}/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    kinds = [d["kind"] for d in body["deviations"]]
+    assert "sector_cap" in kinds
+
+
 # ---------------------------------------------------------------------------
 # POST /portfolio/{id}/optimize
 # ---------------------------------------------------------------------------
@@ -724,6 +772,49 @@ def test_portfolio_optimize(client) -> None:
             assert "target_weight" in w
             # target_weight は 0..1
             assert 0 <= w["target_weight"] <= 1
+
+
+def test_portfolio_optimize_with_policy_row_excludes(client) -> None:
+    """policy 行（exclusions 付き）が存在しても POST optimize は 200 で除外が効く。
+
+    exclusions が JSON 文字列のままだと `list('["67580"]')` が文字単位に分解されて除外が
+    静かに無効化し、sector_caps は `dict(文字列)` で ValueError になっていた（ADR-013 回帰）。
+    """
+    repo.upsert_stocks([STOCK_A, STOCK_B])
+    import random
+
+    random.seed(1)
+    prices_a = [1000.0]
+    prices_b = [2000.0]
+    for _ in range(100):
+        prices_a.append(prices_a[-1] * (1 + random.uniform(-0.02, 0.02)))
+        prices_b.append(prices_b[-1] * (1 + random.uniform(-0.02, 0.02)))
+    _seed_daily_quotes("72030", prices_a)
+    _seed_daily_quotes("67580", prices_b)
+
+    pid = _get_portfolio_id(client)
+    for code, shares, price in (("72030", 100, 1000), ("67580", 50, 2000)):
+        client.post(
+            "/transactions",
+            json={
+                "portfolio_id": pid,
+                "code": code,
+                "side": "buy",
+                "shares": shares,
+                "price": price,
+                "traded_at": "2026-01-10",
+            },
+        )
+    res = client.put(
+        "/policy", json={"core": {"sector_caps": {"3700": 0.5}, "exclusions": ["67580"]}}
+    )
+    assert res.status_code == 200
+
+    resp = client.post(f"/portfolio/{pid}/optimize")
+    assert resp.status_code == 200
+    body = resp.json()
+    # 除外銘柄はウェイトに現れない（infeasible でも weights=[] なので同じ assert で通る）。
+    assert all(w["code"] != "67580" for w in body["weights"])
 
 
 # ---------------------------------------------------------------------------

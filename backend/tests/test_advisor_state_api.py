@@ -84,6 +84,20 @@ def test_put_policy_core_change_writes_journal_snapshot(client: Any) -> None:
     assert len(entries2) == 1
 
 
+def test_put_policy_snapshot_single_encoded(client: Any) -> None:
+    """journal の policy_snapshot は単エンコード＝sector_caps が dict で読める（ADR-013）。
+
+    repo の生行（JSON 文字列入り）をそのまま json.dumps すると snapshot の中に
+    JSON 文字列が入れ子で埋まる（二重エンコード）。dumps 前の normalize_policy_row で
+    型へ直してから焼く回帰テスト。
+    """
+    client.put("/policy", json={"core": {"sector_caps": {"3050": 0.4}}})
+    entries = client.get("/journal").json()["entries"]
+    snapshot = entries[0]["policy_snapshot"]
+    # 入れ子の JSON 文字列でなく dict のまま読める。
+    assert snapshot["sector_caps"] == {"3050": 0.4}
+
+
 # ---------------------------------------------------------------------------
 # /journal
 # ---------------------------------------------------------------------------

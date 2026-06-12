@@ -106,6 +106,34 @@ def test_nightly_records_journal_and_proposal(
     assert json.loads(p["body"])["field"] == "target_cash_ratio"
 
 
+def test_nightly_policy_snapshot_single_encoded(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """夜間経路でも journal の policy_snapshot は単エンコード（ADR-013/018）。
+
+    nightly は repo.get_policy の生行（sector_caps が JSON 文字列）を journaling に渡す。
+    journaling が dumps 前に normalize_policy_row で型へ直す（書き込み境界の不変条件）
+    ことを、policy 行が存在する状態で直接担保する。
+    """
+    _stub_briefing(monkeypatch)
+    with get_engine().begin() as conn:
+        repo.upsert_policy(conn, {"sector_caps": json.dumps({"3700": 0.3})})
+
+    async def _fake_loop(messages: Any, **_: Any) -> tuple[str, list[dict[str, object]]]:
+        return "応答", [{"name": "submit_journal", "args": {"observations": "所見"}}]
+
+    monkeypatch.setattr(nightly, "run_turn", _fake_loop)
+
+    with get_engine().begin() as conn:
+        _run(nightly.run_nightly_advisor(conn))
+
+    with get_engine().connect() as conn:
+        journals = repo.list_journal(conn)
+    snapshot = json.loads(journals[0]["policy_snapshot"])
+    # 入れ子の JSON 文字列でなく dict のまま読める（二重エンコードしない）。
+    assert snapshot["sector_caps"] == {"3700": 0.3}
+
+
 def test_nightly_without_policy_change_no_proposal(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:

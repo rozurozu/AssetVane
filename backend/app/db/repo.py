@@ -1090,8 +1090,9 @@ def list_fund_holdings(conn: Connection, portfolio_id: int) -> list[dict[str, An
 def get_policy(conn: Connection) -> dict[str, Any] | None:
     """policy の 1 行を素の dict で返す（無ければ None・spec §8.3）。
 
-    値の変換（no_leverage int↔bool・sector_caps/exclusions JSON↔型）はルータ層の責務。
-    既定値のマージは services/policy.py（DEFAULT_POLICY）が担う（本関数は生の行のみ）。
+    JSON 列の型変換は services/policy.py が単一点で担う（読み=normalize_policy_row・
+    書き=encode_policy_field・ADR-013）。既定値のマージも services/policy.py
+    （DEFAULT_POLICY）の責務（本関数は生の行のみを返す）。
     """
     row = conn.execute(select(policy).order_by(policy.c.id).limit(1)).mappings().first()
     return dict(row) if row else None

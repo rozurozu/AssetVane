@@ -25,6 +25,7 @@ from sqlalchemy import Connection
 
 from app.advisor.tools.schemas import ProposeTradeArgs, coerce_policy_change
 from app.db import repo
+from app.services.policy import normalize_policy_row
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,9 @@ def persist_journal_from_tool_runs(
     4. coerce_policy_change で単一 {field,to} に正規化（多列 patch・非 dict は None に倒し
        適用不能な提案を起票しない＝ADR-013/018）。
     5. insert_journal（date/source/situation_briefing/policy_snapshot を JSON 文字列で）。
+       policy_snapshot は dumps 前に normalize_policy_row で JSON 列を型へ直す＝
+       「snapshot は単エンコード（JSON 文字列の入れ子を作らない）」の不変条件を
+       本書き込み境界が所有する（nightly の repo 生行・chat の正規化済みの両方を受ける）。
     6. proposed_change があれば insert_proposal（kind=policy_change・pending・journal_id 紐付け）。
 
     接続規約（W2）: commit はしない。呼び出し側が `with get_engine().begin()` で境界を所有する。
@@ -109,7 +113,11 @@ def persist_journal_from_tool_runs(
         observations=observations,
         proposal=proposal if isinstance(proposal, str) else None,
         proposed_policy_change=proposed_change_json,
-        policy_snapshot=(json.dumps(policy, ensure_ascii=False) if policy is not None else None),
+        policy_snapshot=(
+            json.dumps(normalize_policy_row(policy), ensure_ascii=False)
+            if policy is not None
+            else None
+        ),
         llm_model=llm_model,
     )
 

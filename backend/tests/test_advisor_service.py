@@ -158,6 +158,48 @@ def test_resolve_proposal_policy_change_updates_policy(temp_db: None) -> None:
     assert snapshot["max_position_weight"] == pytest.approx(0.2)
 
 
+def test_resolve_proposal_sector_caps_dict_roundtrip(temp_db: None) -> None:
+    """sector_caps の dict `to` を承認しても落ちず、DB は JSON 文字列・読み出しは dict（ADR-013）。
+
+    encode_policy_field を通さず dict のまま TEXT 列にバインドすると sqlite3 エラーで
+    承認がクラッシュしていた回帰。snapshot も単エンコード（JSON 文字列の入れ子なし）を確認。
+    """
+    from app.services import policy as policy_service
+
+    body = json.dumps({"field": "sector_caps", "to": {"3050": 0.4}, "reason": "集中回避"})
+    pid = _insert_proposal(kind="policy_change", body=body)
+
+    with get_engine().begin() as conn:
+        service.resolve_proposal(conn, pid, decision="approved")
+
+    with get_engine().connect() as conn:
+        raw = repo.get_policy(conn)
+        assert raw is not None
+        # 生行は JSON 文字列（DB 形）。
+        assert json.loads(raw["sector_caps"]) == {"3050": 0.4}
+        # services 経由は dict（正規化済み）。
+        assert policy_service.get_policy(conn)["sector_caps"] == {"3050": 0.4}
+        journals = repo.list_journal(conn)
+    # snapshot は単エンコード（sector_caps が入れ子の JSON 文字列でなく dict で読める）。
+    snapshot = json.loads(journals[0]["policy_snapshot"])
+    assert snapshot["sector_caps"] == {"3050": 0.4}
+
+
+def test_resolve_proposal_no_leverage_bool_to_int(temp_db: None) -> None:
+    """no_leverage の bool `to` は 0/1 で保存される（PUT /policy と同じ変換・ADR-013）。"""
+    pid = _insert_proposal(
+        kind="policy_change",
+        body=json.dumps({"field": "no_leverage", "to": True}),
+    )
+    with get_engine().begin() as conn:
+        service.resolve_proposal(conn, pid, decision="approved")
+
+    with get_engine().connect() as conn:
+        raw = repo.get_policy(conn)
+        assert raw is not None
+        assert raw["no_leverage"] == 1
+
+
 def test_resolve_proposal_reject(temp_db: None) -> None:
     """却下は status=rejected に遷移し policy は変えない。"""
     pid = _insert_proposal(

@@ -23,7 +23,7 @@ from app.advisor.llm import complete
 from app.advisor.tools.registry import CURRENT_PHASE, REGISTRY, openai_tools
 from app.config import settings
 from app.db import repo
-from app.services.policy import DEFAULT_POLICY
+from app.services.policy import DEFAULT_POLICY, encode_policy_field, normalize_policy_row
 
 # ---------------------------------------------------------------------------
 # (a) Tool dispatch ループ（spec §4.2）
@@ -131,8 +131,12 @@ def apply_policy_change(
 
     - change は `{field, from?, to, reason?}` 形（submit_journal / proposals.body 由来）。
       `field`/`to` から `{field: to}` 1 列だけを upsert する（最適化に効く構造化コア）。
+      DB 形への変換（sector_caps/exclusions の json.dumps・no_leverage の 0/1）は
+      PUT /policy と共通の encode_policy_field に委ねる（ADR-013・入口間ドリフト防止）。
+      LLM 由来の型不一致 `to` は ValueError → router 境界で 409 に翻訳される。
     - policy 更新後の行をまるごと JSON 化し、当日の advisor_journal に snapshot を残す
       （journal_id 指定があればその行を上書き、無ければ新規 1 件を起票する）。
+      snapshot は dumps 前に normalize_policy_row で JSON 列を型へ直す（単エンコード）。
 
     write を含むため、呼び出し側が `with get_engine().begin() as conn:` で渡すこと。
     """
@@ -145,12 +149,17 @@ def apply_policy_change(
     if "to" not in change:
         raise ValueError("policy 変更には to（変更後の値）が必要です。")
 
-    # 1 列だけ upsert（部分更新・id 固定）。
-    repo.upsert_policy(conn, {field: change["to"]})
+    # 1 列だけ upsert（部分更新・id 固定）。dict/list のまま TEXT 列にバインドすると
+    # sqlite3 エラーで落ちるため、必ず DB 形に変換してから書く。
+    repo.upsert_policy(conn, {field: encode_policy_field(field, change["to"])})
 
-    # 更新後 policy をまるごと snapshot 用 JSON に。
+    # 更新後 policy をまるごと snapshot 用 JSON に（JSON 列は型へ直してから dumps＝単エンコード）。
     updated = repo.get_policy(conn)
-    snapshot = json.dumps(updated, ensure_ascii=False) if updated is not None else None
+    snapshot = (
+        json.dumps(normalize_policy_row(updated), ensure_ascii=False)
+        if updated is not None
+        else None
+    )
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     reason = change.get("reason")
     observations = f"方針を更新（{field}）" + (f": {reason}" if reason else "")
