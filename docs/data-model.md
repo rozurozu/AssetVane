@@ -260,7 +260,10 @@ UNIQUE `(portfolio_id, isin)`。
 | `as_of_date` | TEXT | 採用株価の営業日 |
 | `close`/`eps`/`bps`/`dividend_per_share`/`shares_net` | REAL | 採用した素データ（根拠） |
 | `per`/`pbr`/`market_cap`/`dividend_yield` | REAL | 派生比率（PER=close/eps・PBR=close/bps・時価総額=close×shares_net・利回り=dps/close）|
+| `roe`/`operating_margin`/`net_margin` | REAL | 収益性（ROE=EPS/BPS 近似・営業利益率・純利益率。0..1・[ADR-048](decisions.md)・0012）|
+| `revenue_growth_yoy`/`op_growth_yoy`/`profit_growth_yoy`/`eps_growth_yoy` | REAL | YoY 成長率（売上・営業益・純益・EPS。[ADR-048](decisions.md)・0012）|
 | `fin_disclosed_date` | TEXT | 採用財務の開示日（監査） |
+| `updated_at` | TEXT | この行を焼いた時刻 ISO8601 |
 
 - 採用規律: PER/PBR は最新FY行の実績 EPS/BPS、配当/株数は最新開示行（`services/valuation.py`）。指標は計算不能なら NULL（[ADR-014](decisions.md) 捏造しない）。
 - **日本株専用**。米株は別スナップショット `us_valuation_snapshots`・`/us-stocks`（通貨/GICS の境界・Phase 7(B-1) 実装済み・[ADR-055](decisions.md)）。

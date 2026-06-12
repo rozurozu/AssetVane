@@ -24,9 +24,10 @@ AssetVane の画面構成（情報設計）、ナビゲーション、Dashboard 
 | 10 | **Proposals（提案）** | pending/approved/rejected の消し込み・振り返り | `/proposals` `/proposals/{id}/approve` `/reject` | 3 |
 | 11 | **Watchlist** | 監視銘柄一覧（**最終調査日**つき）・調査起動 | `/watchlist` `/dossiers/{code}/investigate` | 4 |
 | 12 | **Alpha Scorer** | 決算スコアランキング | `/signals?type=ai_alpha` | 5 |
-| 13 | **Lead-Lag** | 翌日強含む日本業種ランキング | `/signals?type=lead_lag` | 7 |
+| 13 | **Lead-Lag（Dashboard 内 widget）** | 翌日強含む日本業種ランキング＋検証メタ。**専用ページではなく Dashboard の `LeadLagWidget`** として実装（[ADR-039](decisions.md)/[ADR-040](decisions.md)）| `/lead-lag` | 7 |
 | 14 | **Settings / System** | health・必須 env チェック・夜間バッチ手動起動 | `/health` `/batch/run` | 0→ |
 | 15 | **News（統合ニュース）** | 統合コーパスの一覧（`level` 単一タブ＋期間フィルタ）・「ニュースを貼る」投入フォーム・`source='user'` 行の削除。検索ボックスは [ADR-045](decisions.md) 送り（未実装） | `/news`（GET/POST/DELETE） | 4 |
+| 16 | **US Stocks（米株スクリーナー）** | 米株バリュエーションの絞り込み一覧＋銘柄詳細 `/us-stocks/[symbol]`（チャート・指標）。提示専用（[ADR-055](decisions.md)）| `/us-stocks/screen` `/us-stocks/{symbol}` `/us-quotes/{symbol}` | 7 |
 
 > 銘柄詳細（#3）は「チャート＋指標＋財務＋ドシエ＋watchlist 追加」を 1 ページに集約するハブ。ドシエ（#11 由来）は独立ページではなく**銘柄詳細内のセクション/タブ**として見せる。
 
@@ -39,7 +40,7 @@ AssetVane の画面構成（情報設計）、ナビゲーション、Dashboard 
 - **ヘッダー常設**。ロゴ（AssetVane）＋ナビ＋右上に「Free・株価12週遅延」バッジ（[ADR-008](decisions.md)）。
 - ナビ項目は **Phase 進行で増える**。未投入の機能を最初から全部並べない。
   - **Phase 0**: Dashboard / Stocks / Settings
-  - 以降: Signals(P1) → Portfolio(P2) → Advisor・Policy・Journal・Proposals(P3) → Watchlist・News(P4) → Alpha Scorer(P5) → Lead-Lag(P7)
+  - 以降: Signals(P1) → Portfolio(P2) → Advisor・Policy・Journal・Proposals(P3) → Watchlist・News(P4) → Alpha Scorer(P5) → US Stocks(P7)。Lead-Lag は専用ナビ項目ではなく Dashboard widget(P7)
 - 各項目に **Phase バッジ**（例 `P2`）を付け、「いつ有効になるか」を可視化してもよい。
 - **評価額の遅延注記**は Dashboard・Portfolio・銘柄詳細の評価額/PL に横断的に必要。共通バッジ/バナーで明示する（Free は約 3 か月前の値＝[api.md](api.md)）。
 
@@ -58,6 +59,8 @@ AssetVane の画面構成（情報設計）、ナビゲーション、Dashboard 
 | **今日のシグナル** | Trend Vane（momentum / volume_spike）の上位 | `/signals` |
 | **Watchlist 調査ステータス** | 最終調査日。古いものは警告色＋「再調査」 | `/watchlist`（最終調査日つき） |
 | **投資日記** | 最新の所見（policy カードと被るスナップショットチップは出さない） | `/journal` |
+| **Lead-Lag** | 翌日強含む日本業種ランキング（`LeadLagWidget`・[ADR-039](decisions.md)）| `/lead-lag` |
+| **一般ニュース** | 市況・マクロの "ちら見"（`GeneralNewsWidget`・[ADR-034](decisions.md)）| `/general-news` |
 
 > **現在の policy** と **日記の `policy_snapshot`** は役割が違う。前者＝*今アクティブな方針*、後者＝*その日の履歴*。Dashboard は前者を出す（[data-model.md](data-model.md) の `policy` 単一 ＋ `advisor_journal.policy_snapshot` で履歴、という設計と一致）。
 >
