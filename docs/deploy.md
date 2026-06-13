@@ -226,3 +226,11 @@ docker compose -f compose.prod.yaml logs -f frontend
   ```
 - **マイグレーションで起動が落ちる**: `up -d` 後に `docker compose -f compose.prod.yaml logs backend` を確認。事前バックアップから復元（上記）。
 - **無人運用の失敗通知**: 夜間バッチの失敗は `DISCORD_WEBHOOK_URL` へ通知される（[ADR-018](decisions.md)）。デプロイ自体の失敗はスクリプトの終了コードで気づく。
+- **EDINET 取得失敗が通知されたら `backfill_edinet` を回す**: `fetch_edinet_descriptions`（段階C・[ADR-056](decisions.md)）は**失敗時も提出日カーソルを前進させる**設計（liveness 優先＝1 日の取りこぼしで以降を止めない）。このため夜間運用だけだと、失敗した提出日の有報「事業の内容」は**次の訂正/再提出まで欠落**し続ける。Discord に EDINET 取得失敗が出たら、その提出日あたりから `backfill_edinet`（提出日クロール型・冪等 UPSERT・中断再開可）で取り直す:
+  ```bash
+  # 失敗が出た提出日あたりを開始日に明示（--from は約15ヶ月窓より優先）。LLM コストが出るので
+  # まず --limit で件数 cap を掛けて試走し、見積もってから全量を回す。
+  docker compose -f compose.prod.yaml exec backend \
+    uv run python -m app.scripts.backfill_edinet --from 2026-06-10 --limit 50
+  ```
+  既存の `company_descriptions(JP,'dossier')`（調査済み）は事前 skip ＋ `source!='dossier'` ガードの 2 段で**上書きしない**（dossier 優先・[ADR-056](decisions.md)）。`docTypeCode=120` のみ対象（訂正 130 は対象外）。
