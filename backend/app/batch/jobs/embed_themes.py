@@ -9,7 +9,8 @@ near_duplicate_of を判定する）。
 段取り（embed_news のバッチループ・打ち切り方針を踏襲）:
   1. list_themes_needing_embedding（embedding NULL or embed_model 不一致）を _EMBED_BATCH 件
      ずつ取り、テーマ名を embed_texts でまとめて埋め込み → pack_embedding →
-     update_theme_embedding（W1・repo が自前 begin）。1 バッチの埋め込み失敗は握って打ち切り、
+     update_theme_embedding（W2・1 バッチ 1 begin で束ねる＝embed_news 同型）。1 バッチの
+     埋め込み失敗は握って打ち切り、
      残りは翌晩に拾う（ADR-018）。
   2. **near_duplicate_of 判定も本ジョブで行う**（新規埋め込み分のみ）: 埋め込んだ各テーマに
      ついて find_nearest_theme で最近接テーマを引き、余弦距離が _NEAR_DUP_MAX_DISTANCE 以下なら
@@ -90,11 +91,12 @@ def run() -> JobResult:
             if not vectors:
                 break  # 機能オフ相当（None）/空。残りは次回に回す
             packed: list[tuple[str, bytes]] = []
-            for name, vec in zip(names, vectors, strict=True):
-                blob = repo.pack_embedding(vec)
-                repo.update_theme_embedding(name, blob, model)  # W1（repo が自前 begin）
-                embedded += 1
-                packed.append((name, blob))
+            with get_engine().begin() as conn:  # 1 バッチ 1 begin（W2・embed_news 同型）
+                for name, vec in zip(names, vectors, strict=True):
+                    blob = repo.pack_embedding(vec)
+                    repo.update_theme_embedding(conn, name, blob, model)
+                    embedded += 1
+                    packed.append((name, blob))
 
             # near_duplicate_of 判定（新規埋め込み分のみ・自動マージしない・ADR-050）。
             try:

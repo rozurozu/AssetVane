@@ -2229,20 +2229,20 @@ def list_themes_needing_embedding(
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
-def update_theme_embedding(name: str, embedding_blob: bytes, model: str) -> None:
-    """themes 1 行の embedding/embed_model を更新する（ADR-045/050・W1）。
+def update_theme_embedding(conn: Connection, name: str, embedding_blob: bytes, model: str) -> None:
+    """themes 1 行の embedding/embed_model を更新する（ADR-045/050・W2）。
 
     embedding_blob は pack_embedding 済みの float32 LE BLOB（news と同じ格納形式＝
-    vec_distance_cosine が次元非依存に読む）。単発・1 文で閉じる書き込みなので repo が
-    自前で begin する（W1）。
+    vec_distance_cosine が次元非依存に読む）。commit はしない＝呼び出し側（embed_themes）が
+    `with get_engine().begin() as conn:` で境界を所有する（W2・1 バッチの複数行を 1 トランザク
+    ションに束ねる＝update_news_embedding と同型・tasks/review-2026-06-12.md §3）。
     """
     stmt = (
         themes.update()
         .where(themes.c.name == name)
         .values(embedding=embedding_blob, embed_model=model)
     )
-    with get_engine().begin() as conn:
-        conn.execute(stmt)
+    conn.execute(stmt)
 
 
 def find_nearest_theme(conn: Connection, name: str, query_blob: bytes) -> dict[str, Any] | None:
@@ -2383,6 +2383,42 @@ def prune_stale_stock_themes(*, market: str, cutoff_iso: str) -> int:
     return result.rowcount or 0
 
 
+def _list_codes_for_theme_tagging(
+    conn: Connection, *, market: str, join_table: Table, join_key_col: Any, limit: int
+) -> list[str]:
+    """テーマタガーの巡回対象を市場共通ロジックで優先順に limit 件返す（US/JP の実体）。
+
+    list_us_codes_for_theme_tagging / list_jp_codes_for_theme_tagging の唯一の差は「銘柄マスタ
+    （us_stocks/stocks）と JOIN 列（symbol/code）・market・fetch_meta の source 接頭辞」だけなので
+    ここに 1 本化する（tasks/review-2026-06-12.md §3・c2fad92 と同じ重複返済）。優先順（①未タグ →
+    ②説明変化 → ③古い順ローテ）・ETF 除外・NULL 畳みは両市場で完全同一。
+    """
+    if limit <= 0:
+        return []
+    cd = company_descriptions
+    src = f"{market.lower()}_themes:" + cd.c.code
+    priority = case(
+        (fetch_meta.c.source.is_(None), 0),  # ① 未タグ
+        (cd.c.fetched_at > fetch_meta.c.last_fetched_date, 1),  # ② 説明変化
+        else_=2,  # ③ ローテ
+    )
+    # NULL（未タグ）を先頭に保つため last_fetched_date の NULL は空文字に畳んで昇順。
+    order_age = func.coalesce(fetch_meta.c.last_fetched_date, "")
+    stmt = (
+        select(cd.c.code)
+        .select_from(
+            cd.join(join_table, join_key_col == cd.c.code).join(
+                fetch_meta, fetch_meta.c.source == src, isouter=True
+            )
+        )
+        .where(cd.c.market == market)
+        .where(func.coalesce(join_table.c.is_etf, 0) == 0)  # ETF 除外（NULL は普通株扱い）
+        .order_by(priority.asc(), order_age.asc(), cd.c.code.asc())
+        .limit(limit)
+    )
+    return list(conn.execute(stmt).scalars().all())
+
+
 def list_us_codes_for_theme_tagging(conn: Connection, limit: int) -> list[str]:
     """テーマタガーの巡回対象 US 銘柄を優先順に limit 件返す（ADR-050・ADR-033 同型）。
 
@@ -2402,30 +2438,9 @@ def list_us_codes_for_theme_tagging(conn: Connection, limit: int) -> list[str]:
     であること。②は fetched_at（ISO datetime）との文字列比較で成立する前提
     （'YYYY-MM-DD' 日付のみだと同日内のテキスト変化を取りこぼす）。
     """
-    if limit <= 0:
-        return []
-    cd = company_descriptions
-    src = "us_themes:" + cd.c.code
-    priority = case(
-        (fetch_meta.c.source.is_(None), 0),  # ① 未タグ
-        (cd.c.fetched_at > fetch_meta.c.last_fetched_date, 1),  # ② 説明変化
-        else_=2,  # ③ ローテ
+    return _list_codes_for_theme_tagging(
+        conn, market="US", join_table=us_stocks, join_key_col=us_stocks.c.symbol, limit=limit
     )
-    # NULL（未タグ）を先頭に保つため last_fetched_date の NULL は空文字に畳んで昇順。
-    order_age = func.coalesce(fetch_meta.c.last_fetched_date, "")
-    stmt = (
-        select(cd.c.code)
-        .select_from(
-            cd.join(us_stocks, us_stocks.c.symbol == cd.c.code).join(
-                fetch_meta, fetch_meta.c.source == src, isouter=True
-            )
-        )
-        .where(cd.c.market == "US")
-        .where(func.coalesce(us_stocks.c.is_etf, 0) == 0)  # ETF 除外（NULL は普通株扱い）
-        .order_by(priority.asc(), order_age.asc(), cd.c.code.asc())
-        .limit(limit)
-    )
-    return list(conn.execute(stmt).scalars().all())
 
 
 def list_jp_codes_for_theme_tagging(conn: Connection, limit: int) -> list[str]:
@@ -2441,30 +2456,9 @@ def list_jp_codes_for_theme_tagging(conn: Connection, limit: int) -> list[str]:
     タガーが 'jp_themes:<code>' に書く last_fetched_date は ISO datetime 文字列（時刻まで）である
     こと（②の文字列比較が同日内のテキスト変化を取りこぼさない前提）。
     """
-    if limit <= 0:
-        return []
-    cd = company_descriptions
-    src = "jp_themes:" + cd.c.code
-    priority = case(
-        (fetch_meta.c.source.is_(None), 0),  # ① 未タグ
-        (cd.c.fetched_at > fetch_meta.c.last_fetched_date, 1),  # ② 説明変化
-        else_=2,  # ③ ローテ
+    return _list_codes_for_theme_tagging(
+        conn, market="JP", join_table=stocks, join_key_col=stocks.c.code, limit=limit
     )
-    # NULL（未タグ）を先頭に保つため last_fetched_date の NULL は空文字に畳んで昇順。
-    order_age = func.coalesce(fetch_meta.c.last_fetched_date, "")
-    stmt = (
-        select(cd.c.code)
-        .select_from(
-            cd.join(stocks, stocks.c.code == cd.c.code).join(
-                fetch_meta, fetch_meta.c.source == src, isouter=True
-            )
-        )
-        .where(cd.c.market == "JP")
-        .where(func.coalesce(stocks.c.is_etf, 0) == 0)  # ETF 除外（NULL は普通株扱い）
-        .order_by(priority.asc(), order_age.asc(), cd.c.code.asc())
-        .limit(limit)
-    )
-    return list(conn.execute(stmt).scalars().all())
 
 
 # ===== FX レート・米株保有（ADR-057・Phase 7(B-2)・data-model.md「FX/米株保有」節） =====

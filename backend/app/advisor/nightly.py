@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Connection
 
+from app.advisor.core_prompt import CORE
 from app.advisor.engine import run_turn
 from app.advisor.journaling import (
     persist_journal_from_tool_runs,
@@ -28,7 +29,6 @@ from app.advisor.journaling import (
 )
 from app.advisor.method_cards import METHOD_CARDS
 from app.advisor.prompt_builder import Message, build_messages
-from app.advisor.router import _CORE
 from app.advisor.tools import handlers
 from app.advisor.tools.registry import CURRENT_PHASE
 from app.config import settings
@@ -94,7 +94,7 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
     recent = repo.get_recent_journal_summary(conn)
 
     messages = build_messages(
-        core_prompt=_CORE,
+        core_prompt=CORE,
         policy=policy,
         conversation=[Message(role="user", content=_NIGHTLY_INSTRUCTION)],
         screen_context=None,  # 軸1 は画面が無い（ADR-025）

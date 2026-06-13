@@ -355,6 +355,9 @@ def test_throttle_survives_multiple_event_loops(monkeypatch: pytest.MonkeyPatch)
     （waiter 生成時に loop へ bind される）が要る。実ジョブも fetch_general_news の
     asyncio.gather で競合する。_last_request_ts を直近にして wait>0 を保証し、ロック保持中の
     sleep で 2 本目を確実に待たせる（タイミング非依存に競合を起こす）。
+
+    スロットル状態は _throttle_obj（_NewsThrottle インスタンス）に封じ込めた（§3）ので、直近時刻
+    は _throttle_obj._last_request_ts を触る（挙動検証は news._throttle 経由のまま）。
     """
     import time
 
@@ -363,10 +366,11 @@ def test_throttle_survives_multiple_event_loops(monkeypatch: pytest.MonkeyPatch)
     async def _contend() -> None:
         await asyncio.gather(news._throttle(), news._throttle())
 
-    saved_ts = news._last_request_ts
+    saved_ts = news._throttle_obj._last_request_ts
     try:
         for _ in range(2):  # 2 回の asyncio.run（＝別ループ）をまたぐ
-            news._last_request_ts = time.monotonic()  # wait>0 を保証＝ロック保持中に sleep→競合
+            # wait>0 を保証＝ロック保持中に sleep→競合
+            news._throttle_obj._last_request_ts = time.monotonic()
             asyncio.run(_contend())  # 修正前は 2 周目でここが RuntimeError（別ループ）
     finally:
-        news._last_request_ts = saved_ts
+        news._throttle_obj._last_request_ts = saved_ts

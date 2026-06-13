@@ -179,8 +179,9 @@ def test_list_themes_with_counts(temp_db) -> None:
 def test_list_themes_needing_embedding_and_update(temp_db) -> None:
     """embedding NULL／モデル不一致の行だけ返り、update_theme_embedding で消える（news 同型）。"""
     repo.insert_themes_if_absent(["AI需要", "防衛", "半導体"], T1)
-    repo.update_theme_embedding("防衛", repo.pack_embedding([1.0, 0.0]), "model-A")
-    repo.update_theme_embedding("半導体", repo.pack_embedding([0.0, 1.0]), "model-OLD")
+    with get_engine().begin() as conn:  # W2: 呼び側が begin を所有
+        repo.update_theme_embedding(conn, "防衛", repo.pack_embedding([1.0, 0.0]), "model-A")
+        repo.update_theme_embedding(conn, "半導体", repo.pack_embedding([0.0, 1.0]), "model-OLD")
 
     with get_engine().connect() as conn:
         need = repo.list_themes_needing_embedding(conn, current_model="model-A", limit=10)
@@ -209,9 +210,10 @@ def test_set_theme_near_duplicate(temp_db) -> None:
 def test_find_nearest_theme(temp_db) -> None:
     """距離昇順 LIMIT 1・自分自身は除外・embedding NULL は対象外（vec_distance_cosine 実関数）。"""
     repo.insert_themes_if_absent(["AI需要", "AI関連", "防衛", "未埋込"], T1)
-    repo.update_theme_embedding("AI需要", repo.pack_embedding([1.0, 0.0, 0.0]), "m")
-    repo.update_theme_embedding("AI関連", repo.pack_embedding([0.9, 0.1, 0.0]), "m")
-    repo.update_theme_embedding("防衛", repo.pack_embedding([0.0, 0.0, 1.0]), "m")
+    with get_engine().begin() as conn:  # W2: 呼び側が begin を所有
+        repo.update_theme_embedding(conn, "AI需要", repo.pack_embedding([1.0, 0.0, 0.0]), "m")
+        repo.update_theme_embedding(conn, "AI関連", repo.pack_embedding([0.9, 0.1, 0.0]), "m")
+        repo.update_theme_embedding(conn, "防衛", repo.pack_embedding([0.0, 0.0, 1.0]), "m")
     # 「未埋込」は embedding NULL のまま → 候補に出ない。
 
     qblob = repo.pack_embedding([1.0, 0.0, 0.0])  # AI需要 と同一方向

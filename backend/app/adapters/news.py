@@ -34,6 +34,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import time
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 from xml.etree import ElementTree
@@ -206,8 +209,6 @@ async def fetch_general_news(known_urls: set[str] | None = None) -> list[dict]:
         logger.debug("fetch_general_news: news_enabled=False のためスキップ")
         return []
 
-    from datetime import UTC, datetime, timedelta
-
     from app.adapters.general_news_config import (
         GENERAL_NEWS_CATEGORIES,
         GENERAL_NEWS_LOOKBACK_DAYS,
@@ -273,8 +274,6 @@ async def fetch_sector_news(known_urls: set[str] | None = None) -> list[dict]:
     if not settings.news_enabled:
         logger.debug("fetch_sector_news: news_enabled=False のためスキップ")
         return []
-
-    from datetime import UTC, datetime, timedelta
 
     from app.adapters.general_news_config import (
         SECTOR_NEWS_LOOKBACK_DAYS,
@@ -540,8 +539,6 @@ def _extract_decode_params(page_html: str) -> tuple[str | None, str | None]:
     まま続行する。正規表現で属性を拾う（ブラウザ不要・stdlib のみ）。記事ページは JS リダイレクト
     を挟むため follow_redirects=True で 200 のラッパーページまで追ってから渡すこと。
     """
-    import re
-
     sig_match = re.search(r'data-n-a-sg="([^"]+)"', page_html)
     ts_match = re.search(r'data-n-a-ts="([^"]+)"', page_html)
     signature = sig_match.group(1) if sig_match else None
@@ -682,8 +679,9 @@ def _extract_url_from_chunk(chunk: object) -> str | None:
 async def _get_with_retry(client: httpx.AsyncClient, url: str) -> str:
     """1 リクエストを 429/一時失敗のリトライ付きで GET し、本文テキストを返す。
 
-    throttle はモジュールグローバルの直近リクエスト時刻で最低間隔（news_min_interval_seconds）を
-    空ける（index.py の `_throttle` に倣う）。リトライは指数バックオフ（jquants.py に倣う）。
+    throttle は _throttle()（状態は _throttle_obj に閉じる）で最低間隔
+    （news_min_interval_seconds）を空ける（index.py の `_throttle` に倣う）。リトライは指数
+    バックオフ（jquants.py に倣う）。
     """
     last_error: str | None = None
     for attempt in range(_MAX_RETRIES):
@@ -704,42 +702,57 @@ async def _get_with_retry(client: httpx.AsyncClient, url: str) -> str:
     raise NewsAdapterError(f"GET {url} が {_MAX_RETRIES} 回失敗しました（最後: {last_error}）。")
 
 
-# プロセス共有のスロットル時刻（全フェッチ横断・monotonic 時刻）。Google への過剰アクセスを避ける。
-_last_request_ts: float = 0.0
-# Lock はイベントループ固有。夜間バッチのジョブ（fetch_general_news / investigate_dossier）は
-# asyncio.run() で**毎回新しいイベントループ**を作るため、ここで asyncio.Lock() を 1 個固定すると
-# 2 回目以降の asyncio.run() で「bound to a different event loop」で落ちる（ADR-018 の静かな事故）。
-# 実行中のループに紐付けて遅延生成し、ループが変われば作り直す
-# （同一ループ内の並行コルーチン直列化が Lock の役割）。
-_throttle_lock: asyncio.Lock | None = None
-_throttle_loop: asyncio.AbstractEventLoop | None = None
+class _NewsThrottle:
+    """ニュース取得のプロセス共有スロットル（状態をインスタンスに閉じる・backend-adapter-pattern）。
+
+    以前はモジュールグローバル（_last_request_ts・_throttle_lock・_throttle_loop）に直接
+    持っていたが、「状態はインスタンスに持つ・モジュールグローバルの可変状態／asyncio.Lock を
+    ソース横断で共有しない」というアダプタ規律に反する形だった（tasks/review-2026-06-12.md §3）。
+    全面 NewsAdapter 化は pipeline のメソッド化が要り、テストが内部関数をモジュール単位で
+    monkeypatch する構造と衝突するため、指摘の実害＝スロットル状態だけを最小スコープで封じた。
+
+    _last_request_ts はプロセス共有のまま（全 asyncio.run をまたいで最低間隔を守る＝意図的設計）。
+    Lock はイベントループ固有。夜間バッチのジョブ（fetch_general_news / investigate_dossier）は
+    asyncio.run() で**毎回新しいイベントループ**を作るため、Lock を 1 個固定すると 2 回目以降の
+    asyncio.run() で「bound to a different event loop」で落ちる（ADR-018 の静かな事故）。実行中の
+    ループに紐付けて遅延生成し、ループが変われば作り直す（同一ループ内の並行コルーチン直列化が役割）。
+    """
+
+    def __init__(self) -> None:
+        self._last_request_ts: float = 0.0
+        self._lock: asyncio.Lock | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _lock_for_loop(self) -> asyncio.Lock:
+        """実行中のイベントループに紐付いた Lock を返す（ループが変われば作り直す）。"""
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._loop is not loop:
+            self._lock = asyncio.Lock()
+            self._loop = loop
+        return self._lock
+
+    async def wait(self) -> None:
+        """前回から最低 news_min_interval_seconds あける（index.py の _throttle 同型）。"""
+        min_interval = settings.news_min_interval_seconds
+        async with self._lock_for_loop():
+            remaining = min_interval - (time.monotonic() - self._last_request_ts)
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            self._last_request_ts = time.monotonic()
 
 
-def _get_throttle_lock() -> asyncio.Lock:
-    """実行中のイベントループに紐付いた _throttle_lock を返す（ループが変われば作り直す）。"""
-    global _throttle_lock, _throttle_loop
-    loop = asyncio.get_running_loop()
-    if _throttle_lock is None or _throttle_loop is not loop:
-        _throttle_lock = asyncio.Lock()
-        _throttle_loop = loop
-    return _throttle_lock
+# プロセス共有のスロットル（全フェッチ横断・Google への過剰アクセスを避ける）。
+# 状態は本インスタンス（_NewsThrottle）に閉じる。
+_throttle_obj = _NewsThrottle()
 
 
 async def _throttle() -> None:
-    """前回リクエストから最低 news_min_interval_seconds あける（index.py の _throttle に倣う）。
+    """スロットルのモジュール窓口（_get_with_retry が呼ぶ・テストが monkeypatch する seam）。
 
-    _last_request_ts はプロセス共有（全 asyncio.run をまたいで最低間隔を守る）。Lock だけは
-    ループ固有なので _get_throttle_lock() で実行中ループに紐付け直す（event loop バグ回避）。
+    状態は _throttle_obj（_NewsThrottle インスタンス）に閉じる。窓口を関数で残すのは、テストが
+    `monkeypatch.setattr(news, "_throttle", ...)` で差し替える既存の seam を保つため。
     """
-    import time
-
-    global _last_request_ts
-    min_interval = settings.news_min_interval_seconds
-    async with _get_throttle_lock():
-        wait = min_interval - (time.monotonic() - _last_request_ts)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _last_request_ts = time.monotonic()
+    await _throttle_obj.wait()
 
 
 def _parse_pubdate(raw: str | None) -> str | None:

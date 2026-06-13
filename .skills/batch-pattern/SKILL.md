@@ -23,6 +23,7 @@ description: 夜間バッチ（batch/ 配下の runner・jobs・lock・notify・
 - **冪等**: 何度流しても壊れない（書き込みは UPSERT＝[[backend-repo-pattern]] の W1）。
 - **部分失敗から再開可能**: 差分取得は `fetch_meta`（最後に取得した日付）を見て続きから取る。`full_backfill` フラグで頭から取り直す経路も用意する。ジョブのシグネチャに応じて `full_backfill` を渡し分ける（受けないジョブには渡さない）。
 - **差分開始日の同型計算は純関数に寄せる**: 「`fetch_meta` の `last_fetched_date` から鮮度プローブ分だけ重ねて開始日を決める」計算が複数ジョブで同型になる場合、その**計算だけ**を `app/batch/jobs/_cursor.py` の純関数（DB を知らない・ADR-018）に寄せる。ジョブ側は `fetch_meta` の読み出し（DB アクセスはジョブ側に閉じる）と初期窓（`backfill_start`）を渡す責務を持つ。粒度（銘柄毎／全銘柄共通／単一ペア／ISIN 毎の `fetch_meta` キー）・初期窓の作り方（`BACKFILL_YEARS` 年前 か全履歴の番兵）・空取得時の前進可否はジョブごとに意味が違うので共通化しない（初期値差は `backfill_start` 引数で吸収）。
+- **ほぼ同型のジョブ本体も `_`接頭の共通モジュールへ寄せる**: 2 ジョブが大半同一なら、共通本体を `app/batch/jobs/_xxx.py`（`_cursor.py` と同じ `_`接頭・内部モジュール）の関数に切り出し、各ジョブは**モジュール docstring（NIGHTLY 順序の根拠等）と `run()` を残して委譲**する。ジョブ固有差は引数で押し込む（実例＝`_theme_tagging.run_theme_tagging`＝US/JP の差を cap・選定クエリ・タガー・bump 最適化フラグの 4 引数に集約）。**LLM タガー等の差し替え対象は引数で受け取り、各ジョブが自分の名前空間から渡す**。これでテストの `monkeypatch.setattr(tag_us_themes, "tag_stock_themes", fake)`（ジョブモジュール属性の patch）が委譲後も効く（共通モジュール側に名前を持たせるとテストの patch seam が壊れる）。
 
 ## 個別ジョブ失敗は握って後続を止めない
 
@@ -101,6 +102,7 @@ if not stopped:                              # 停止は失敗ではないので
 - [ ] バッチ全体を `lock.acquire()` で囲み、多重起動は専用例外で弾く
 - [ ] 各ジョブは独立・冪等（UPSERT）・`fetch_meta`/`full_backfill` で再開可能
 - [ ] 差分開始日の同型計算は `_cursor.py` の純関数へ（DB を知らない）。粒度・初期窓の作り方・空取得時の前進可否はジョブ固有に残した
+- [ ] ほぼ同型の 2 ジョブ本体は `_`接頭の共通モジュール（例 `_theme_tagging.py`）へ寄せ、各ジョブは docstring＋`run()` を残して委譲した。差し替え対象（タガー等）は引数で受け各ジョブの名前空間から渡し、テストの patch seam を保った
 - [ ] 個別ジョブ失敗を握って後続を止めず `JobResult(ok=False)` に集約。`except Exception` に統一記法の理由コメント付き noqa（`# noqa: BLE001 — ジョブ境界で握り runner に返す`）を添えた
 - [ ] 失敗時のみ Discord 通知（無人バッチに限る・対話チャットは通知しない）。停止（協調キャンセル）での中断は「正常終了」扱いで通知しない（ADR-036）
 - [ ] 実行状態が要るならメモリ singleton（`batch/state.py`）に持ち、更新は `run_nightly` の中だけ（DB スキーマを増やさない・ADR-005/036）。停止はジョブ境界で `should_stop` を見て break（強制 kill しない）
