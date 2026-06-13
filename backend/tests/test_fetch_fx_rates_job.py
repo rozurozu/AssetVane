@@ -115,7 +115,7 @@ def test_cursor_present_overlaps_last_fetched(temp_db) -> None:
     """
     from datetime import date, timedelta
 
-    from app.batch.jobs.fetch_fx_rates import _REFETCH_OVERLAP_DAYS
+    from app.batch.jobs._cursor import DEFAULT_OVERLAP_DAYS
 
     repo.upsert_fetch_meta("fx:USDJPY", "2026-06-07")
 
@@ -127,7 +127,7 @@ def test_cursor_present_overlaps_last_fetched(temp_db) -> None:
     assert result.ok is True
     call = adapter._fake_source.calls[0]
     # from_ は 2026-06-07 から _REFETCH_OVERLAP_DAYS 日重ねた地点（= 2026-06-02）。
-    assert call[1] == (date(2026, 6, 7) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
+    assert call[1] == (date(2026, 6, 7) - timedelta(days=DEFAULT_OVERLAP_DAYS)).isoformat()
     assert call[1] <= "2026-06-07"  # 最終取得日に重なる
 
     with get_engine().connect() as conn:

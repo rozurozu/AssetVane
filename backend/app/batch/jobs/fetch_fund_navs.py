@@ -14,9 +14,10 @@ snapshot_assets が当日の NAV から fund_value を焼くため、NIGHTLY_JOB
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from app.adapters.fund_nav import FundNavAdapter, FundNavFetchError
+from app.batch.jobs._cursor import resolve_differential_start
 from app.batch.runner import JobResult
 from app.db import repo
 from app.db.engine import get_engine
@@ -25,37 +26,24 @@ logger = logging.getLogger(__name__)
 
 _SOURCE_PREFIX = "fund_navs"  # fetch_meta の source キー接頭辞
 
-# 差分取得の鮮度プローブ用の重ね日数（fetch_index._REFETCH_OVERLAP_DAYS 相当）。
-# 投信 NAV の CSV はサーバ側の日付フィルタを持たず常に設定来の全履歴を返すため、from_ は
-# クライアント側の絞り込みにのみ効く。最終取得日からこの日数だけ前に戻して取り直すことで、
-# 健全な投信なら直近営業日の NAV が必ず窓に入り ≥1 行返る → 「新規データ無し（週末・休場・当日
-# 未掲載）」と「取得不能（協会コード未設定・bot/障害）」を区別できる（誤検知防止・ADR-018）。
-# 再取得は UPSERT で冪等（ADR-002）。
-_REFETCH_OVERLAP_DAYS = 5
-
 
 def _source_key(isin: str) -> str:
     """ISIN ごとの fetch_meta source キーを返す（例: 'fund_navs:JP90C000H1T1'）。"""
     return f"{_SOURCE_PREFIX}:{isin}"
 
 
-def _start_date_for_isin(isin: str, today: str) -> str:
+def _start_date_for_isin(isin: str) -> str:
     """ISIN の取得開始日を fetch_meta から決める（差分取得・ADR-018 部分失敗からの再開）。
 
     fetch_meta 未存在 → 設定来の全履歴を取り込むため番兵 '1900-01-01' を返す（呼び出し側で
     from_=None＝全履歴に倒す。投信 CSV は常に全履歴を返すため十分過去の固定日で実質全履歴）。
-    fetch_meta あり → last_fetched_date に _REFETCH_OVERLAP_DAYS 日重ねた地点（鮮度プローブ）。
+    fetch_meta あり → last_fetched_date に重ねた地点（鮮度プローブ）。
+    重ね・冪等の意図と重ね日数は resolve_differential_start（_cursor.py）に集約（ADR-018/002）。
     """
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, _source_key(isin))
         last_fetched = meta.get("last_fetched_date") if meta else None
-
-    if last_fetched is None:
-        # 初回は CSV の設定来全履歴を取り込みたいので「from_ なし」に倒す番兵として past を返す。
-        # 投信 CSV は全履歴を返すので、十分過去の固定日でも実質「全履歴」になる。
-        return "1900-01-01"
-
-    return (date.fromisoformat(last_fetched) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
+    return resolve_differential_start(last_fetched, backfill_start="1900-01-01")
 
 
 def run() -> JobResult:
@@ -90,7 +78,7 @@ def run() -> JobResult:
     for fund in funds:
         isin = fund["isin"]
         assoc_code = fund.get("assoc_code")
-        start = _start_date_for_isin(isin, today)
+        start = _start_date_for_isin(isin)
         # 初回番兵（1900-01-01）は from_=None（全履歴）として渡す。差分時は start を from_ に使う。
         from_ = None if start == "1900-01-01" else start
 

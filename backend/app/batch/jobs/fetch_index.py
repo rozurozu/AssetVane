@@ -10,9 +10,10 @@ phase2-spec.md §3.1。`config.index_symbol_list` のシンボルごとに
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from app.adapters.index import US_SECTOR_ETFS, IndexAdapter, IndexAdapterError
+from app.batch.jobs._cursor import resolve_differential_start
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -21,12 +22,6 @@ from app.db.engine import get_engine
 logger = logging.getLogger(__name__)
 
 _SOURCE_PREFIX = "index_quotes"  # fetch_meta の source キー接頭辞
-
-# 差分取得の鮮度プローブ用の重ね日数。開始日を最終取得日からこの日数だけ前に戻して取り直す。
-# 健全な指数なら直近営業日のバーが必ず窓に入り ≥1 行返るので、「新規データ無し（週末・連休明け・
-# 当日未掲載）」と「取得不能（シンボル誤り/bot/Free の ^TPX 等）」を区別できる（ADR-018）。
-# 週末＋単発祝日を跨いでも直近営業日が窓に入る余裕。再取得は UPSERT で冪等（ADR-002）。
-_REFETCH_OVERLAP_DAYS = 5
 
 
 def _target_symbols() -> list[str]:
@@ -53,20 +48,15 @@ def _start_date_for_symbol(symbol: str, today: str) -> str:
     """シンボルの取得開始日を fetch_meta から決める（差分取得・ADR-018 部分失敗からの再開）。
 
     fetch_meta 未存在 → BACKFILL_YEARS 分を頭から。
-    fetch_meta あり → last_fetched_date に _REFETCH_OVERLAP_DAYS 日重ねた地点から today まで
-    （鮮度プローブ）。翌日からではなく重ねて取り直すことで、健全な指数は直近営業日のバーが必ず
-    窓に入り ≥1 行返る → 「新規データ無し」と「取得不能」を区別できる（誤検知防止・ADR-018）。
-    再取得は UPSERT で冪等（ADR-002）。
+    fetch_meta あり → last_fetched_date に重ねた地点から（鮮度プローブ）。
+    重ね・冪等の意図と重ね日数は resolve_differential_start（_cursor.py）に集約（ADR-018/002）。
     """
     last = date.fromisoformat(today)
+    backfill_start = last.replace(year=last.year - settings.backfill_years).isoformat()
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, _source_key(symbol))
         last_fetched = meta.get("last_fetched_date") if meta else None
-
-    if last_fetched is None:
-        return last.replace(year=last.year - settings.backfill_years).isoformat()
-
-    return (date.fromisoformat(last_fetched) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
+    return resolve_differential_start(last_fetched, backfill_start=backfill_start)
 
 
 def run() -> JobResult:

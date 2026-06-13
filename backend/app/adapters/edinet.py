@@ -29,19 +29,15 @@ import html
 import io
 import logging
 import re
-import time
 import zipfile
 from typing import Any
 
 import httpx
 
+from app.adapters._http import DEFAULT_MAX_RETRIES, Throttle, get_with_retry
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-# --- 定数（フォールバック既定。実値は settings から読む） ------------------------
-_MAX_RETRIES = 3
-_RETRY_BASE_SLEEP = 2.0  # 秒。429/一時失敗時の指数バックオフ基数（base × 2^attempt）
 
 # 有価証券報告書の docTypeCode（EDINET コードリスト・事業の内容を含む年次開示）。
 DOC_TYPE_ANNUAL_SECURITIES_REPORT = "120"
@@ -94,15 +90,7 @@ class EdinetAdapter:
         self._api_key = api_key if api_key is not None else settings.edinet_api_key
         self._base_url = settings.edinet_base_url
         self._timeout = settings.edinet_http_timeout_seconds
-        self._min_interval = settings.edinet_min_interval_seconds
-        self._last_request_ts = 0.0
-
-    def _throttle(self) -> None:
-        """前回リクエストから最低間隔を空ける（EDINET への過剰アクセスを避ける・ADR-010）。"""
-        wait = self._min_interval - (time.monotonic() - self._last_request_ts)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_request_ts = time.monotonic()
+        self._throttle = Throttle(settings.edinet_min_interval_seconds)
 
     def _params(self, extra: dict[str, Any]) -> dict[str, Any]:
         """共通クエリ（Subscription-Key）に呼び出し別パラメータを足す（キーはハードコードしない）。"""
@@ -111,31 +99,24 @@ class EdinetAdapter:
             params["Subscription-Key"] = self._api_key
         return params
 
-    def _get_with_retry(
-        self, client: httpx.Client, path: str, params: dict[str, Any]
-    ) -> httpx.Response:
-        """1 リクエストを 429/一時失敗のリトライ付きで GET する（news/index アダプタの作法）。"""
-        last_error: str | None = None
-        for attempt in range(_MAX_RETRIES):
-            self._throttle()
-            try:
-                resp = client.get(path, params=params)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-                time.sleep(_RETRY_BASE_SLEEP * (2**attempt))
-                continue
-            if resp.status_code == 429:
-                last_error = "429 Too Many Requests"
-                time.sleep(_RETRY_BASE_SLEEP * (2**attempt))
-                continue
-            if resp.status_code >= 400:
-                raise EdinetAdapterError(
-                    f"GET {path} が {resp.status_code}: {resp.text[:200]}"
-                    "（EDINET_API_KEY 未設定/誤りの可能性）"
-                )
-            return resp
-        raise EdinetAdapterError(
-            f"GET {path} が {_MAX_RETRIES} 回失敗しました（最後: {last_error}）。"
+    def _get(self, client: httpx.Client, path: str, params: dict[str, Any]) -> httpx.Response:
+        """1 リクエストを共通ヘルパ（_http.get_with_retry）で GET する（ADR-010）。
+
+        429/一時失敗（Timeout/Transport）は指数バックオフでリトライ。429 以外の 4xx/5xx と
+        リトライ枯渇は用途別の独自例外 EdinetAdapterError（対処を含むメッセージ）へ翻訳する。
+        """
+        return get_with_retry(
+            client,
+            path,
+            params=params,
+            throttle=self._throttle,
+            on_http_error=lambda r: EdinetAdapterError(
+                f"GET {path} が {r.status_code}: {r.text[:200]}"
+                "（EDINET_API_KEY 未設定/誤りの可能性）"
+            ),
+            on_exhausted=lambda e: EdinetAdapterError(
+                f"GET {path} が {DEFAULT_MAX_RETRIES} 回失敗しました（最後: {e}）。"
+            ),
         )
 
     def list_documents(self, date: str) -> list[dict[str, Any]]:
@@ -152,9 +133,7 @@ class EdinetAdapter:
             submit_datetime, csv_flag}。secCode は 5 桁文字列 or None（非上場提出は None）。
         """
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as client:
-            resp = self._get_with_retry(
-                client, "/documents.json", self._params({"date": date, "type": 2})
-            )
+            resp = self._get(client, "/documents.json", self._params({"date": date, "type": 2}))
             try:
                 payload = resp.json()
             except ValueError as exc:
@@ -176,7 +155,7 @@ class EdinetAdapter:
             `{doc_id, text}`（text は strip 済みプレーンテキスト）。見つからなければ None。
         """
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as client:
-            resp = self._get_with_retry(client, f"/documents/{doc_id}", self._params({"type": 5}))
+            resp = self._get(client, f"/documents/{doc_id}", self._params({"type": 5}))
             content = resp.content
 
         try:

@@ -26,11 +26,11 @@ import csv
 import io
 import logging
 import re
-import time
 from typing import Any
 
 import httpx
 
+from app.adapters._http import DEFAULT_MAX_RETRIES, Throttle, get_with_retry
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -44,8 +44,6 @@ _DATE_RE = re.compile(r"^\s*(\d{4})年(\d{1,2})月(\d{1,2})日\s*$")
 
 # 既定のスロットル間隔（秒）。Free 系の外部サイトに優しく（設定が無ければこの既定）。
 _DEFAULT_MIN_INTERVAL_SECONDS = 1.0
-_MAX_RETRIES = 3
-_RETRY_BASE_SLEEP = 2.0
 
 
 class FundNavFetchError(RuntimeError):
@@ -80,43 +78,40 @@ class FundNavAdapter:
     ) -> None:
         self._base_url = base_url or settings.fund_nav_base_url
         self._client = client  # テスト注入用（None なら都度作成）
-        self._last_request_ts = 0.0  # スロットル用（monotonic 時刻）
         # スロットル間隔は設定から読む（無ければ既定）。Free 系サイトに優しく（ADR-010）。
-        self._min_interval = settings.fund_nav_min_interval_seconds or _DEFAULT_MIN_INTERVAL_SECONDS
+        self._throttle = Throttle(
+            settings.fund_nav_min_interval_seconds or _DEFAULT_MIN_INTERVAL_SECONDS
+        )
         self._timeout = settings.fund_nav_http_timeout_seconds
-
-    def _throttle(self) -> None:
-        """前回リクエストから最低 self._min_interval あける（IndexSource に倣う）。"""
-        wait = self._min_interval - (time.monotonic() - self._last_request_ts)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_request_ts = time.monotonic()
 
     def _get_csv_bytes(self, isin: str, assoc_code: str) -> bytes:
         """CSV を生バイトで取得する（cp932 decode は呼び出し側）。HTTP 失敗は FundNavFetchError。
 
         associFundCd（協会コード）は必須。欠落時はサイトが JSON（statusCode:null）を返すため、
         呼び出し側で空 assoc_code を弾く（ここには来ない前提だが、来ても JSON 混入検知で拾う）。
+        429 のみリトライしネットワーク例外は呼び出し側へ透過する
+        （従来挙動＝retry_network_errors=False・既存テスト互換）。
         """
         params = {"isinCd": isin, "associFundCd": assoc_code}
         path = "/FdsWeb/FDST030000/csv-file-download"
 
         def do_request(c: httpx.Client) -> bytes:
-            for attempt in range(_MAX_RETRIES):
-                self._throttle()
-                resp = c.get(path, params=params)
-                if resp.status_code == 429:
-                    time.sleep(_RETRY_BASE_SLEEP * (2**attempt))
-                    continue
-                if resp.status_code >= 400:
-                    raise FundNavFetchError(
-                        f"投信 NAV CSV GET isin={isin} が {resp.status_code}:"
-                        f" {resp.text[:200]}（associFundCd={assoc_code}）"
-                    )
-                return resp.content
-            raise FundNavFetchError(
-                f"投信 NAV CSV GET isin={isin} がレート制限で {_MAX_RETRIES} 回失敗しました。"
+            resp = get_with_retry(
+                c,
+                path,
+                params=params,
+                throttle=self._throttle,
+                retry_network_errors=False,
+                on_http_error=lambda r: FundNavFetchError(
+                    f"投信 NAV CSV GET isin={isin} が {r.status_code}:"
+                    f" {r.text[:200]}（associFundCd={assoc_code}）"
+                ),
+                on_exhausted=lambda _e: FundNavFetchError(
+                    f"投信 NAV CSV GET isin={isin} がレート制限で"
+                    f" {DEFAULT_MAX_RETRIES} 回失敗しました。"
+                ),
             )
+            return resp.content
 
         if self._client is not None:
             return do_request(self._client)

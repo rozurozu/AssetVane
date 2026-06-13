@@ -20,13 +20,13 @@ from __future__ import annotations
 import csv
 import io
 import logging
-import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from app.adapters._http import DEFAULT_MAX_RETRIES, Throttle, get_with_retry
 from app.config import settings
 
 if TYPE_CHECKING:  # 型注釈専用（実行時 import を避け、テストのネット非依存を保つ）
@@ -88,8 +88,6 @@ class IndexSource(ABC):
 # ---------------------------------------------------------------------------
 _STOOQ_BASE_URL = "https://stooq.com"
 _STOOQ_MIN_INTERVAL_SECONDS = 1.0  # Stooq はリクエスト間隔を 1 秒程度あければ十分
-_STOOQ_MAX_RETRIES = 3
-_STOOQ_RETRY_BASE_SLEEP = 2.0
 
 
 class StooqIndexSource(IndexSource):
@@ -110,25 +108,23 @@ class StooqIndexSource(IndexSource):
     ) -> None:
         self._base_url = base_url
         self._client = client  # テスト注入用（None なら都度作成）
-        self._last_request_ts = 0.0  # スロットル用（monotonic 時刻）
         # スロットル間隔は設定から読む（Stooq は 1.0 で十分・ADR-010）。
         # モジュール定数 _STOOQ_MIN_INTERVAL_SECONDS はフォールバック既定。
-        self._min_interval = settings.index_min_interval_seconds or _STOOQ_MIN_INTERVAL_SECONDS
+        self._throttle = Throttle(
+            settings.index_min_interval_seconds or _STOOQ_MIN_INTERVAL_SECONDS
+        )
 
     @staticmethod
     def _to_source_symbol(symbol: str) -> str:
         """canonical シンボル → Stooq シンボル。現状は恒等（将来ズレたらここで対応）。"""
         return symbol
 
-    def _throttle(self) -> None:
-        """前回リクエストから最低 self._min_interval あける。"""
-        wait = self._min_interval - (time.monotonic() - self._last_request_ts)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_request_ts = time.monotonic()
-
     def _get_csv(self, source_symbol: str, from_: str | None = None, to: str | None = None) -> str:
-        """Stooq から CSV テキストを取得する（spec §3.1）。HTTP 失敗は IndexAdapterError に変換。"""
+        """Stooq から CSV テキストを取得する（spec §3.1）。HTTP 失敗は IndexAdapterError に変換。
+
+        429 のみリトライしネットワーク例外は呼び出し側へ透過する
+        （従来挙動＝retry_network_errors=False・既存テスト互換）。
+        """
         params: dict[str, str] = {"s": source_symbol, "i": "d"}
         if from_:
             params["d1"] = from_.replace("-", "")
@@ -136,22 +132,21 @@ class StooqIndexSource(IndexSource):
             params["d2"] = to.replace("-", "")
 
         def do_request(c: httpx.Client) -> str:
-            for attempt in range(_STOOQ_MAX_RETRIES):
-                self._throttle()
-                resp = c.get("/q/d/l/", params=params)
-                if resp.status_code == 429:
-                    time.sleep(_STOOQ_RETRY_BASE_SLEEP * (2**attempt))
-                    continue
-                if resp.status_code >= 400:
-                    raise IndexAdapterError(
-                        f"Stooq GET /q/d/l/ symbol={source_symbol} が"
-                        f" {resp.status_code}: {resp.text[:200]}"
-                    )
-                return resp.text
-            raise IndexAdapterError(
-                f"Stooq GET /q/d/l/ symbol={source_symbol} がレート制限で"
-                f" {_STOOQ_MAX_RETRIES} 回失敗しました。"
+            resp = get_with_retry(
+                c,
+                "/q/d/l/",
+                params=params,
+                throttle=self._throttle,
+                retry_network_errors=False,
+                on_http_error=lambda r: IndexAdapterError(
+                    f"Stooq GET /q/d/l/ symbol={source_symbol} が {r.status_code}: {r.text[:200]}"
+                ),
+                on_exhausted=lambda _e: IndexAdapterError(
+                    f"Stooq GET /q/d/l/ symbol={source_symbol} がレート制限で"
+                    f" {DEFAULT_MAX_RETRIES} 回失敗しました。"
+                ),
             )
+            return resp.text
 
         if self._client is not None:
             text = do_request(self._client)
@@ -284,10 +279,11 @@ class YahooIndexSource(IndexSource):
 
     def __init__(self, fetch: YahooFetchFn | None = None) -> None:
         self._fetch = fetch or _default_yahoo_fetch  # テスト注入用（None なら yfinance を使う）
-        self._last_request_ts = 0.0  # スロットル用（monotonic 時刻）
         # スロットル間隔は設定から読む（無ければ既定）。Stooq と同じ
         # index_min_interval_seconds を流用する。
-        self._min_interval = settings.index_min_interval_seconds or _YAHOO_MIN_INTERVAL_SECONDS
+        self._throttle = Throttle(
+            settings.index_min_interval_seconds or _YAHOO_MIN_INTERVAL_SECONDS
+        )
 
     @staticmethod
     def _to_source_symbol(symbol: str) -> str:
@@ -299,13 +295,6 @@ class YahooIndexSource(IndexSource):
         """
         return _YAHOO_INDEX_SYMBOLS.get(symbol, symbol)
 
-    def _throttle(self) -> None:
-        """前回リクエストから最低 self._min_interval あける（StooqIndexSource に倣う）。"""
-        wait = self._min_interval - (time.monotonic() - self._last_request_ts)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_request_ts = time.monotonic()
-
     def fetch_index_quotes(
         self, symbol: str, from_: str | None = None, to: str | None = None
     ) -> list[dict[str, Any]]:
@@ -316,7 +305,7 @@ class YahooIndexSource(IndexSource):
         ファサードが次ソースへフォールバックできるようにする（ADR-018/038: 黙って 0 行にしない）。
         """
         source_symbol = self._to_source_symbol(symbol)
-        self._throttle()
+        self._throttle.wait()
         try:
             df = self._fetch(source_symbol, from_, to)
         except Exception as exc:  # noqa: BLE001 — 用途別の独自例外へ翻訳して次ソースへ回す

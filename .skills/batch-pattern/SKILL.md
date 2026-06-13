@@ -22,6 +22,7 @@ description: 夜間バッチ（batch/ 配下の runner・jobs・lock・notify・
 - 各ジョブは独立した関数（`jobs/` 配下）。`NIGHTLY_JOBS` のような並びで runner が順に呼ぶ。
 - **冪等**: 何度流しても壊れない（書き込みは UPSERT＝[[backend-repo-pattern]] の W1）。
 - **部分失敗から再開可能**: 差分取得は `fetch_meta`（最後に取得した日付）を見て続きから取る。`full_backfill` フラグで頭から取り直す経路も用意する。ジョブのシグネチャに応じて `full_backfill` を渡し分ける（受けないジョブには渡さない）。
+- **差分開始日の同型計算は純関数に寄せる**: 「`fetch_meta` の `last_fetched_date` から鮮度プローブ分だけ重ねて開始日を決める」計算が複数ジョブで同型になる場合、その**計算だけ**を `app/batch/jobs/_cursor.py` の純関数（DB を知らない・ADR-018）に寄せる。ジョブ側は `fetch_meta` の読み出し（DB アクセスはジョブ側に閉じる）と初期窓（`backfill_start`）を渡す責務を持つ。粒度（銘柄毎／全銘柄共通／単一ペア／ISIN 毎の `fetch_meta` キー）・初期窓の作り方（`BACKFILL_YEARS` 年前 か全履歴の番兵）・空取得時の前進可否はジョブごとに意味が違うので共通化しない（初期値差は `backfill_start` 引数で吸収）。
 
 ## 個別ジョブ失敗は握って後続を止めない
 
@@ -99,6 +100,7 @@ if not stopped:                              # 停止は失敗ではないので
 - [ ] cron と `POST /batch/run` が同一関数を呼ぶ（起動口で分岐していない）。競合は呼び出し側で翻訳（cron=ログ / API=409）
 - [ ] バッチ全体を `lock.acquire()` で囲み、多重起動は専用例外で弾く
 - [ ] 各ジョブは独立・冪等（UPSERT）・`fetch_meta`/`full_backfill` で再開可能
+- [ ] 差分開始日の同型計算は `_cursor.py` の純関数へ（DB を知らない）。粒度・初期窓の作り方・空取得時の前進可否はジョブ固有に残した
 - [ ] 個別ジョブ失敗を握って後続を止めず `JobResult(ok=False)` に集約。`except Exception` に統一記法の理由コメント付き noqa（`# noqa: BLE001 — ジョブ境界で握り runner に返す`）を添えた
 - [ ] 失敗時のみ Discord 通知（無人バッチに限る・対話チャットは通知しない）。停止（協調キャンセル）での中断は「正常終了」扱いで通知しない（ADR-036）
 - [ ] 実行状態が要るならメモリ singleton（`batch/state.py`）に持ち、更新は `run_nightly` の中だけ（DB スキーマを増やさない・ADR-005/036）。停止はジョブ境界で `should_stop` を見て break（強制 kill しない）

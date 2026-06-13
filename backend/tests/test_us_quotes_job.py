@@ -139,11 +139,11 @@ def test_start_date_overlaps_last_fetched(temp_db) -> None:
     """
     from datetime import date, timedelta
 
-    from app.batch.jobs.fetch_us_quotes import _REFETCH_OVERLAP_DAYS
+    from app.batch.jobs._cursor import DEFAULT_OVERLAP_DAYS
 
     repo.upsert_fetch_meta("us_daily_quotes", "2026-06-05")
     start = fetch_us_quotes._start_date(full_backfill=False, today="2026-06-08")
-    assert start == (date(2026, 6, 5) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
+    assert start == (date(2026, 6, 5) - timedelta(days=DEFAULT_OVERLAP_DAYS)).isoformat()
     assert start <= "2026-06-05"  # 最終取得日に重なる
 
 

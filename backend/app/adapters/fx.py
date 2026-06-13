@@ -16,11 +16,11 @@ yfinance の import は各ソースに閉じ込め、注入口（fetch 関数を
 from __future__ import annotations
 
 import logging
-import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from app.adapters._http import Throttle
 from app.config import settings
 
 if TYPE_CHECKING:  # 型注釈専用（実行時 import を避け、テストのネット非依存を保つ）
@@ -118,15 +118,7 @@ class YahooFxSource(FxSource):
 
     def __init__(self, fetch: YahooFxFetchFn | None = None) -> None:
         self._fetch = fetch or _default_yahoo_fx_fetch
-        self._last_request_ts = 0.0  # スロットル用（monotonic 時刻）
-        self._min_interval = settings.fx_min_interval_seconds or _YAHOO_MIN_INTERVAL_SECONDS
-
-    def _throttle(self) -> None:
-        """前回リクエストから最低 self._min_interval あける（us_equity に倣う・ADR-010）。"""
-        wait = self._min_interval - (time.monotonic() - self._last_request_ts)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_request_ts = time.monotonic()
+        self._throttle = Throttle(settings.fx_min_interval_seconds or _YAHOO_MIN_INTERVAL_SECONDS)
 
     def fetch_rates(
         self, pair: str, from_: str | None = None, to: str | None = None
@@ -136,7 +128,7 @@ class YahooFxSource(FxSource):
         if ticker is None:
             raise FxAdapterError(f"未知の通貨ペア '{pair}'（_PAIR_TO_YAHOO_TICKER 未定義）")
 
-        self._throttle()
+        self._throttle.wait()
         try:
             df = self._fetch(ticker, from_, to)
         except Exception as exc:  # noqa: BLE001 — 用途別の独自例外へ翻訳して次ソースへ回す

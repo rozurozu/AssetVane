@@ -207,11 +207,11 @@ def test_start_date_for_symbol_overlaps_last_fetched(temp_db) -> None:
     """meta ありのとき開始日は last_fetched より前（鮮度プローブで重ねる）。"""
     from datetime import date, timedelta
 
-    from app.batch.jobs.fetch_index import _REFETCH_OVERLAP_DAYS
+    from app.batch.jobs._cursor import DEFAULT_OVERLAP_DAYS
 
     repo.upsert_fetch_meta("index_quotes:^SPX", "2026-06-05")
     start = fetch_index._start_date_for_symbol("^SPX", "2026-06-08")
-    assert start == (date(2026, 6, 5) - timedelta(days=_REFETCH_OVERLAP_DAYS)).isoformat()
+    assert start == (date(2026, 6, 5) - timedelta(days=DEFAULT_OVERLAP_DAYS)).isoformat()
     assert start <= "2026-06-05"  # 最終取得日に重なる
 
 
