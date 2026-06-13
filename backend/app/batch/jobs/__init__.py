@@ -37,6 +37,7 @@ from app.batch.jobs import (
     sync_master,
     sync_us_universe,
     tag_jp_themes,
+    tag_news_polarity,
     tag_us_themes,
 )
 
@@ -95,6 +96,11 @@ NIGHTLY_JOBS = [
     # ADR-045: 全ニュース書込後に embedding が null/モデル不一致の行を埋める（意味検索の素地）。
     # investigate_dossier の後・通知系の前に置き、当夜貯めた要約まで含めて意味検索に乗せる。
     embed_news.run,
+    # ADR-049/051: stock 層ニュースに定性 polarity を付ける（embed_news 同型）。investigate_dossier
+    # （stock 層 news を書く）の後・notify_digest の前に置き、当夜取り込んだ stock 層ニュースに
+    # polarity がついてから digest の②保有銘柄悪材料アラートが polarity='negative' を拾えるように
+    # する（embedding とは独立なので embed_news の隣でまとめて回す）。
+    tag_news_polarity.run,
     # ADR-050: tag_us_themes/tag_jp_themes が当夜増やしたテーマ語彙を埋め込み near_duplicate_of を
     # 判定する（embed_news の直後＝embedding 系をまとめて回す・語彙 reconcile の第二段）。
     embed_themes.run,

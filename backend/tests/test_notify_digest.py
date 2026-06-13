@@ -195,6 +195,139 @@ def test_build_digest_no_failed_line_when_all_ok(
     assert "取得できなかった指数" not in content
 
 
+# ---------------------------------------------------------------------------
+# ADR-051: ①注目シグナルへのニュース attach・②保有銘柄の悪材料アラート
+# ---------------------------------------------------------------------------
+
+
+def _insert_stock_news(
+    url: str,
+    code: str,
+    *,
+    title: str = "見出し",
+    polarity: str | None = None,
+    fetched_at: str | None = None,
+    published_at: str = "2026-06-05",
+) -> None:
+    """stock 層 news を 1 行入れる（①②の対象・fetched_at 既定は now＝24h 窓内）。"""
+    from app.db.schema import news
+
+    with get_engine().begin() as conn:
+        conn.execute(
+            news.insert().values(
+                level="stock",
+                code=code,
+                source="news",
+                url=url,
+                title=title,
+                summary="要約。",
+                published_at=published_at,
+                fetched_at=fetched_at or datetime.now(UTC).isoformat(),
+                extraction_status="summarized",
+                polarity=polarity,
+            )
+        )
+
+
+def _seed_holdings(*codes: str) -> None:
+    """既定ポートフォリオ＋保有を作る（②保有悪材料の対象・list_portfolios の先頭）。"""
+    from app.db.schema import holdings, portfolios
+
+    with get_engine().begin() as conn:
+        pid = conn.execute(
+            portfolios.insert().values(name="メイン", created_at="2026-01-01T00:00:00+00:00")
+        ).inserted_primary_key[0]
+        for code in codes:
+            conn.execute(
+                holdings.insert().values(portfolio_id=pid, code=code, shares=100.0, avg_cost=1000.0)
+            )
+
+
+def test_build_digest_attaches_news_to_signal(temp_db: None) -> None:
+    """①注目シグナルの code に直近 stock 層ニュースが 1 行添う（holdings 非依存・ADR-051）。"""
+    repo.upsert_stocks([STOCK])
+    repo.upsert_signals(
+        [_signal("72030", "momentum", 0.75, {"label": "GC", "notable": True}, "2026-03-01")]
+    )
+    _insert_stock_news("https://x/n1", "72030", title="トヨタ最高益", published_at="2026-06-05")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, "2026-06-05")
+    assert content is not None
+    assert "└ トヨタ最高益" in content  # シグナル行の直後に「なぜ動いたか」を添える
+
+
+def test_build_digest_skips_old_news_attach(temp_db: None) -> None:
+    """published_at が 3 日より古い stock 層ニュースは attach しない（ADR-051）。"""
+    repo.upsert_stocks([STOCK])
+    repo.upsert_signals(
+        [_signal("72030", "momentum", 0.75, {"label": "GC", "notable": True}, "2026-03-01")]
+    )
+    _insert_stock_news("https://x/old", "72030", title="古いニュース", published_at="2026-06-01")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, "2026-06-05")
+    assert content is not None
+    assert "古いニュース" not in content  # today-3=06-02 より前なので除外
+
+
+def test_build_digest_holding_risk_section(temp_db: None) -> None:
+    """②保有銘柄の悪材料（negative×24h 窓）がセクションで出て positive は出ない（ADR-051）。"""
+    repo.upsert_stocks([STOCK, STOCK2])
+    _seed_holdings("72030", "67580")
+    _insert_stock_news("https://x/neg", "72030", title="トヨタにリコール", polarity="negative")
+    _insert_stock_news("https://x/pos", "67580", title="ソニー好決算", polarity="positive")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, "2026-06-05")
+    assert content is not None
+    assert "保有銘柄の悪材料" in content
+    assert "トヨタにリコール" in content
+    assert "ソニー好決算" not in content  # positive は悪材料に出さない
+
+
+def test_build_digest_no_risk_section_when_no_negative(temp_db: None) -> None:
+    """悪材料が無ければ「保有銘柄の悪材料」セクションごと省略する（ADR-051）。"""
+    repo.upsert_stocks([STOCK])
+    _seed_holdings("72030")
+    _insert_stock_news("https://x/pos", "72030", title="好材料", polarity="positive")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, "2026-06-05")
+    assert content is not None
+    assert "保有銘柄の悪材料" not in content
+
+
+def test_build_digest_risk_triggers_send_when_not_always(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """悪材料があれば always_daily_digest=False でも送る（has_content に含む・ADR-051）。"""
+    monkeypatch.setattr(settings, "always_daily_digest", False)
+    repo.upsert_stocks([STOCK])
+    _seed_holdings("72030")
+    _insert_stock_news("https://x/neg", "72030", title="トヨタ下方修正", polarity="negative")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, "2026-06-05")
+    assert content is not None  # 悪材料が has_content を立てる
+    assert "トヨタ下方修正" in content
+
+
+def test_build_digest_risk_excludes_out_of_window(temp_db: None) -> None:
+    """fetched_at が 24h より前の悪材料は出ない（再掲なし・ADR-051）。"""
+    repo.upsert_stocks([STOCK])
+    _seed_holdings("72030")
+    old = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+    _insert_stock_news(
+        "https://x/old", "72030", title="昨日の悪材料", polarity="negative", fetched_at=old
+    )
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, "2026-06-05")
+    assert content is not None
+    assert "昨日の悪材料" not in content
+
+
 def test_run_sends_once_and_returns_jobresult(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:

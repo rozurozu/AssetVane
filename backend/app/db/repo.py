@@ -1533,6 +1533,87 @@ def delete_user_news(news_id: int) -> int:
     return result.rowcount or 0
 
 
+# ---------------------------------------------------------------------------
+# ADR-049/051（定性 polarity・能動配信）: stock 層ニュースの好/悪/中立タグ付けと悪材料抽出
+# ---------------------------------------------------------------------------
+
+# polarity は 'positive'/'negative'/'neutral' の定性タグ（NULL=未判定）。数値スコアは持たない
+# （AI に数値を作らせない＝ADR-014/049）。tag_news_polarity が stock 層のみ判定し、notify_digest
+# の②保有銘柄悪材料アラートが polarity='negative' を拾う。
+
+
+def list_news_needing_polarity(conn: Connection, *, limit: int) -> list[dict[str, Any]]:
+    """polarity 未判定（NULL）の stock 層ニュースを id 昇順で limit 件返す（ADR-049/051）。
+
+    対象は level='stock' かつ polarity IS NULL の行。判定材料（title/summary）が無い行は除外する
+    （summary 空はタグの根拠が無い＝theme_tagger と同じ「テキスト無しに付けない」規律）。
+    tag_news_polarity ジョブが embed_news 同型でバッチ判定するための母集団。id 昇順で安定。
+    """
+    stmt = (
+        select(news.c.id, news.c.title, news.c.summary)
+        .where(
+            and_(
+                news.c.level == "stock",
+                news.c.polarity.is_(None),
+                news.c.summary.isnot(None),
+                news.c.summary != "",
+            )
+        )
+        .order_by(news.c.id.asc())
+        .limit(limit)
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def update_news_polarity(conn: Connection, news_id: int, polarity: str) -> None:
+    """news 1 行の polarity を更新する（ADR-049/051）。
+
+    polarity は 'positive'/'negative'/'neutral' のいずれか（3値外や壊れた応答は呼び出し側が弾き、
+    書かず NULL のまま翌晩再試行する＝tag_news_polarity の規律）。commit はしない＝呼び出し側
+    （ジョブ）が `with get_engine().begin() as conn:` で境界を所有する（W2・複数行を 1
+    トランザクションに束ねられる＝update_news_embedding と同流儀）。
+    """
+    conn.execute(news.update().where(news.c.id == news_id).values(polarity=polarity))
+
+
+def list_negative_stock_news_for_codes(
+    conn: Connection, codes: list[str], *, fetched_since: str
+) -> list[dict[str, Any]]:
+    """保有銘柄の悪材料ニュース（polarity='negative'・直近取り込み）を返す（ADR-051・能動配信②）。
+
+    notify_digest の②保有銘柄悪材料アラート用。level='stock' かつ code が codes に含まれ、
+    polarity='negative' かつ fetched_at >= fetched_since の行を fetched_at 降順（同値は id 降順）で
+    返す。fetched_at 窓（呼び出し側が「今−24h」を渡す）で「同じ悪材料を翌晩再掲しない」を自然に
+    実現する（ADR-051）。社名は stocks を LEFT JOIN して company_name を同梱する（名前補完規約）。
+    codes 空なら [] を返す（upsert_news の空ガードと同流儀）。
+    """
+    if not codes:
+        return []
+    stmt = (
+        select(
+            news.c.id,
+            news.c.code,
+            news.c.title,
+            news.c.summary,
+            news.c.url,
+            news.c.published_at,
+            news.c.fetched_at,
+            stocks.c.company_name,
+        )
+        .select_from(news.outerjoin(stocks, news.c.code == stocks.c.code))
+        .where(
+            and_(
+                news.c.level == "stock",
+                news.c.code.in_(codes),
+                news.c.polarity == "negative",
+                news.c.fetched_at >= fetched_since,
+            )
+        )
+        .order_by(news.c.fetched_at.desc(), news.c.id.desc())
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
 def get_dossier(conn: Connection, code: str) -> dict[str, Any] | None:
     """stock_dossiers の 1 行を素の dict で返す（無ければ None・spec §2.2/§5.2）。
 

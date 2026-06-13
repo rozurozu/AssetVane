@@ -100,7 +100,7 @@
 - **意味検索の vec0 索引昇格**（[ADR-045](decisions.md)）＝コーパスが育ったら BLOB 全件スキャンから vec0 仮想テーブルへ。発火条件の叩き台＝概ね 5 万行 or 検索レイテンシ >200ms（`embedding` 列はそのまま活きる）。
 - **意味検索の段階C＝FTS5 キーワード索引ハイブリッド**（[ADR-045](decisions.md)）＝キーワードで広く拾い embedding で意味順に並べ替え。
 - **売買アイデア起票（[ADR-052](decisions.md)）は実装済み（2026-06-11）**＝専用 Tool `propose_trade` で `proposals(kind=buy/sell)` へ承認制起票（方向と根拠のみ・数値ゼロ・未知コード drop・pending dedup・承認しても約定なし・migration 不要）。
-- **RAG 活用の線引き・能動配信**（[ADR-049](decisions.md)/[ADR-051](decisions.md)・docs 確定／実装は別タスク。能動配信は前提の `polarity` 列〔ADR-049〕が未実装）。
+- **RAG 活用の線引き・能動配信（[ADR-049](decisions.md)/[ADR-051](decisions.md)）は実装済み（2026-06-13）**＝`news.polarity` 列〔0020〕／夜間 `tag_news_polarity`〔`embed_news` 同型・`level='stock'` のみ判定〕／`notify_digest` に①急騰落の自動説明〔注目シグナルへ直近ニュース attach〕＋②保有銘柄の悪材料アラート〔JP holdings の負 `polarity`・24h 窓〕。
 - **テーマタグ**は [ADR-050](decisions.md) 改訂＋[ADR-056](decisions.md) で「全ユニバース grounded 事前タグ（EDINET/longBusinessSummary 信号源）」へ方針転換し独立化（上記「テーマタグ」段階 A/B/C を参照）。
 
 ---

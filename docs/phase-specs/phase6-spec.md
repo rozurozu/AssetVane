@@ -7,6 +7,9 @@
 > - **日付**: digest は **UTC 日付**で統一（夜の分析AI が journal を `datetime.now(UTC)` の日付で書くため・cron 02:00 JST は前日 17:00 UTC）。
 > - **最終見直し日（OPEN-P）**: `policy.updated_at` を正本に確定。**毎朝送信（OPEN-N）**: `ALWAYS_DAILY_DIGEST=True` で確定。**通知履歴 UI（OPEN-O）**: 作らない。
 >
+>
+> **能動配信の追補（2026-06-13・[ADR-051](../decisions.md)）**: digest 本文を 2 点拡張した。①**急騰落の自動説明**＝注目シグナルの各行に、その `code` の直近 3 日 stock 層ニュース 1 件を `└` で添える（holdings 非依存・`list_news` 再利用・無ければ添えない）。②**保有銘柄の悪材料アラート**＝新セクション「⚠️ 保有銘柄の悪材料」を**ヘッダ直後（注目シグナルより前）**に置き、JP holdings に紐づく `polarity='negative'` かつ `fetched_at` 直近 24h のニュースを最大 5 件＋残件数で出す（悪材料がある夜は `ALWAYS_DAILY_DIGEST=False` でも送る＝`has_content` に含む・24h 窓で再掲なし）。`polarity` は前夜の `tag_news_polarity` ジョブ（`embed_news` 同型・`level='stock'` のみ・[ADR-049](../decisions.md)）が付ける。冪等・送信層（`send_once`・1900 字截断）は不変。
+>
 > 出所: roadmap.md Phase 6 / ADR-007(Discord)/ADR-018(失敗を放置しない)。レビュー・裁定反映済み。
 > 合成元: `_drafts/_arbitration.md`（正本: 採番 `0009_notifications`(送信冪等ログ)・Discord）/ `_drafts/data-arch.md` §6（cron・DiscordAdapter・冪等・notifications）/ `_drafts/app.md` §P6（通知設定/履歴 UI・.env 固定）/ `_drafts/quant.md` §1.3-1.4（アラート条件＝高スコア/出来高異常）/ `_drafts/ai-advisor.md` §7（夜の分析AI の当日提案）/ `_drafts/_current-state.md`（現状）。作成: 2026-06-03。
 > 参照は `path:行` 形式。確定値は理由つき、ユーザー裁定が要る点は `**[OPEN]**`、docs のズレは `**[DOCS要修正]**`。

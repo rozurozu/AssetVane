@@ -480,6 +480,11 @@ news = Table(
     Column("embedding", LargeBinary),  # float32 little-endian の BLOB（未埋め込み/機能オフは NULL）
     Column("embed_model", String),  # 埋め込みに使ったモデル名（不一致行を再埋め込み対象にするキー）
     Column("embedded_at", String),  # 埋め込み時刻 ISO8601 UTC
+    # ADR-049/051（定性 polarity・能動配信）。stock 層ニュースの好/悪/中立の定性分類。
+    # 'positive'/'negative'/'neutral'（NULL=未判定）。tag_news_polarity が stock 層のみ判定し
+    # （他層は NULL のまま）、notify_digest の②保有銘柄悪材料アラートが polarity='negative' を拾う。
+    # 数値 sentiment_score は持たない（AI に数値を作らせない＝ADR-014/049）。
+    Column("polarity", String),
     UniqueConstraint("url", name="uq_news_url"),  # URL 重複排除（冪等 UPSERT のキー）
     Index("ix_news_level", "level"),  # 階層タグ別の取り出しを速くする
     Index("ix_news_code", "code"),  # 銘柄層（get_news_context の (i)）

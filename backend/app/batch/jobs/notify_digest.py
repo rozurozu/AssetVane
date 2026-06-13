@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Connection
@@ -108,6 +108,60 @@ def _failed_index_line(conn: Connection) -> str | None:
     return f"📉 取得できなかった指数: {', '.join(failed)}"
 
 
+# ②保有銘柄の悪材料アラートで digest に出す最大件数（残りは「ほか N 件」・ADR-051）。
+_HOLDING_RISK_MAX = 5
+# ①注目シグナルへ「なぜ動いたか」ニュースを添える際の発行日 lookback（直近 N 日・ADR-051）。
+_SIGNAL_NEWS_LOOKBACK_DAYS = 3
+
+
+def _news_attach_line(conn: Connection, code: str, today: str) -> str | None:
+    """①注目シグナルの code に直近の stock 層ニュースを 1 件添える（急騰落の自動説明・ADR-051）。
+
+    published_at が直近 _SIGNAL_NEWS_LOOKBACK_DAYS 日以内の stock 層ニュース最新 1 件の見出し
+    （無ければ summary/url）を「なぜ動いたか」の手がかりとして 1 行返す。holdings フィルタはしない
+    （保有外でも動いた理由を知りたい＝ADR-051 の①）。ニュースが無ければ None（何も添えない）。
+    値動き=quant・説明=ニュース引用で AI に数値を作らせない（ADR-014）。
+    """
+    since = (date.fromisoformat(today) - timedelta(days=_SIGNAL_NEWS_LOOKBACK_DAYS)).isoformat()
+    rows = repo.list_news(conn, level="stock", code=code, since=since, limit=1)
+    if not rows:
+        return None
+    headline = rows[0].get("title") or rows[0].get("summary") or rows[0].get("url") or ""
+    return f"　└ {headline}"
+
+
+def _holding_risk_lines(conn: Connection) -> list[str]:
+    """②保有銘柄の悪材料アラート行を組み立てる（ADR-051・能動配信）。
+
+    既定ポートフォリオ（list_portfolios の先頭・裁定 L-9）の holdings に紐づく stock 層ニュースの
+    うち、polarity='negative' かつ fetched_at が直近 24h の悪材料を最大 _HOLDING_RISK_MAX 件＋
+    残件数で返す。fetched_at 24h 窓で「同じ悪材料を翌晩再掲しない」を自然に実現する（ADR-051）。
+    悪材料が無ければ空リスト（呼び出し側がセクションごと省略）。社名は repo の LEFT JOIN で
+    補完済み。
+    """
+    portfolios = repo.list_portfolios(conn)
+    if not portfolios:
+        return []
+    codes = repo.list_holding_codes(conn, portfolios[0]["portfolio_id"])
+    if not codes:
+        return []
+    since = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    rows = repo.list_negative_stock_news_for_codes(conn, codes, fetched_since=since)
+    if not rows:
+        return []
+
+    shown = rows[:_HOLDING_RISK_MAX]
+    remaining = len(rows) - len(shown)
+    lines = [f"⚠️ 保有銘柄の悪材料（{len(rows)} 件）"]
+    for r in shown:
+        name = r.get("company_name") or r["code"]
+        headline = r.get("title") or r.get("summary") or r.get("url") or ""
+        lines.append(f"・{name} ({r['code']}) {headline}")
+    if remaining > 0:
+        lines.append(f"　…ほか {remaining} 件")
+    return lines
+
+
 def build_digest_content(conn: Connection, today: str) -> str | None:
     """当日の⑦⑧＋夜AI 提案を 1 通の digest 本文に組み立てる（spec §3）。
 
@@ -147,16 +201,30 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
         except (json.JSONDecodeError, TypeError):
             policy_change = None
 
-    has_content = bool(shown or rebalance or proposal)
+    # ②保有銘柄の悪材料（能動配信の主目的・ADR-051）。has_content に含めて「悪材料がある夜は
+    # always_daily_digest=False でも送る」を満たす。
+    risk_lines = _holding_risk_lines(conn)
+
+    has_content = bool(shown or rebalance or proposal or risk_lines)
     if not has_content and not settings.always_daily_digest:
         return None  # 好機がある日だけ送る設定で、何も無い日（[OPEN-N]）
 
     # --- 本文組み立て ---
     lines: list[str] = [f"**📊 AssetVane 朝のダイジェスト（{today}）**", ""]
 
+    # ②は能動配信の主眼。Discord の 1900 字截断で末尾が切れても残るよう注目シグナルより前に置く。
+    if risk_lines:
+        lines.extend(risk_lines)
+        lines.append("")
+
     if shown:
         lines.append(f"🔔 注目シグナル（{signal_date} 時点・{len(alerts)} 件）")
-        lines.extend(_format_signal_line(r) for r in shown)
+        for r in shown:
+            lines.append(_format_signal_line(r))
+            # ①「なぜ動いたか」を直近ニュースで補足する（あれば 1 行添える・ADR-051）。
+            attach = _news_attach_line(conn, r["code"], today)
+            if attach:
+                lines.append(attach)
         if remaining > 0:
             lines.append(f"　…ほか {remaining} 件")
     else:
