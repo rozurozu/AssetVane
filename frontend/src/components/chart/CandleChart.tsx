@@ -24,6 +24,11 @@ const COLORS = {
   up: "#22c55e",
   down: "#ef4444",
   accent: "#0099ff",
+  // 出来高バー専用の暗めの緑/赤（ローソク足の陽線/陰線に対応する塗り）。DESIGN.md の
+  // up-weak(#0f2e1c)/down-weak(#3a1717) より明るめの独自値＝バーが地に潰れず視認できるよう調整した。
+  // 損益バッジ用の *-weak とは用途が別なのでトークン化せず、ここに実値で集約する（COLORS と同じ流儀）。
+  volumeUp: "#1f4d33",
+  volumeDown: "#4d2222",
 } as const;
 
 export function CandleChart({ quotes }: { quotes: Quote[] }) {
@@ -80,7 +85,7 @@ export function CandleChart({ quotes }: { quotes: Quote[] }) {
       valid.map((q) => ({
         time: q.date as Time,
         value: q.volume ?? 0,
-        color: (q.close as number) >= (q.open as number) ? "#1f4d33" : "#4d2222",
+        color: (q.close as number) >= (q.open as number) ? COLORS.volumeUp : COLORS.volumeDown,
       })),
     );
     chart.timeScale().fitContent();

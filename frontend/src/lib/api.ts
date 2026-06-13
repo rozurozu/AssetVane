@@ -272,6 +272,7 @@ export interface AssetOverview {
   fund_value: number; // 投資信託の評価額合計（ADR-054・allocation に「投資信託」スライスが入る）
   us_stock_value: number; // 米国株の評価額合計（JPY 建て・Phase 7(B-2)・allocation に「米国株」スライスが入る）
   pnl: number; // 評価損益
+  pnl_ratio: number | null; // 総資産ベースの損益率（backend 計算・ADR-014・frontend で再計算しない）
   allocation: AllocationSlice[];
   policy_targets: {
     target_cash_ratio: number | null;

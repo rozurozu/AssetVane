@@ -1,9 +1,12 @@
 "use client";
 
 // 業種リードラグ widget（Phase 7・GET /lead-lag）。翌日強含み業種の Top N を眺める。
-// 自身で fetch する（useApi）が、loading/error/empty の三分岐は StatusBlock に畳む
-// （手書き三分岐をしない＝frontend-component-pattern）。整形は lib/format.ts。
-// 数値（score/ic/hit_rate）は backend が事前計算した「事実」を読むだけ（AI には計算させない＝ADR-014）。
+// 内部 GET の明示例外（review-2026-06-12 §3）: frontend-component-pattern は「GET はページが持つ・feature は
+// 内部 GET しない」を規約とするが、本 widget は Dashboard 専用の単一データで他ページからは使わず、
+// loading/error/empty を StatusBlock で自前表示する自己完結 feature のため、内部 fetch（useApi）を例外として
+// 保つ（FundNavSparkline と同じ理由付け）。GeneralNewsWidget は props 渡しだが loading/error を握り潰す形で、
+// props 化すると本 widget の三状態表示が後退するため非対称のまま据え置く。三分岐は StatusBlock に畳む。
+// 整形は lib/format.ts。数値（score/ic/hit_rate）は backend が事前計算した「事実」を読むだけ（ADR-014）。
 // meta.is_delayed=true（plan=free か model_as_of が約 3 ヶ月古い）のとき Free 低信頼バナーを出す。
 
 import { Card } from "@/components/ui/Card";

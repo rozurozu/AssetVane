@@ -8,6 +8,7 @@
 // watchlist は getWatchlist() の実データに配線（Phase 4・screens.md §3「watchlist 再調査」）。
 // backend 未起動でも壊れないよう fetch 失敗は握って空表示＋注記にする（spec §9.6）。
 
+import { TrendSparkline } from "@/components/chart/TrendSparkline";
 import { GeneralNewsWidget } from "@/components/general-news/GeneralNewsWidget";
 import { LeadLagWidget } from "@/components/lead-lag/LeadLagWidget";
 import { Card } from "@/components/ui/Card";
@@ -118,7 +119,7 @@ export default function Dashboard() {
           {
             label: "総資産",
             value: fmtJpy(overview.total_value),
-            sub: `${overview.pnl >= 0 ? "▲ " : "▼ "}${fmtJpy(overview.pnl)}（${overview.total_value > 0 ? `${((overview.pnl / (overview.total_value - overview.pnl)) * 100).toFixed(2)}%` : "—"}）`,
+            sub: `${overview.pnl >= 0 ? "▲ " : "▼ "}${fmtJpy(overview.pnl)}（${pct(overview.pnl_ratio, 2)}）`,
             tone: (overview.pnl >= 0 ? "up" : "down") as "up" | "down",
           },
           {
@@ -205,24 +206,8 @@ export default function Dashboard() {
   // 逸脱（deviations.breached のもの）
   const breachedDeviations: Deviation[] = overview?.deviations.filter((d) => d.breached) ?? [];
 
-  // 資産推移 SVG path（overview.trend から計算）
-  const trendPath = (() => {
-    const pts = overview?.trend ?? [];
-    if (pts.length < 2) return null;
-    const vals = pts.map((p) => p.total_value);
-    const minV = Math.min(...vals);
-    const maxV = Math.max(...vals);
-    const range = maxV - minV || 1;
-    const W = 720;
-    const H = 120;
-    return pts
-      .map((p, i) => {
-        const x = (i / (pts.length - 1)) * W;
-        const y = H - ((p.total_value - minV) / range) * (H - 20) - 10;
-        return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
-  })();
+  // 資産推移スパークライン用の点列（total_value のみ・2 点以上で描画。描画は TrendSparkline）。
+  const trendValues = overview?.trend.map((p) => p.total_value) ?? [];
 
   const hasOverview = overview != null && overview.total_value > 0;
 
@@ -313,33 +298,17 @@ export default function Dashboard() {
       {/* 資産推移 ＋ 配分 */}
       <div className="mb-3 grid grid-cols-[2fr_1fr] gap-3 max-[1100px]:grid-cols-1">
         <Card title="資産推移" meta={delayNote}>
-          {trendPath ? (
-            <>
-              <svg
-                role="img"
-                viewBox="0 0 720 130"
-                width="100%"
-                height={130}
-                preserveAspectRatio="none"
-                aria-label="資産推移"
-              >
-                <defs>
-                  <linearGradient id="f" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="rgba(0,153,255,.22)" />
-                    <stop offset="100%" stopColor="rgba(0,153,255,0)" />
-                  </linearGradient>
-                </defs>
-                <line x1="0" y1="33" x2="720" y2="33" stroke="#1a1a1a" />
-                <line x1="0" y1="76" x2="720" y2="76" stroke="#1a1a1a" />
-                <path d={`${trendPath} L720,130 L0,130 Z`} fill="url(#f)" />
-                <path d={trendPath} fill="none" stroke="var(--color-accent)" strokeWidth={1.8} />
-                <circle cx="720" cy="20" r="3" fill="var(--color-accent)" />
-              </svg>
-              <div className="num mt-1.5 flex justify-between text-[11px] text-ink-subtle">
-                <span>{overview?.trend[0]?.date}</span>
-                <span>{overview?.trend[overview.trend.length - 1]?.date}</span>
-              </div>
-            </>
+          {trendValues.length >= 2 ? (
+            <TrendSparkline
+              values={trendValues}
+              height={120}
+              padY={10}
+              gridLines={[33, 76]}
+              footer={{
+                start: overview?.trend[0]?.date,
+                end: overview?.trend[overview.trend.length - 1]?.date,
+              }}
+            />
           ) : (
             <div className="flex h-[130px] items-center justify-center text-[13px] text-ink-subtle">
               {overview ? "資産スナップショットが蓄積されると表示されるのだ" : "読み込み中…"}

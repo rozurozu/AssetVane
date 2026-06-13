@@ -110,6 +110,8 @@ class AssetOverviewOut(BaseModel):
     fund_value: float  # 投信評価額合計（最新 NAV・ADR-054）
     us_stock_value: float  # 米株評価額合計（最新終値×USDJPY・ADR-057）
     pnl: float
+    # 総資産ベースの損益率＝pnl/取得原価。frontend で再計算しない（ADR-014）。
+    pnl_ratio: float | None = None
     allocation: list[AllocationSliceOut]
     policy_targets: dict[str, Any]  # target_cash_ratio / max_position_weight
     deviations: list[DeviationOut]
@@ -281,6 +283,11 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
         "max_position_weight": policy.get("max_position_weight"),
     }
 
+    # 損益率は frontend で計算させず backend が事実として供給する（ADR-014）。分母は取得原価相当＝
+    # 総資産 − 含み損益（現行 UI の式と同一）。原価ゼロ/負（履歴なし等）は None で返し UI 側は "—"。
+    cost_basis = total_value - pnl
+    pnl_ratio = pnl / cost_basis if cost_basis > 0 else None
+
     return AssetOverviewOut(
         as_of=as_of,
         is_delayed=True,  # Free 12週遅延（ADR-008）
@@ -292,6 +299,7 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
         fund_value=fund_value,
         us_stock_value=us_stock_value,
         pnl=pnl,
+        pnl_ratio=pnl_ratio,
         allocation=allocation,
         policy_targets=policy_targets,
         deviations=[DeviationOut(**d) for d in deviations],

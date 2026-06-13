@@ -11,6 +11,7 @@
 // DB には触れない。データ取得はすべて lib/api.ts 経由（ADR-005）。
 
 import { BacktestChart } from "@/components/chart/BacktestChart";
+import { TrendSparkline } from "@/components/chart/TrendSparkline";
 import { FundSection } from "@/components/fund/FundSection";
 import { AssetInputPanel } from "@/components/portfolio/AssetInputPanel";
 import { CorrelationHeatmap } from "@/components/portfolio/CorrelationHeatmap";
@@ -158,29 +159,8 @@ function PortfolioPageInner() {
         ? `${vm.as_of} 基準`
         : undefined;
 
-  // スパークライン（overview.trend から SVG path を生成）
-  const trendSvg = (() => {
-    const pts = overview?.trend ?? [];
-    if (pts.length < 2) return null;
-    const vals = pts.map((p) => p.total_value);
-    const minV = Math.min(...vals);
-    const maxV = Math.max(...vals);
-    const range = maxV - minV || 1;
-    const W = 720;
-    const H = 100;
-    const d = pts
-      .map((p, i) => {
-        const x = (i / (pts.length - 1)) * W;
-        const y = H - ((p.total_value - minV) / range) * (H - 10) - 5;
-        return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
-    return {
-      d,
-      lastX: W,
-      lastY: (H - ((vals[vals.length - 1] - minV) / range) * (H - 10) - 5).toFixed(1),
-    };
-  })();
+  // 資産推移スパークライン用の点列（total_value のみ・2 点以上で描画。描画は TrendSparkline）。
+  const trendValues = overview?.trend.map((p) => p.total_value) ?? [];
 
   // タブ定義
   const TABS: { key: Tab; label: string }[] = [
@@ -492,7 +472,7 @@ function PortfolioPageInner() {
           </Card>
 
           {/* 資産推移スパークライン */}
-          {overview && overview.trend.length >= 2 && trendSvg && (
+          {overview && trendValues.length >= 2 && (
             <Card
               title="資産推移"
               meta={
@@ -501,33 +481,15 @@ function PortfolioPageInner() {
                   : (overview.as_of ?? undefined)
               }
             >
-              <svg
-                role="img"
-                viewBox="0 0 720 110"
-                width="100%"
-                height={110}
-                preserveAspectRatio="none"
-                aria-label="資産推移"
-              >
-                <defs>
-                  <linearGradient id="pf" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="rgba(0,153,255,.22)" />
-                    <stop offset="100%" stopColor="rgba(0,153,255,0)" />
-                  </linearGradient>
-                </defs>
-                <path d={`${trendSvg.d} L720,110 L0,110 Z`} fill="url(#pf)" />
-                <path d={trendSvg.d} fill="none" stroke="var(--color-accent)" strokeWidth={1.8} />
-                <circle
-                  cx={trendSvg.lastX}
-                  cy={Number(trendSvg.lastY)}
-                  r={3}
-                  fill="var(--color-accent)"
-                />
-              </svg>
-              <div className="num mt-1.5 flex justify-between text-[11px] text-ink-subtle">
-                <span>{overview.trend[0]?.date}</span>
-                <span>{overview.trend[overview.trend.length - 1]?.date}</span>
-              </div>
+              <TrendSparkline
+                values={trendValues}
+                height={100}
+                padY={5}
+                footer={{
+                  start: overview.trend[0]?.date,
+                  end: overview.trend[overview.trend.length - 1]?.date,
+                }}
+              />
             </Card>
           )}
         </div>

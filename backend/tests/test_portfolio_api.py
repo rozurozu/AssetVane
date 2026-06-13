@@ -539,6 +539,8 @@ def test_asset_overview_empty(client) -> None:
     assert "deviations" in body
     assert "trend" in body
     assert "policy_targets" in body
+    assert body["pnl"] == 0.0
+    assert body["pnl_ratio"] is None  # 原価ゼロは損益率なし（backend 供給・ADR-014）
 
 
 def test_asset_overview_with_stocks_and_cash(client) -> None:
@@ -582,6 +584,10 @@ def test_asset_overview_with_stocks_and_cash(client) -> None:
 
     total_weight = sum(s["weight"] for s in body["allocation"])
     assert total_weight == pytest.approx(1.0, abs=1e-6)
+
+    # 含み益 = 100*(2200-2000) = 20000。損益率は総資産ベース＝pnl/取得原価（ADR-014）。
+    assert body["pnl"] == 20000.0
+    assert body["pnl_ratio"] == pytest.approx(0.02)  # 20000 / (1020000 - 20000)
 
     # policy_targets の単位確認（0..1）
     targets = body["policy_targets"]
