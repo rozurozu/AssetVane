@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from app.advisor.dossier import investigate_stock
@@ -61,8 +62,6 @@ def _is_stale(last_investigated_at: str | None, interval_days: int, now_iso: str
     """
     if not last_investigated_at:
         return True
-    from datetime import datetime
-
     try:
         last_dt = datetime.fromisoformat(last_investigated_at)
         now_dt = datetime.fromisoformat(now_iso)
@@ -98,8 +97,6 @@ def run() -> JobResult:
     `asyncio.run(investigate_stock(conn, code))` で非同期パイプラインを駆動する（mode は廃止）。
     1 銘柄が例外でも他を止めず detail に記録する（ADR-018）。失敗が 1 件でもあれば ok=False。
     """
-    from datetime import UTC, datetime
-
     now_iso = datetime.now(UTC).isoformat()
 
     try:

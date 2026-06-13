@@ -830,15 +830,14 @@ async def handle_get_general_news(args: dict[str, object]) -> dict[str, Any]:
     旧 list_general_news を repo.list_news(level='market') に張り替えた（ADR-044）。返却の形
     （categories グルーピング）は不変。市況ラベルは統合 news の category 列に保持される。
     """
-    from datetime import UTC, datetime, timedelta
-
     from app.adapters.general_news_config import GENERAL_NEWS_LOOKBACK_DAYS
 
     try:
         GetGeneralNewsArgs.model_validate(args)
-        since = (datetime.now(UTC) - timedelta(days=GENERAL_NEWS_LOOKBACK_DAYS)).strftime(
-            "%Y-%m-%d"
-        )
+        since = (
+            datetime.datetime.now(datetime.UTC)
+            - datetime.timedelta(days=GENERAL_NEWS_LOOKBACK_DAYS)
+        ).strftime("%Y-%m-%d")
         with get_engine().connect() as conn:
             rows = repo.list_news(conn, level="market", since=since)
 

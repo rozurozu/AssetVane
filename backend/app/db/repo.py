@@ -588,7 +588,12 @@ def insert_screening_filter(name: str, criteria_json: str) -> int:
                 name=name, criteria_json=criteria_json, created_at=now, updated_at=now
             )
         )
-    return int(result.inserted_primary_key[0])
+    # inserted_primary_key は型上 Optional（pyright reportOptionalSubscript）。
+    # SQLite は INSERT 後に主キーを返すので None ガードしてから添字する。
+    pk = result.inserted_primary_key
+    if pk is None:
+        raise RuntimeError("screening_filters の INSERT で主キーを取得できませんでした。")
+    return int(pk[0])
 
 
 def update_screening_filter(filter_id: int, name: str, criteria_json: str) -> int:
@@ -837,8 +842,6 @@ def get_latest_closes(conn: Connection, codes: list[str]) -> dict[str, dict[str,
         return {}
 
     # サブクエリで各 code の最新 date を取り、本クエリで close を引く
-    from sqlalchemy import and_
-
     subq = (
         select(daily_quotes.c.code, func.max(daily_quotes.c.date).label("max_date"))
         .where(daily_quotes.c.code.in_(codes))

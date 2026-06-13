@@ -2,6 +2,7 @@
 
 import { CandleChart } from "@/components/chart/CandleChart";
 import { DossierSection } from "@/components/dossier/DossierSection";
+import { StatusBlock } from "@/components/ui/StatusBlock";
 import { getQuotes, getStock } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import Link from "next/link";
@@ -12,7 +13,7 @@ import { useParams } from "next/navigation";
 export default function StockDetailPage() {
   const params = useParams<{ code: string }>();
   const code = params.code;
-  const { data, error } = useApi(
+  const { data, error, loading } = useApi(
     (signal) =>
       Promise.all([getStock(code, signal), getQuotes(code, undefined, undefined, signal)]),
     [code],
@@ -38,16 +39,15 @@ export default function StockDetailPage() {
           </span>
         </div>
         <div className="p-3">
-          {error && <div className="py-8 text-center text-[13px] text-down">⚠ {error}</div>}
-          {!error && quotes === null && (
-            <div className="py-8 text-center text-[13px] text-ink-subtle">読み込み中…</div>
-          )}
-          {!error && quotes?.length === 0 && (
-            <div className="py-8 text-center text-[13px] text-ink-subtle">
-              この銘柄の日足がまだないのだ。バックフィルを実行するのだ。
-            </div>
-          )}
-          {!error && quotes && quotes.length > 0 && <CandleChart quotes={quotes} />}
+          <StatusBlock
+            loading={loading}
+            error={error}
+            empty={quotes?.length === 0}
+            errorHint={<>backend 起動と、バックフィル（日足取得）の実行を確認するのだ。</>}
+            emptyText="この銘柄の日足がまだないのだ。バックフィルを実行するのだ。"
+          >
+            {quotes && quotes.length > 0 && <CandleChart quotes={quotes} />}
+          </StatusBlock>
         </div>
       </section>
 

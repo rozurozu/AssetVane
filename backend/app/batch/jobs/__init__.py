@@ -69,6 +69,11 @@ NIGHTLY_JOBS = [
     # （マスタ→価格→財務→valuation）をミラー: ユニバース同期 → OHLCV 取得 → 財務ローテ巡回 →
     # その後に valuation を焼く（業種/財務/価格が揃ってから・ADR-031）。各ジョブ部分失敗は握って
     # 後続継続（ADR-018）。
+    # ※ fetch_fx_rates と違い米株 quotes は snapshot_assets の「後」（前に移さない）。理由:
+    #   02:00 JST は米国ザラ場中（22:30〜05:00 JST・C-2）で当夜 quotes は部分足になり得る。
+    #   よって snapshot は米株を「前夜の確定 close」で評価し、当夜の部分足を確定値にしない。
+    #   C-1 の overlap 再取得が翌晩に確定足で UPSERT 上書き＝評価額は翌晩に自己修復する。
+    #   FX は単一レートで部分足問題が無く snapshot 直前に置ける（上の fetch_fx_rates）。
     sync_us_universe.run,
     fetch_us_quotes.run,
     fetch_us_fundamentals.run,

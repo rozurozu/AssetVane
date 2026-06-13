@@ -853,7 +853,7 @@ export interface WatchlistItem {
   code: string;
   company_name: string | null;
   note: string | null;
-  added_at: string;
+  added_at: string | null; // backend は str | None（未設定は null）
   last_investigated_at: string | null; // 未調査は null（一覧の「最終調査日」）
   interval_days: number; // 銘柄ごとの調査間隔（日・既定 21・常に非 null）。stale 算出の基準。
   stale: boolean; // backend 算出（per-row interval_days 超過）
@@ -1430,7 +1430,7 @@ export type UsTransaction = {
   price: number; // 約定単価（USD）
   fee: number | null; // 手数料（USD・任意）
   traded_at: string; // 約定日（YYYY-MM-DD）
-  fx_rate: number | null; // 約定時 USDJPY（省略時はサーバ解決済み）
+  fx_rate: number; // 約定時 USDJPY（UsTransactionOut は常にサーバ解決済み＝非 null）
   note: string | null;
 };
 

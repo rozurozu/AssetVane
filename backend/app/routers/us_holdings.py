@@ -138,42 +138,41 @@ def post_us_transaction(body: UsTransactionIn) -> list[UsHoldingOut]:
     if body.side not in {"buy", "sell"}:
         raise HTTPException(status_code=400, detail="side は 'buy' または 'sell' のみ有効です。")
 
-    # symbol の存在確認（us_stocks FK 親の事前チェック）
-    with get_engine().connect() as check_conn:
-        if repo.get_us_stock(check_conn, body.symbol) is None:
+    # 事前チェック〜INSERT〜recalc を 1 つの begin に寄せて接続 1 本化・TOCTOU 解消（PUT と同型）。
+    # 事前チェックは読み取りのみで、HTTPException で抜けても何も書いていないため安全にロールバック。
+    with get_engine().begin() as conn:
+        # symbol の存在確認（us_stocks FK 親の事前チェック）
+        if repo.get_us_stock(conn, body.symbol) is None:
             raise HTTPException(status_code=404, detail=f"未知の米株 symbol: {body.symbol}")
 
-    # fx_rate 解決
-    fx_rate: float
-    if body.fx_rate is not None:
-        fx_rate = body.fx_rate
-    else:
-        with get_engine().connect() as fx_conn:
-            fx_row = repo.get_fx_rate_on(fx_conn, "USDJPY", body.traded_at)
-        if fx_row is None:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "FX レート未取得（先に fetch_fx_rates を回すか fx_rate を明示してください）"
-                ),
-            )
-        fx_rate = float(fx_row["rate"])
+        # fx_rate 解決: body.fx_rate があればそれ / 無ければ約定日の fx_rates / それも無ければ 400。
+        if body.fx_rate is not None:
+            fx_rate = body.fx_rate
+        else:
+            fx_row = repo.get_fx_rate_on(conn, "USDJPY", body.traded_at)
+            if fx_row is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "FX レート未取得（先に fetch_fx_rates を回すか fx_rate を明示してください）"
+                    ),
+                )
+            fx_rate = float(fx_row["rate"])
 
-    # 取引登録＋holdings 再計算（atomic）
-    row: dict = {
-        "symbol": body.symbol,
-        "side": body.side,
-        "shares": body.shares,
-        "price": body.price,
-        "traded_at": body.traded_at,
-        "fx_rate": fx_rate,
-    }
-    if body.fee is not None:
-        row["fee"] = body.fee
-    if body.note is not None:
-        row["note"] = body.note
+        # 取引登録＋holdings 再計算（atomic）
+        row: dict = {
+            "symbol": body.symbol,
+            "side": body.side,
+            "shares": body.shares,
+            "price": body.price,
+            "traded_at": body.traded_at,
+            "fx_rate": fx_rate,
+        }
+        if body.fee is not None:
+            row["fee"] = body.fee
+        if body.note is not None:
+            row["note"] = body.note
 
-    with get_engine().begin() as conn:
         repo.insert_us_transaction(conn, row)
         recalc_us_holdings(conn, body.symbol)
         return _build_us_holdings(conn)

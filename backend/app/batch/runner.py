@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from dataclasses import dataclass
@@ -130,8 +131,6 @@ def run_jobs(
 
 def _invoke(job: object, *, full_backfill: bool) -> JobResult:
     """ジョブ関数を呼ぶ。full_backfill キーワードを受けるものだけに渡す（spec §3.3）。"""
-    import inspect
-
     params = inspect.signature(job).parameters  # type: ignore[arg-type]
     if "full_backfill" in params:
         return job(full_backfill=full_backfill)  # type: ignore[operator]

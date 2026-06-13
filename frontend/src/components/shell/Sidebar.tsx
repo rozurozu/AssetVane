@@ -2,7 +2,7 @@
 
 import appIcon from "@/app/icon.png";
 import { openAdvisorChat } from "@/lib/advisor-bus";
-import { nav } from "@/lib/mock-data";
+import { nav } from "@/lib/nav";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";

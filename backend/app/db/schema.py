@@ -679,7 +679,7 @@ company_descriptions = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("market", String, nullable=False),  # 'JP'/'US'
     Column("code", String, nullable=False),  # JP 5桁 or US symbol（cross-FK なし）
-    Column("source", String),  # 'edinet'（JP 有報）/ 'yfinance'（US longBusinessSummary）
+    Column("source", String),  # 'edinet'(JP有報) / 'dossier'(JP調査W2) / 'yfinance'(US説明)
     Column("description_text", String),  # compact プロフィール（本文は持たない）
     Column("disclosed_date", String),  # テキストの基準日（EDINET 提出/開示日・US は NULL）
     Column("doc_id", String),  # EDINET 書類管理番号（provenance・US は NULL）

@@ -45,9 +45,11 @@ from app.advisor.tools.schemas import (
 
 # 現在の投入フェーズ（段2 の dispatch が openai_tools(phase) に渡す）。
 # Phase 4（Stock Dossier）＋ADR-034（一般ニュース）に加え、Phase 7（日米業種リードラグ・
-# SIG-FIN-036-13）まで実装済み。これを 7 にすることで min_phase=4 の Tool（get_dossier /
-# investigate_stock / fetch_news / get_general_news）と min_phase=7 の get_lead_lag が
-# チャット・夜の分析AI に露出する。
+# SIG-FIN-036-13）まで実装済み。これを 7 にすることで以下が チャット・夜の分析AI に露出する:
+#   min_phase=4（8 本）: get_fund_holdings / get_dossier / investigate_stock / get_news_context /
+#                        propose_trade / fetch_news / get_general_news / search_news
+#   min_phase=7（7 本）: get_lead_lag / get_us_valuation / screen_us_valuation / list_themes /
+#                        get_stock_themes / screen_by_theme / get_us_holdings
 CURRENT_PHASE: int = 7
 
 
@@ -174,6 +176,8 @@ REGISTRY: dict[str, ToolDef] = {
         handler=handlers.handle_get_asset_overview,
         min_phase=2,
     ),
+    # 資産系 Tool（get_asset_overview）の隣に置くが min_phase=4（投信保有は Phase 4 以降に露出・
+    # ADR-054）。配置は資産文脈での読みやすさ優先で、露出ゲートは min_phase に従う。
     "get_fund_holdings": ToolDef(
         name="get_fund_holdings",
         description=(
