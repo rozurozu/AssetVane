@@ -227,6 +227,7 @@ def screen_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[str, 
 
     業種内パーセンタイル（per_sector_pctile）と時価総額順位（market_cap_rank）は ~4000 行への
     window 関数で都度算出する。criteria は薄い辞書（router/Tool が Pydantic から作る）:
+      q（コード/銘柄名の部分一致）、
       {field}_min/{field}_max（per/pbr/market_cap/dividend_yield/roe/operating_margin/net_margin/
       *_growth_yoy の絶対レンジ）、sector33_code・market_code（完全一致）、exclude_etf(bool)、
       per_sector_pctile_max（業種内で安い割合・0..1）、market_cap_rank_max（時価総額 上位 N）、
@@ -236,6 +237,10 @@ def screen_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[str, 
     inner = _valuation_inner_subquery()
 
     conds = []
+    # コード/銘柄名の部分一致（list_stocks と同じ LIKE OR・db/repo/stocks.py）
+    if criteria.get("q"):
+        like = f"%{criteria['q']}%"
+        conds.append(inner.c.code.like(like) | inner.c.company_name.like(like))
     # 絶対レンジ（min/max）
     for field in _SCREEN_RANGE_FIELDS:
         col = inner.c[field]

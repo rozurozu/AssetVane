@@ -415,6 +415,7 @@ export type Quote = {
 
 /** スクリーニング条件。全フィールド任意。保存フィルタもこの形を持つ。 */
 export type ScreenCriteria = {
+  q?: string; // 銘柄名・コードの部分一致
   per_min?: number;
   per_max?: number;
   pbr_min?: number;

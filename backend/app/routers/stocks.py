@@ -34,6 +34,7 @@ class ScreenCriteria(BaseModel):
     緩い dict で扱う（テクニカル軸の追加＝TODO に備える）。
     """
 
+    q: str | None = None  # コード/銘柄名の部分一致（list_stocks の q と同義）
     per_min: float | None = None
     per_max: float | None = None
     pbr_min: float | None = None

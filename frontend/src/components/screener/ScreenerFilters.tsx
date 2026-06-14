@@ -73,6 +73,16 @@ export function ScreenerFilters({ draft, onChange, onApply, onReset }: Props) {
         onApply();
       }}
     >
+      <label className="mb-2 flex flex-col">
+        <span className={labelCls}>銘柄名・コードで検索</span>
+        <input
+          className={inputCls}
+          placeholder="例: トヨタ / 7203"
+          value={draft.q ?? ""}
+          onChange={(e) => set("q", e.target.value || undefined)}
+        />
+      </label>
+
       <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-4 lg:grid-cols-6">
         {numField("PER 下限", "per_min", "0.1")}
         {numField("PER 上限", "per_max", "0.1")}

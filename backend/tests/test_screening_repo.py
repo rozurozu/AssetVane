@@ -142,6 +142,16 @@ def test_screen_sort_and_limit(temp_db) -> None:
     assert [r["code"] for r in rows] == ["1000", "2000"]  # per 昇順 8,12
 
 
+def test_screen_by_keyword(temp_db) -> None:
+    """q で銘柄名・コードの部分一致検索（list_stocks と同じ LIKE OR）。"""
+    _seed_snapshots(temp_db)
+    with get_engine().connect() as conn:
+        by_name = repo.screen_stocks(conn, {"q": "安い"})  # company_name 部分一致
+        by_code = repo.screen_stocks(conn, {"q": "2000"})  # code 部分一致
+    assert {r["code"] for r in by_name} == {"1000"}
+    assert {r["code"] for r in by_code} == {"2000"}
+
+
 def test_screening_filters_crud(temp_db) -> None:
     fid = repo.insert_screening_filter("割安高配当", '{"per_max":15,"dividend_yield_min":0.03}')
     with get_engine().connect() as conn:
