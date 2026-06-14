@@ -3,7 +3,7 @@
 // 米株取引入力フォーム（Phase 7(B-2)・ADR-055/057）。投信 FundTransactionForm のミラー。新規／編集兼用。
 // symbol・side（buy/sell）・shares・price(USD)・traded_at・fx_rate（任意）・fee（USD・任意＝C-12）・note（任意）。
 // fx_rate 省略時はサーバが約定日レートを解決（未取得なら 400「FX レート未取得」を表示）。
-// transactionId なし＝新規（addUsTransaction）。あり＝編集（updateUsTransaction＝C-14・
+// transactionId なし＝新規（postUsTransaction）。あり＝編集（putUsTransaction＝C-14・
 // tasks/review-2026-06-12.md）。送信成功で onDone(holdings) を呼ぶ（新規・編集とも UsHolding[] を返す
 // ＝backend 再計算済み）。
 
@@ -12,15 +12,15 @@ import {
   type UsHolding,
   type UsTransaction,
   type UsTransactionInput,
-  addUsTransaction,
-  updateUsTransaction,
+  postUsTransaction,
+  putUsTransaction,
 } from "@/lib/api";
 import { useEffect, useState } from "react";
 
 type Props = {
   onDone: (holdings: UsHolding[]) => void;
   initial?: UsTransaction; // 編集時の既存取引値（無ければ新規）
-  transactionId?: number; // 指定時＝編集モード（updateUsTransaction を使う）
+  transactionId?: number; // 指定時＝編集モード（putUsTransaction を使う）
   onCancel?: () => void; // 編集モードでキャンセルしたとき呼ぶ
 };
 
@@ -111,8 +111,8 @@ export function UsTransactionForm({ onDone, initial, transactionId, onCancel }: 
       };
       // 編集モードは update（フォームは onCancel が片付ける）。新規は add（連続入力できるよう初期化）。
       const holdings = editing
-        ? await updateUsTransaction(transactionId, input)
-        : await addUsTransaction(input);
+        ? await putUsTransaction(transactionId, input)
+        : await postUsTransaction(input);
       if (!editing) setForm(initialState());
       onDone(holdings);
     } catch (e) {

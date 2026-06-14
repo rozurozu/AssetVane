@@ -1,6 +1,6 @@
 // 取引入力フォーム（screens.md #6・phase2-spec.md §6）。新規／編集兼用（ExternalAssetForm と同じ作法）。
 // side（buy=text-up / sell=text-down トグル）・code・shares・price・traded_at・fee（任意）。
-// transactionId なし＝新規（postTransaction）。あり＝編集（updateTransaction・「更新」ボタン＋キャンセル）。
+// transactionId なし＝新規（postTransaction）。あり＝編集（putTransaction・「更新」ボタン＋キャンセル）。
 // 送信は成功で onDone(result.holdings) を呼んで呼び元に通知（新規・編集とも holdings 再計算済み・ADR-019）。
 // フォーム入力スタイル: bg-canvas border-hairline focus:border-accent（DESIGN.md）。
 
@@ -13,7 +13,7 @@ import {
   type Transaction,
   type TransactionInput,
   postTransaction,
-  updateTransaction,
+  putTransaction,
 } from "@/lib/api";
 import { useEffect, useState } from "react";
 
@@ -22,7 +22,7 @@ type Props = {
   stocks: Stock[];
   onDone: (holdings: HoldingsResponse) => void;
   initial?: Transaction; // 編集時の既存取引値（無ければ新規）
-  transactionId?: number; // 指定時＝編集モード（updateTransaction を使う）
+  transactionId?: number; // 指定時＝編集モード（putTransaction を使う）
   onCancel?: () => void; // 編集モードでキャンセルしたとき呼ぶ
 };
 
@@ -107,10 +107,10 @@ export function TransactionForm({
         fee: form.fee ? Number(form.fee) : null,
         traded_at: form.traded_at,
       };
-      // 編集モードは updateTransaction（フォームは閉じる側＝onCancel が片付ける）。
+      // 編集モードは putTransaction（フォームは閉じる側＝onCancel が片付ける）。
       // 新規モードは postTransaction（連続入力できるよう INITIAL に戻す）。
       const result = editing
-        ? await updateTransaction(transactionId, input)
+        ? await putTransaction(transactionId, input)
         : await postTransaction(input);
       if (!editing) setForm(INITIAL);
       onDone(result.holdings);

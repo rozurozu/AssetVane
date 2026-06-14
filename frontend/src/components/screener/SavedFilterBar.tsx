@@ -8,9 +8,9 @@ import { inputCls } from "@/components/ui/Field";
 import {
   type SavedFilter,
   type ScreenCriteria,
-  createFilter,
   deleteFilter,
-  updateFilter,
+  postFilter,
+  putFilter,
 } from "@/lib/api";
 import { useState } from "react";
 
@@ -56,7 +56,7 @@ export function SavedFilterBar({ filters, appliedCriteria, onLoad, onSaved, onDe
 
   const handleCreate = () =>
     run(async () => {
-      const f = await createFilter({ name: name.trim(), criteria: appliedCriteria });
+      const f = await postFilter({ name: name.trim(), criteria: appliedCriteria });
       onSaved(f);
       setSelectedId(f.id);
     });
@@ -64,7 +64,7 @@ export function SavedFilterBar({ filters, appliedCriteria, onLoad, onSaved, onDe
   const handleUpdate = () =>
     run(async () => {
       if (selectedId === "") return;
-      const f = await updateFilter(selectedId, { name: name.trim(), criteria: appliedCriteria });
+      const f = await putFilter(selectedId, { name: name.trim(), criteria: appliedCriteria });
       onSaved(f);
     });
 

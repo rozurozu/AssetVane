@@ -15,7 +15,7 @@ import {
   type UsHolding,
   type UsTransaction,
   deleteUsTransaction,
-  listUsTransactions,
+  getUsTransactions,
 } from "@/lib/api";
 import { fmtUsd } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -27,7 +27,7 @@ type Props = {
 
 export function UsTransactionHistory({ onHoldingsChange }: Props) {
   // 初回ロードは useApi で取り、以降は mutation 成功時に再 fetch（操作起点の更新＝frontend-component-pattern (c)）。
-  const { data, error, loading } = useApi((s) => listUsTransactions(s), []);
+  const { data, error, loading } = useApi((s) => getUsTransactions(s), []);
   const [txns, setTxns] = useState<UsTransaction[] | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -42,7 +42,7 @@ export function UsTransactionHistory({ onHoldingsChange }: Props) {
 
   async function refetch() {
     try {
-      setTxns(await listUsTransactions());
+      setTxns(await getUsTransactions());
     } catch (e) {
       setMutErr(e instanceof Error ? e.message : String(e));
     }

@@ -8,7 +8,7 @@
 // データは lib/api.ts 経由（ADR-005）。DESIGN.md トークン・density-first。
 
 import { StatusBlock } from "@/components/ui/StatusBlock";
-import { type Dossier, addWatchlist, getDossier, investigateStock } from "@/lib/api";
+import { type Dossier, getDossier, investigateStock, postWatchlist } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import { useState } from "react";
 import Markdown from "react-markdown";
@@ -50,7 +50,7 @@ export function DossierSection({ code }: Props) {
     setWatching(true);
     setWatchNote(null);
     try {
-      await addWatchlist(code);
+      await postWatchlist(code);
       setWatchNote("watchlist に追加したのだ。");
     } catch (e) {
       setWatchNote(e instanceof Error ? e.message : String(e));

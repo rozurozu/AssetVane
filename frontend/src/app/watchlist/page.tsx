@@ -10,11 +10,11 @@ import { inputCls } from "@/components/ui/Field";
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import {
   type WatchlistItem,
-  addWatchlist,
+  deleteWatchlist,
   getWatchlist,
   investigateStock,
-  removeWatchlist,
-  updateWatchlistInterval,
+  patchWatchlistInterval,
+  postWatchlist,
 } from "@/lib/api";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -78,7 +78,7 @@ export default function WatchlistPage() {
     setAdding(true);
     setAddErr(null);
     try {
-      const item = await addWatchlist(c);
+      const item = await postWatchlist(c);
       // 既存（重複）なら差し替え、新規なら先頭に積む。
       setItems((prev) => {
         const base = prev ?? [];
@@ -120,7 +120,7 @@ export default function WatchlistPage() {
     if (days < 1 || days === item.interval_days) return;
     setIntervalBusyIds((prev) => new Set(prev).add(item.id));
     try {
-      const updated = await updateWatchlistInterval(item.code, days);
+      const updated = await patchWatchlistInterval(item.code, days);
       setItems((prev) => (prev ?? []).map((w) => (w.id === item.id ? updated : w)));
     } catch {
       // 失敗時は行を変えない（別途やり直し可）。
@@ -139,7 +139,7 @@ export default function WatchlistPage() {
     setBusy(item.id, true);
     setActionErr(null);
     try {
-      await removeWatchlist(item.id);
+      await deleteWatchlist(item.id);
       setItems((prev) => (prev ?? []).filter((w) => w.id !== item.id));
     } catch (e) {
       setActionErr(`削除に失敗（${item.code}）: ${e instanceof Error ? e.message : String(e)}`);
@@ -157,7 +157,7 @@ export default function WatchlistPage() {
         </div>
       </div>
 
-      {/* 銘柄追加 UI（code 入力 → addWatchlist）。 */}
+      {/* 銘柄追加 UI（code 入力 → postWatchlist）。 */}
       <div className="mb-3 flex items-end gap-2 rounded-lg border border-hairline bg-surface-1 p-3">
         <div className="w-40">
           <label htmlFor="wl-code" className="mb-0.5 block text-[11px] text-ink-muted">

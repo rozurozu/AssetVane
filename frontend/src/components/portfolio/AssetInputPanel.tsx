@@ -20,12 +20,12 @@ import {
   type ExternalAssetInput,
   type HoldingsResponse,
   type Stock,
-  createExternalAsset,
   deleteExternalAsset,
   getCash,
   getExternalAssets,
+  postExternalAsset,
   putCash,
-  updateExternalAsset,
+  putExternalAsset,
 } from "@/lib/api";
 import { useEffect, useState } from "react";
 
@@ -251,10 +251,10 @@ export function AssetInputPanel({
 
   async function handleExternalSave(id: number | "new", input: ExternalAssetInput) {
     if (id === "new") {
-      const created = await createExternalAsset(input);
+      const created = await postExternalAsset(input);
       setExternalAssets((prev) => [...prev, created]);
     } else {
-      const updated = await updateExternalAsset(id, input);
+      const updated = await putExternalAsset(id, input);
       setExternalAssets((prev) => prev.map((a) => (a.id === id ? updated : a)));
     }
     setEditingId(null);

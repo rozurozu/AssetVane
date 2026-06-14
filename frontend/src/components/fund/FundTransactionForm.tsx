@@ -1,8 +1,8 @@
 // 投信取引入力フォーム（ADR-054）。株の TransactionForm をミラー。新規／編集兼用。
 // 銘柄は funds マスタから datalist 選択。未登録 ISIN のときは名称欄に入力すると、送信時に
-// 先に createFund（POST /funds）でマスタ登録してから buy 取引を流す。
+// 先に postFund（POST /funds）でマスタ登録してから buy 取引を流す。
 // side（buy=text-up / sell=text-down トグル）・isin・units（口数）・price（基準価額）・traded_at・fee（任意）。
-// transactionId なし＝新規（postFundTransaction）。あり＝編集（updateFundTransaction）。
+// transactionId なし＝新規（postFundTransaction）。あり＝編集（putFundTransaction）。
 // 送信成功で onDone(holdings) を呼ぶ（新規・編集とも FundHolding[] を返す＝backend 再計算済み）。
 
 "use client";
@@ -13,9 +13,9 @@ import {
   type FundHolding,
   type FundTransaction,
   type FundTransactionInput,
-  createFund,
+  postFund,
   postFundTransaction,
-  updateFundTransaction,
+  putFundTransaction,
 } from "@/lib/api";
 import { useEffect, useState } from "react";
 
@@ -25,7 +25,7 @@ type Props = {
   onDone: (holdings: FundHolding[]) => void;
   onFundCreated?: (fund: Fund) => void; // 未登録 ISIN を新規登録したとき親へ通知（funds 候補更新用）
   initial?: FundTransaction; // 編集時の既存取引値（無ければ新規）
-  transactionId?: number; // 指定時＝編集モード（updateFundTransaction を使う）
+  transactionId?: number; // 指定時＝編集モード（putFundTransaction を使う）
   onCancel?: () => void; // 編集モードでキャンセルしたとき呼ぶ
 };
 
@@ -119,7 +119,7 @@ export function FundTransactionForm({
       const isin = form.isin.trim();
       // 未登録 ISIN は先にマスタ登録してから取引（POST /funds → そのまま buy）。
       if (needsRegister) {
-        const created = await createFund({
+        const created = await postFund({
           isin,
           name: form.name.trim(),
           assoc_code: form.assoc_code.trim(),
@@ -137,7 +137,7 @@ export function FundTransactionForm({
       };
       // 編集モードは update（フォームは onCancel が片付ける）。新規は post（連続入力できるよう初期化）。
       const holdings = editing
-        ? await updateFundTransaction(transactionId, input)
+        ? await putFundTransaction(transactionId, input)
         : await postFundTransaction(input);
       if (!editing) setForm(initialState());
       onDone(holdings);

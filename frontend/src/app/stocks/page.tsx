@@ -13,10 +13,10 @@ import { WatchlistStar } from "@/components/ui/WatchlistStar";
 import {
   type SavedFilter,
   type ScreenCriteria,
-  addWatchlist,
+  deleteWatchlist,
   getFilters,
   getWatchlist,
-  removeWatchlist,
+  postWatchlist,
   screenStocks,
 } from "@/lib/api";
 import { fmtMarketCap, fmtRatio, pct } from "@/lib/format";
@@ -80,10 +80,10 @@ export default function StocksPage() {
     });
     try {
       if (isAdding) {
-        const item = await addWatchlist(code);
+        const item = await postWatchlist(code);
         setWatchMap((prev) => new Map(prev).set(code, item.id)); // 実 id に確定
       } else if (id != null) {
-        await removeWatchlist(id);
+        await deleteWatchlist(id);
       }
     } catch (e) {
       setWatchErr(e instanceof Error ? e.message : String(e));

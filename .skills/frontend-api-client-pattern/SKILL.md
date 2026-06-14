@@ -1,11 +1,11 @@
 ---
 name: frontend-api-client-pattern
-description: frontend から backend を呼ぶ処理（lib/api.ts）を追加・変更するとき必ず読む（ブラウザ fetch 一本化・型を Pydantic と 1:1）。
+description: frontend から backend を呼ぶ処理（lib/api/ パッケージ）を追加・変更するとき必ず読む（ブラウザ fetch 一本化・型を Pydantic と 1:1）。
 ---
 
 # frontend API クライアント規約
 
-**Next は UI 専用。DB に触らず、backend とのやり取りは `lib/api.ts` 経由のブラウザ fetch に一本化する**（ADR-005）。型も `lib/api.ts` に集約し、backend の Pydantic モデルと 1:1 で対応させる。コンポーネント/フックは `lib/api.ts` の関数と型だけを使う（詳細な使い方は [[frontend-component-pattern]] の `useApi`）。
+**Next は UI 専用。DB に触らず、backend とのやり取りは `lib/api/` 経由のブラウザ fetch に一本化する**（ADR-005）。型も `lib/api/` に集約し、backend の Pydantic モデルと 1:1 で対応させる。コンポーネント/フックは `@/lib/api`（barrel）の関数と型だけを使う（詳細な使い方は [[frontend-component-pattern]] の `useApi`）。`lib/api/` の内部構成は後述の「ファイル構成」を参照。
 
 ## 絶対にやらないこと（ADR-005）
 
@@ -17,16 +17,33 @@ description: frontend から backend を呼ぶ処理（lib/api.ts）を追加・
 
 ## 接続先と秘密情報
 
-- 接続先は**相対パス `/api`**（同一オリジン化＝ADR-037）。ブラウザは自分のオリジンの `/api/*` だけを叩き、Next の rewrites（`next.config.ts`）が裏で backend へ素通しする。**ブラウザは backend のホストを知らない**ので CORS も API_URL 焼き込みも不要。rewrites の転送先だけ `BACKEND_ORIGIN`（既定 `http://backend:8000`・ホスト直 dev は `http://localhost:8000`）で決まるが、これは Next サーバ側の話で `lib/api.ts` は触らない。
+- 接続先は**相対パス `/api`**（同一オリジン化＝ADR-037）。ブラウザは自分のオリジンの `/api/*` だけを叩き、Next の rewrites（`next.config.ts`）が裏で backend へ素通しする。**ブラウザは backend のホストを知らない**ので CORS も API_URL 焼き込みも不要。rewrites の転送先だけ `BACKEND_ORIGIN`（既定 `http://backend:8000`・ホスト直 dev は `http://localhost:8000`）で決まるが、これは Next サーバ側の話で `lib/api/` は触らない。
 - **秘密情報（J-Quants / LLM キー等）を frontend に置かない**。それらは backend の `.env` のみ。
 
 ```ts
 export const API_BASE = "/api";
 ```
 
+## ファイル構成（`lib/api/` パッケージ）
+
+`lib/api/` はドメイン別モジュールに分割し、`index.ts`（barrel）で再エクスポートする。**importer は `@/lib/api` を named import するだけ**で、内部分割を意識しない。
+
+```
+lib/api/
+  _client.ts   共通 fetch 基盤（API_BASE / ApiError / getJSON / postJSON /
+               putJSON / patchJSON / del）。自己完結し他モジュールを import しない。
+  <domain>.ts  ドメイン別（portfolio / stocks / advisor / watchlist / news /
+               funds / us / batch / signals / lead-lag …）。型と関数を同居。
+  index.ts     barrel
+```
+
+- **各ドメインモジュールは `_client.ts` だけを import する**。型はそのドメインのファイルに同居させ、**ドメイン間で型を直接 import しない**（cross-domain 参照を作らない＝循環依存を避ける）。共用したくなった型は配置ドメインを decide して同居させ、利用側は `@/lib/api`（barrel）から取る。
+- **`index.ts` はドメインを `export *`**、`_client.ts` だけは内部ヘルパ（`getJSON` 等）を外へ漏らさないため **公開分のみ明示 re-export**（`export { API_BASE, ApiError } from "./_client";`）。`export *` でドメインを束ねるのは、型名・関数名が全モジュールで一意だから（衝突したら名前を直す）。
+- backend の `db/repo/` パッケージ分割（`_common.py` ＋ ドメイン別 ＋ 明示 re-export）と同じ思想。
+
 ## fetch ラッパと ApiError
 
-生 fetch をコンポーネントに散らさない。共通ラッパを 1 つ置き、各エンドポイント関数はそれを呼ぶ。
+生 fetch をコンポーネントに散らさない。共通ラッパ（`_client.ts`）を 1 つ置き、各エンドポイント関数はそれを呼ぶ。
 
 ```ts
 export class ApiError extends Error {
@@ -81,22 +98,26 @@ export function postTransaction(input: TransactionInput): Promise<TransactionRes
 }
 ```
 
-- 関数名は `getXxx`/`postXxx`/`putXxx`/`deleteXxx`（動詞＋対象）。
+- **関数名は 2 層ルールで決める**:
+  - **リソースの CRUD** は **HTTP メソッド接頭辞**に統一する（`getXxx`/`postXxx`/`putXxx`/`patchXxx`/`deleteXxx`）。同義動詞で揺らさない（`list`/`add`/`create`/`update`/`remove` を使わず、`get`/`post`/`put`/`delete` に寄せる）。例: 取得=`getUsTransactions`、作成=`postWatchlist`、更新=`putTransaction`、部分更新=`patchWatchlistInterval`、削除=`deleteFilter`。
+  - **アクションエンドポイント**（リソースの単純 CRUD ではない操作＝承認・最適化・調査・バッチ起動/停止・チャット・スクリーニング・検索・取り込み等）は **ドメイン動詞を許容**する。HTTP メソッドに潰すと意図が消えるため。例: `approveProposal`/`rejectProposal`/`optimizePortfolio`/`investigateStock`/`runBatch`/`stopBatch`/`sendChat`/`screenStocks`/`searchNews`/`ingestNews`。
 - パスは backend の `docs/api.md` 契約に一致させる。
 
 ## 型は Pydantic と 1:1
 
-- レスポンス/リクエストの型を **`lib/api.ts` に `export type` で集約**し、backend の Pydantic モデルと**フィールド名・null 許容・単位まで 1:1** に対応させる。型をコンポーネント側で個別定義しない。**`interface` は使わず `type` に統一**する（union 型と書式を揃えるため・declaration merging を持ち込まない）。
+- レスポンス/リクエストの型を **`lib/api/` の各ドメインモジュールに `export type` で集約**し、backend の Pydantic モデルと**フィールド名・null 許容・単位まで 1:1** に対応させる。型をコンポーネント側で個別定義しない。**`interface` は使わず `type` に統一**する（union 型と書式を揃えるため・declaration merging を持ち込まない）。
 - **比率・weight・current/limit は内部 0..1**。UI でのみ ×100 して % 表示（ADR-008）。型コメントに単位を明記する（`weight: number | null; // 株式内比率 0..1（UI で ×100）`）。
 - backend の `Literal`（signal_type 等）は TS の union（`"momentum" | "volume_spike"`）に対応させる。
-- backend のモデルを変えたら api.ts の型も同じコミットで揃える（契約のズレを残さない）。
+- backend のモデルを変えたら `lib/api/` の型も同じコミットで揃える（契約のズレを残さない）。
 
 ## チェックリスト
 
-- [ ] 取得・送信は `lib/api.ts` 経由のブラウザ fetch のみ（Server 取得 / Server Action / Route Handler / DB アクセスを足していない）
+- [ ] 取得・送信は `lib/api/` 経由のブラウザ fetch のみ（Server 取得 / Server Action / Route Handler / DB アクセスを足していない）
 - [ ] 接続先は相対パス `/api`（同一オリジン化＝ADR-037）。秘密情報を frontend に置いていない
-- [ ] 共通 `request` ラッパ経由で、エラーは `ApiError` を throw（`{ok,error}` を返していない）
+- [ ] 共通ラッパ（`_client.ts`）経由で、エラーは `ApiError` を throw（`{ok,error}` を返していない）
 - [ ] GET 関数は `signal` を受けて fetch に渡す（キャンセル対応）
 - [ ] エラーメッセージは FastAPI の `detail` を拾っている
-- [ ] 型は api.ts に集約し Pydantic と 1:1（フィールド名・null・単位）。比率は 0..1 でコメント明記。宣言は `export type`（`interface` 不使用）
-- [ ] backend のモデル変更時に api.ts の型も同コミットで更新した
+- [ ] 関数名は 2 層ルール（リソース CRUD＝HTTP メソッド接頭辞 `get/post/put/patch/delete`、アクション＝ドメイン動詞）
+- [ ] 新ドメインを足すなら `lib/api/<domain>.ts`＋`index.ts` に `export *`。ドメインは `_client.ts` だけを import（cross-domain 型参照を作らない）
+- [ ] 型は `lib/api/` に集約し Pydantic と 1:1（フィールド名・null・単位）。比率は 0..1 でコメント明記。宣言は `export type`（`interface` 不使用）
+- [ ] backend のモデル変更時に `lib/api/` の型も同コミットで更新した
