@@ -304,25 +304,27 @@ export function AdvisorChat() {
         </div>
       )}
 
-      <div className="flex gap-2 border-hairline border-t px-3 py-2.5">
-        <input
+      <div className="flex items-end gap-2 border-hairline border-t px-3 py-2.5">
+        <textarea
           value={input}
+          rows={1}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            // Enter で送信・Shift+Enter で改行（標準）。IME 変換確定中(isComposing)は送信しない。
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               send();
             }
           }}
           disabled={busy}
           placeholder="この画面について質問…（例: 短期で攻める方針を相談したい）"
-          className="flex-1 rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-accent disabled:opacity-60"
+          className="field-sizing-content max-h-[105px] min-h-[34px] flex-1 resize-none overflow-y-auto rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-[13px] text-ink leading-[1.4] outline-none focus:border-accent disabled:opacity-60"
         />
         <button
           type="button"
           onClick={send}
           disabled={busy || !input.trim()}
-          className="w-[34px] rounded-md bg-accent text-white disabled:opacity-50"
+          className="h-[34px] w-[34px] rounded-md bg-accent text-white disabled:opacity-50"
         >
           ➤
         </button>
