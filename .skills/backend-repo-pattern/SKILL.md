@@ -1,11 +1,20 @@
 ---
 name: backend-repo-pattern
-description: db/repo.py のクエリ関数や db/schema.py の Table 定義を新規作成・修正するとき必ず読む（SQLAlchemy Core・UPSERT 冪等・読み書きの接続規律）。
+description: db/repo/ パッケージのクエリ関数や db/schema.py の Table 定義を新規作成・修正するとき必ず読む（SQLAlchemy Core・UPSERT 冪等・読み書きの接続規律・ドメイン別サブモジュール）。
 ---
 
 # repo / schema 規約
 
-`db/repo.py`（クエリ）と `db/schema.py`（Table 定義）。**SQLAlchemy Core のみ（ORM は使わない）**。戻り値は**素の `dict`**（Pydantic 変換は router の責務＝[[backend-router-pattern]]）。
+`db/repo/`（クエリ・ドメイン別サブモジュールのパッケージ）と `db/schema.py`（Table 定義）。**SQLAlchemy Core のみ（ORM は使わない）**。戻り値は**素の `dict`**（Pydantic 変換は router の責務＝[[backend-router-pattern]]）。
+
+## db/repo/ パッケージ構成
+
+`db/repo` は単一ファイルではなく**ドメイン別サブモジュールのパッケージ**（`stocks.py` / `valuation.py` / `portfolio.py` / `advisor.py` / `news.py` / `themes.py` / `us_equity.py` …）。境界は spec の Phase / ドメインに沿う（迷ったら現存の `# =====` 見出しが分類の手本）。
+
+- **横断ヘルパは `_common.py`**: 全ドメインで使う `_upsert`（汎用 UPSERT）や `pack_embedding`（embedding BLOB 化）はここに置き、各サブモジュールが `from app.db.repo._common import _upsert` で取る。ドメイン局所の private ヘルパ（`_valuation_inner_subquery` 等）や定数（`_SCREEN_SORT_COLS` 等）は所属サブモジュールに置く。
+- **呼び出し側は従来どおり `repo.func()`**: `__init__.py` が全 public 関数を明示名 import ＋ `__all__` で flat に再エクスポートする（`import *` は使わない＝house style）。新関数を足したら `__init__.py` の import と `__all__` にも 1 行追加する（pyright/ruff の F401 を満たし、`repo.新関数` で引けるようにする）。public ヘルパ（`pack_embedding` 等）も再エクスポートに含める。private（`_` 始まり）は再エクスポートしない。
+- **サブモジュール間は原則疎結合**: ある関数が別ドメインの関数を呼ぶ必要が出たら、まず**呼ばれる側に co-locate できないか**を検討する（例: `get_max_daily_date` は `get_max_quote_date` の別名なので `stocks.py` に同居）。やむを得ず跨ぐ時だけ `from app.db.repo.<mod> import ...`（`_common` は repo パッケージを import しない＝循環を作らない不変条件）。
+- **新規追加時の置き場所**: 既存ドメインに合うサブモジュールへ。新ドメインなら新サブモジュール＋`__init__.py` 配線。サブモジュールが肥大化したら同方針で更に割ってよい（呼び出し側は `repo.func()` のままなので無影響）。
 
 ## schema.py
 

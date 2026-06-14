@@ -90,7 +90,7 @@ frontend は `npm run lint`（Biome）/ `npm run format`（Biome）/ `npm run bu
 |---|---|
 | backend 全般（横断作法・レイヤ分離・型・例外・ログ・同期 def） | `backend-foundations` |
 | REST ルータ（`app/routers/` ・サブパッケージ router） | `backend-router-pattern` |
-| クエリ・Table 定義（`db/repo.py` ・`db/schema.py`） | `backend-repo-pattern` |
+| クエリ・Table 定義（`db/repo/` パッケージ ・`db/schema.py`） | `backend-repo-pattern` |
 | 数理計算・下ごしらえ（`services/` ・`quant/`） | `backend-service-quant-pattern` |
 | 外部 API クライアント（`adapters/`） | `backend-adapter-pattern` |
 | 夜間バッチ（`batch/` の runner/jobs/lock/notify） | `batch-pattern` |
