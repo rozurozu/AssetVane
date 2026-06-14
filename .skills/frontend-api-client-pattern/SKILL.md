@@ -86,7 +86,7 @@ export function postTransaction(input: TransactionInput): Promise<TransactionRes
 
 ## 型は Pydantic と 1:1
 
-- レスポンス/リクエストの型を **`lib/api.ts` に `export interface`（または `type`）で集約**し、backend の Pydantic モデルと**フィールド名・null 許容・単位まで 1:1** に対応させる。型をコンポーネント側で個別定義しない。
+- レスポンス/リクエストの型を **`lib/api.ts` に `export type` で集約**し、backend の Pydantic モデルと**フィールド名・null 許容・単位まで 1:1** に対応させる。型をコンポーネント側で個別定義しない。**`interface` は使わず `type` に統一**する（union 型と書式を揃えるため・declaration merging を持ち込まない）。
 - **比率・weight・current/limit は内部 0..1**。UI でのみ ×100 して % 表示（ADR-008）。型コメントに単位を明記する（`weight: number | null; // 株式内比率 0..1（UI で ×100）`）。
 - backend の `Literal`（signal_type 等）は TS の union（`"momentum" | "volume_spike"`）に対応させる。
 - backend のモデルを変えたら api.ts の型も同じコミットで揃える（契約のズレを残さない）。
@@ -98,5 +98,5 @@ export function postTransaction(input: TransactionInput): Promise<TransactionRes
 - [ ] 共通 `request` ラッパ経由で、エラーは `ApiError` を throw（`{ok,error}` を返していない）
 - [ ] GET 関数は `signal` を受けて fetch に渡す（キャンセル対応）
 - [ ] エラーメッセージは FastAPI の `detail` を拾っている
-- [ ] 型は api.ts に集約し Pydantic と 1:1（フィールド名・null・単位）。比率は 0..1 でコメント明記
+- [ ] 型は api.ts に集約し Pydantic と 1:1（フィールド名・null・単位）。比率は 0..1 でコメント明記。宣言は `export type`（`interface` 不使用）
 - [ ] backend のモデル変更時に api.ts の型も同コミットで更新した

@@ -59,21 +59,21 @@ async function toApiError(r: Response): Promise<ApiError> {
 // 比率・weight・current/limit はすべて 0..1（UI でのみ ×100 して %・ADR-008）。
 
 /** ポートフォリオ（P2-1・`GET /portfolios`）。既定は配列先頭（裁定 L-9）。 */
-export interface Portfolio {
+export type Portfolio = {
   portfolio_id: number;
   name: string;
   created_at: string | null;
-}
+};
 
 /** 遅延メタ（Free 12週遅延・ADR-008）。holdings のみ valuation_meta ラッパに包む。 */
-export interface ValuationMeta {
+export type ValuationMeta = {
   as_of: string | null;
   is_delayed: boolean;
   plan: string;
-}
+};
 
 /** 保有明細（transactions からの導出値・ADR-019）。 */
-export interface Holding {
+export type Holding = {
   id: number;
   code: string;
   company_name: string | null;
@@ -83,17 +83,17 @@ export interface Holding {
   market_value: number | null;
   unrealized_pnl: number | null;
   weight: number | null; // 株式内比率（0..1・UI で ×100）
-}
+};
 
 /** `GET /holdings` レスポンス（P2-2）。 */
-export interface HoldingsResponse {
+export type HoldingsResponse = {
   portfolio_id: number;
   holdings: Holding[];
   valuation_meta: ValuationMeta;
-}
+};
 
 /** `POST /transactions` リクエスト（P2-2）。 */
-export interface TransactionInput {
+export type TransactionInput = {
   portfolio_id: number;
   code: string;
   side: "buy" | "sell";
@@ -101,17 +101,17 @@ export interface TransactionInput {
   price: number; // 約定単価
   fee?: number | null; // 手数料（任意）
   traded_at: string; // 約定日 YYYY-MM-DD
-}
+};
 
 /** `POST /transactions` レスポンス（P2-2）。 */
-export interface TransactionResult {
+export type TransactionResult = {
   transaction_id: number;
   holdings: HoldingsResponse;
-}
+};
 
 /** 取引履歴 1 行（`GET /transactions` の 1 要素・P2-2）。新しい順で返る。
  * company_name は stocks JOIN で補完（行に名前を焼かない＝ADR-019）。 */
-export interface Transaction {
+export type Transaction = {
   id: number;
   code: string;
   company_name: string | null;
@@ -120,22 +120,22 @@ export interface Transaction {
   price: number; // 約定単価
   fee: number | null; // 手数料（任意）
   traded_at: string; // 約定日 YYYY-MM-DD
-}
+};
 
 /** `GET /cash` レスポンス・`PUT /cash` レスポンス（P2-3）。 */
-export interface Cash {
+export type Cash = {
   id: number;
   balance: number;
   updated_at: string | null;
-}
+};
 
 /** `PUT /cash` リクエスト（P2-3）。 */
-export interface CashInput {
+export type CashInput = {
   balance: number;
-}
+};
 
 /** 外部資産（投信・コモディティ等の手入力資産・P2-4）。 */
-export interface ExternalAsset {
+export type ExternalAsset = {
   id: number;
   name: string;
   category: string | null;
@@ -143,36 +143,36 @@ export interface ExternalAsset {
   proxy_symbol: string | null;
   monthly_contribution: number | null;
   as_of: string | null;
-}
+};
 
 /** `POST /external-assets` / `PUT /external-assets/{id}` リクエスト（P2-4）。 */
-export interface ExternalAssetInput {
+export type ExternalAssetInput = {
   name: string;
   category?: string | null;
   value: number;
   proxy_symbol?: string | null;
   monthly_contribution?: number | null;
   as_of?: string | null;
-}
+};
 
 /** 相関行列（P2-5）。codes[i]/labels[i] が matrix[i][j] に対応。 */
-export interface CorrelationMatrix {
+export type CorrelationMatrix = {
   codes: string[];
   labels: string[];
   matrix: number[][];
-}
+};
 
 /** 逸脱（policy 違反・P2-5/P2-7 共用）。current/limit は 0..1。 */
-export interface Deviation {
+export type Deviation = {
   kind: "max_position" | "cash_ratio" | "sector_cap";
   label: string;
   current: number; // 0..1
   limit: number; // 0..1
   breached: boolean;
-}
+};
 
 /** `GET /portfolio/{id}/metrics` レスポンス（P2-5）。 */
-export interface PortfolioMetrics {
+export type PortfolioMetrics = {
   portfolio_id: number;
   as_of: string | null;
   is_delayed: boolean;
@@ -183,26 +183,26 @@ export interface PortfolioMetrics {
   lookback_days: number | null;
   correlation: CorrelationMatrix;
   deviations: Deviation[];
-}
+};
 
 /** `POST /portfolio/{id}/optimize` リクエスト（P2-6）。省略時は policy をそのまま使う。 */
-export interface OptimizeRequest {
+export type OptimizeRequest = {
   target_cash_ratio?: number | null;
   max_position_weight?: number | null;
   sector_caps?: Record<string, number> | null;
-}
+};
 
 /** 最適化後の銘柄ウェイト（P2-6）。 */
-export interface OptimizeWeight {
+export type OptimizeWeight = {
   code: string;
   company_name: string | null;
   current_weight: number | null; // 現状比率（0..1）
   target_weight: number; // 最適比率（0..1）
   delta: number; // target - current（0..1）
-}
+};
 
 /** `POST /portfolio/{id}/optimize` レスポンス（P2-6）。infeasible=true なら weights は空。 */
-export interface OptimizeResult {
+export type OptimizeResult = {
   portfolio_id: number;
   as_of: string | null;
   is_delayed: boolean;
@@ -218,50 +218,50 @@ export interface OptimizeResult {
     sector_caps: Record<string, number> | null;
   };
   infeasible: boolean;
-}
+};
 
 /** backtest 累積曲線の 1 点（value は 1 始まりの倍率・§4.4）。 */
-export interface BacktestCurvePoint {
+export type BacktestCurvePoint = {
   date: string;
   value: number;
-}
+};
 
 /** backtest の 1 系列（ポート/ベンチ共通形・§4.4）。 */
-export interface BacktestLeg {
+export type BacktestLeg = {
   cumulative_return: number; // 累積リターン（0..1 基準の比率）
   annual_return: number; // 年率リターン
   sharpe: number | null;
   max_drawdown: number; // 最大DD（負値）
   curve: BacktestCurvePoint[];
-}
+};
 
 /** `GET /portfolio/{id}/backtest` レスポンス（現保有 buy&hold vs TOPIX・§4.4）。 */
-export interface BacktestResult {
+export type BacktestResult = {
   portfolio_id: number;
   as_of: string | null;
   is_delayed: boolean;
   portfolio: BacktestLeg;
   benchmark: BacktestLeg;
   excess_return: number; // ポート年率 - ベンチ年率
-}
+};
 
 /** 配分ドーナツ用スライス（P2-7・ADR-054・ADR-055）。weight は 0..1（UI で ×100）。
  * external_assets 由来は backend が "外部資産"、NAV 自動取得の投信は "投資信託"、
  * 米国株保有は "米国株" を返す（Phase 7(B-2)）。 */
-export interface AllocationSlice {
+export type AllocationSlice = {
   name: "株式" | "現金" | "外部資産" | "投資信託" | "米国株";
   value: number;
   weight: number; // 0..1
-}
+};
 
 /** 資産推移スパークライン用（P2-7）。 */
-export interface AssetSnapshotPoint {
+export type AssetSnapshotPoint = {
   date: string;
   total_value: number;
-}
+};
 
 /** `GET /asset-overview` レスポンス（P2-7・Phase 7(B-2) で us_stock_value を追加）。 */
-export interface AssetOverview {
+export type AssetOverview = {
   as_of: string | null;
   is_delayed: boolean;
   plan: string;
@@ -280,14 +280,14 @@ export interface AssetOverview {
   };
   deviations: Deviation[];
   trend: AssetSnapshotPoint[];
-}
+};
 
 // --- Phase 3 型定義（phase3-spec.md §9.5 / api.md §4・§7・Pydantic と 1:1）---
 // 比率系（target_cash_ratio / max_position_weight / sector_caps）はすべて 0..1。
 // UI でのみ ×100 して % 表示・保存時 ÷100（ADR-008 / spec §9.2）。
 
 /** 構造化コア（policy の定量レバー・api.md §7 GET /policy）。比率は 0..1。 */
-export interface PolicyCore {
+export type PolicyCore = {
   risk_tolerance: string | null; // "低"/"中"/"高"
   time_horizon: string | null; // "短"/"中"/"長"
   target_cash_ratio: number | null; // 0..1（UI で ×100）
@@ -296,23 +296,23 @@ export interface PolicyCore {
   target_return: number | null; // 0..1（任意）
   no_leverage: boolean;
   exclusions: string[]; // 除外銘柄コード等
-}
+};
 
 /** `GET /policy` レスポンス（core / rationale を分けて返す・api.md §7）。 */
-export interface Policy {
+export type Policy = {
   core: PolicyCore;
   rationale: string | null; // 自由文の理念（引用調で表示）
   updated_at: string | null;
-}
+};
 
 /** `PUT /policy` リクエスト（core 部分更新・rationale 即時更新・ADR-013 / U-7）。 */
-export interface PolicyUpdate {
+export type PolicyUpdate = {
   core?: Partial<PolicyCore>;
   rationale?: string;
-}
+};
 
 /** 投資日記 1 件（spec §8.2・date 降順）。source は夜の自動 / チャット要約昇格（ADR-029）。 */
-export interface JournalEntry {
+export type JournalEntry = {
   id: number;
   date: string; // YYYY-MM-DD
   source: "nightly" | "chat";
@@ -322,15 +322,15 @@ export interface JournalEntry {
   policy_snapshot: unknown | null; // その時点の policy まるごと（差分チップ用）
   llm_model: string | null;
   created_at: string | null;
-}
+};
 
 /** `GET /journal` レスポンス（spec §8.2）。 */
-export interface JournalResponse {
+export type JournalResponse = {
   entries: JournalEntry[];
-}
+};
 
 /** AI 提案 1 件（spec §8.2・承認制・約定はしない＝ADR-001/019）。 */
-export interface Proposal {
+export type Proposal = {
   id: number;
   created_date: string; // YYYY-MM-DD
   kind: "policy_change" | "buy" | "sell" | "rebalance";
@@ -341,55 +341,55 @@ export interface Proposal {
   resolved_at: string | null;
   journal_id: number | null; // 生成元 journal（チャット起票は null 可）
   depends_on: number | null; // 別 proposal の承認が前提（承認順制御・決定4）
-}
+};
 
 /** `GET /proposals` レスポンス（spec §8.2）。 */
-export interface ProposalsResponse {
+export type ProposalsResponse = {
   proposals: Proposal[];
-}
+};
 
 /** `POST /proposals/{id}/approve|reject` レスポンス（spec §8.2）。 */
-export interface ResolveResult {
+export type ResolveResult = {
   proposal: Proposal;
-}
+};
 
 /** 画面コンテキストの主対象（ADR-025・api.md §4・type で code/id を使い分け）。 */
-export interface FocusRef {
+export type FocusRef = {
   type: "stock" | "portfolio" | "signal" | "proposal";
   code?: string; // stock / signal
   id?: number; // portfolio / proposal
-}
+};
 
 /** 画面コンテキスト（軽量ヒント・数値は載せない＝ADR-025）。 */
-export interface ChatContext {
+export type ChatContext = {
   page: string; // "stock_detail" / "dashboard" / "signals" / "policy" / ...
   focus?: FocusRef; // 対象が無いページは省略
-}
+};
 
 /** チャット 1 ターン（system 不可・user/assistant のみ）。 */
-export interface ChatMessage {
+export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
-}
+};
 
 /** `POST /chat` リクエスト（spec §6.3・毎ターン全 messages 送信＝ステートレス）。 */
-export interface ChatRequest {
+export type ChatRequest = {
   messages: ChatMessage[];
   context?: ChatContext; // ADR-025（数値は載せない）
-}
+};
 
 /** AI が呼んだ Tool（UI 可視化用・結果の数値は載せない＝ADR-025）。 */
-export interface ToolRun {
+export type ToolRun = {
   name: string;
   args?: Record<string, unknown> | null;
-}
+};
 
 /** `POST /chat` レスポンス（非ストリーミング・spec §4.2/§6.3）。 */
-export interface ChatResponse {
+export type ChatResponse = {
   reply: string;
   tool_runs: ToolRun[];
   journal_id?: number | null; // journal に残せたら id（ADR-029・残せなければ null）
-}
+};
 
 export type Stock = {
   code: string;
@@ -584,26 +584,26 @@ export function deleteFilter(id: number): Promise<{ ok: boolean }> {
 // score は連続値 0..1、絞り込みは読み取り側が行う（ADR-026）。型は backend Pydantic と 1:1。
 export type SignalType = "momentum" | "volume_spike" | "ai_alpha" | "lead_lag";
 
-export interface SignalPayload {
+export type SignalPayload = {
   label?: string; // 一覧の「シグナル」列の短文（quant が格納）
   change_5d?: number | null; // 5日騰落率（符号付き小数・quant が格納）
   predicted_excess_return_60d?: number | null; // ai_alpha: 予測 60 営業日 対TOPIX 超過リターン（Phase 5）
   [k: string]: unknown; // momentum/volume_spike の type 固有指標（quant 確定）
-}
+};
 
-export interface Signal {
+export type Signal = {
   code: string;
   company_name: string | null; // signals JOIN stocks（ルータ補完）
   signal_type: SignalType;
   score: number; // 0..1
   payload: SignalPayload;
-}
+};
 
-export interface SignalsResponse {
+export type SignalsResponse = {
   date: string; // 実際に返した算出日（最新解決後）
   is_delayed: boolean; // 遅延フラグ（横断・Free=true）
   signals: Signal[]; // score 降順
-}
+};
 
 export function getSignals(
   opts?: {
@@ -622,10 +622,10 @@ export function getSignals(
 }
 
 /** 手動バッチ起動レスポンス（POST /batch/run・batch.py）。非同期受付で 202（裁定 L-2）。 */
-export interface BatchRunResponse {
+export type BatchRunResponse = {
   started: boolean;
   job_id: string | null;
-}
+};
 
 /** 夜間バッチを手動起動（Phase 1・POST /batch/run・ADR-011「2つの起動口」）。
  * 既に実行中なら backend が 409 を返し ApiError（detail）が throw される。
@@ -643,18 +643,18 @@ export function runEdinetDifferential(): Promise<BatchRunResponse> {
 }
 
 /** バッチ実行状態（GET /batch/status・batch.py・ADR-036）。batch.state と 1:1。 */
-export interface BatchStatusResponse {
+export type BatchStatusResponse = {
   running: boolean;
   current_job: string | null; // 実行中ジョブの短名（idle / 開始直後は null）
   started_at: string | null; // 走行開始時刻（ISO8601・UTC）
   full_backfill: boolean; // full（初回/復旧）か差分か
   stop_requested: boolean; // 停止要求済みか（次のジョブ境界で止まる）
-}
+};
 
 /** バッチ停止レスポンス（POST /batch/stop・ADR-036）。 */
-export interface BatchStopResponse {
+export type BatchStopResponse = {
   stopping: boolean; // 停止要求を受理したか（実行中でなければ false）
-}
+};
 
 /** 現在のバッチ実行状態を取得（ADR-036・WebUI がポーリングして進捗・停止可否を出す）。
  * cron・/batch/run・CLI --nightly のどの口で走っていても同じ状態を映す（ADR-011）。 */
@@ -669,10 +669,10 @@ export function stopBatch(): Promise<BatchStopResponse> {
 }
 
 /** Discord 疎通テストのレスポンス（POST /diagnostics/discord-test・diagnostics.py）。 */
-export interface DiscordTestResponse {
+export type DiscordTestResponse = {
   enabled: boolean; // Webhook URL が設定されているか（false なら未設定で送らない）
   sent: boolean; // 実際に 2xx で届いたか（enabled=false のときは常に false）
-}
+};
 
 /** Discord にテスト通知を 1 通送る（ADR-011「複数の起動口」・冪等回避＝毎回飛ぶ）。
  * enabled=false は未設定、sent=false は送信失敗。両者を呼び出し側で区別して表示する。 */
@@ -681,11 +681,11 @@ export function sendDiscordTest(): Promise<DiscordTestResponse> {
 }
 
 /** J-Quants 疎通テストのレスポンス（POST /diagnostics/jquants-test・ADR-008/036）。 */
-export interface JquantsTestResponse {
+export type JquantsTestResponse = {
   configured: boolean; // API キーが設定されているか（false なら未設定）
   ok: boolean; // 認証が通り 1 銘柄取れたか（configured=false のときは常に false）
   detail: string; // 人間向けメッセージ（成功＝会社名／失敗＝エラー要旨）
-}
+};
 
 /** J-Quants V2 に認証ピングを 1 発投げる（DB 非依存・ADR-011「複数の起動口」）。
  * configured=false は未設定、ok=false は疎通失敗。detail を呼び出し側で表示する。 */
@@ -849,7 +849,7 @@ export function sendChatStream(_req: ChatRequest): never {
 /** watchlist 1 件（spec §5.1・夜の巡回対象・最終調査日の起点）。
  * stale は backend が per-row interval_days で算出済み。フロントで再計算しない。
  * last_investigated_at は stock_dossiers JOIN（未調査は null）。 */
-export interface WatchlistItem {
+export type WatchlistItem = {
   id: number;
   code: string;
   company_name: string | null;
@@ -858,56 +858,56 @@ export interface WatchlistItem {
   last_investigated_at: string | null; // 未調査は null（一覧の「最終調査日」）
   interval_days: number; // 銘柄ごとの調査間隔（日・既定 21・常に非 null）。stale 算出の基準。
   stale: boolean; // backend 算出（per-row interval_days 超過）
-}
+};
 
 /** `GET /watchlist` レスポンス（spec §5.1・items ラッパ）。 */
-export interface WatchlistResponse {
+export type WatchlistResponse = {
   items: WatchlistItem[];
-}
+};
 
 /** ドシエのソース台帳 1 件（spec §5.2・本文は持たず要約＋URL のみ＝ADR-020）。 */
-export interface DossierSource {
+export type DossierSource = {
   id: number;
   source_type: string; // "news" / "filing" 等
   url: string;
   title: string | null;
   summary: string | null;
   published_at: string | null;
-}
+};
 
 /** ドシエ（spec §5.2・1 銘柄 1 行の living document）。
  * 未調査でも 200 で返る（summary_md=""・sources=[]・last_investigated_at=null）。
  * 未調査判定は last_investigated_at === null（REST 担当の申し送り）。 */
-export interface Dossier {
+export type Dossier = {
   code: string;
   summary_md: string; // AI 生成 markdown（react-markdown + rehype-sanitize で描画・L-24）
   key_facts: Record<string, unknown> | null; // PER/成長率等（出所は Tool の事実・ADR-014）
   last_investigated_at: string | null; // null は未調査
   updated_at: string | null;
   sources: DossierSource[];
-}
+};
 
 /** `POST /dossiers/{code}/investigate` レスポンス（spec §5.2・調査後の最新ドシエ）。 */
-export interface InvestigateResult {
+export type InvestigateResult = {
   dossier: Dossier;
-}
+};
 
 /** 環境変数キーの充足状況（config.py env_status・/health の env 要素）。 */
-export interface EnvStatus {
+export type EnvStatus = {
   set: boolean;
   required_from_phase: number;
-}
+};
 
 /** LLM コストガード状態（ADR-028・Topbar の warn バナー判定）。/health が毎回算出する派生値。 */
-export interface LlmCostStatus {
+export type LlmCostStatus = {
   mode: string; // "off" | "warn" | "block"
   limit_usd: number;
   month_total_usd: number;
   exceeded: boolean; // month_total_usd >= limit_usd
-}
+};
 
 /** `GET /health` レスポンス（疎通確認・Settings の env 詳細表示・main.py）。 */
-export interface HealthResponse {
+export type HealthResponse = {
   status?: string;
   service?: string;
   version?: string;
@@ -916,7 +916,7 @@ export interface HealthResponse {
   env?: Record<string, EnvStatus>; // 各キーの set 状況（discord_webhook_url 等）
   llm_cost?: LlmCostStatus; // ADR-028: warn バナーの判定材料
   [k: string]: unknown;
-}
+};
 
 /** /health の疎通確認に掛けるタイムアウト（Pi 冷間起動・無応答で赤に倒すまでの上限・ADR-038）。 */
 const HEALTH_TIMEOUT_MS = 5000;
@@ -987,23 +987,23 @@ export function investigateStock(code: string): Promise<InvestigateResult> {
 // --- ADR-034 一般ニュース（銘柄に紐づかない別系統）---
 // backend の GET /general-news（routers/general_news.py）と 1:1。本文は持たず要約＋URL のみ。
 
-export interface GeneralNewsItem {
+export type GeneralNewsItem = {
   url: string;
   title: string | null;
   summary: string | null;
   published_at: string | null;
   source_type: string | null;
   category: string;
-}
+};
 
-export interface GeneralNewsCategory {
+export type GeneralNewsCategory = {
   label: string;
   items: GeneralNewsItem[];
-}
+};
 
-export interface GeneralNewsResponse {
+export type GeneralNewsResponse = {
   categories: GeneralNewsCategory[];
-}
+};
 
 /** 一般ニュースをカテゴリ別に取得（ADR-034）。台帳が空でも 200（categories=[]）。 */
 export function getGeneralNews(signal?: AbortSignal): Promise<GeneralNewsResponse> {
@@ -1015,7 +1015,7 @@ export function getGeneralNews(signal?: AbortSignal): Promise<GeneralNewsRespons
 // level は "stock"/"sector"/"market" の 3 層。source='user' のものだけ DELETE 可。
 
 /** ニュース 1 件（ADR-047）。level で 3 層に分かれる。url が "user://" 始まりは手入力で外部リンクなし。 */
-export interface NewsItem {
+export type NewsItem = {
   id: number;
   level: string; // "stock" / "sector" / "market"
   code: string | null; // level=stock のとき銘柄コード（他は null）
@@ -1026,19 +1026,19 @@ export interface NewsItem {
   title: string | null;
   summary: string | null;
   published_at: string | null;
-}
+};
 
 /** `GET /news` レスポンス（items ラッパ）。 */
-export interface NewsListResponse {
+export type NewsListResponse = {
   items: NewsItem[];
-}
+};
 
 /** `POST /news` リクエスト（本文を要約して取り込む。要約失敗時 502）。 */
-export interface NewsIngestInput {
+export type NewsIngestInput = {
   text: string;
   url?: string | null;
   code?: string | null;
-}
+};
 
 /** ニュース一覧（ADR-047）。level/since/limit は指定時のみ query に付与。台帳が空でも 200。 */
 export function getNews(
@@ -1056,10 +1056,10 @@ export function getNews(
 /** `GET /news/search` レスポンス（ADR-045・意味検索）。
  * items は NewsItem と同型。機能オフ/sqlite-vec 未ロード等で検索できないときは items=[] ＋
  * reason に理由が入る（200・UI を壊さない＝backend NewsSearchResponse と 1:1）。 */
-export interface NewsSearchResponse {
+export type NewsSearchResponse = {
   items: NewsItem[];
   reason?: string | null;
-}
+};
 
 /** ニュース意味検索（ADR-045・GET /news/search・q 必須）。
  * level/since/until/limit は指定時のみ query に付与（code/sector17_code も契約上は受けるが今回 UI 未使用）。
@@ -1106,15 +1106,15 @@ export function deleteNews(id: number): Promise<{ ok: boolean }> {
 // is_delayed=true（plan=free か model_as_of が約 3 ヶ月古い）は Free 低信頼バナーの判定材料。
 
 /** リードラグ・ランキング 1 行（業種単位）。score 降順で並ぶ。 */
-export interface LeadLagRow {
+export type LeadLagRow = {
   code: string;
   label: string;
   score: number;
   signal: number | null; // 生のシグナル値（縮退時は null＝routers/lead_lag.py の LeadLagRankItem）
-}
+};
 
 /** リードラグのモデル/検証メタ（品質表示・遅延判定）。JSON キーは "lambda"（予約語だがそのまま）。 */
-export interface LeadLagMeta {
+export type LeadLagMeta = {
   plan: string;
   is_delayed: boolean;
   model_as_of: string | null;
@@ -1123,14 +1123,14 @@ export interface LeadLagMeta {
   window: number | null;
   k: number | null;
   lambda: number | null;
-}
+};
 
 /** `GET /lead-lag` レスポンス。空台帳なら ranking=[]・as_of=null（200）。 */
-export interface LeadLagResponse {
+export type LeadLagResponse = {
   as_of: string | null;
   ranking: LeadLagRow[];
   meta: LeadLagMeta;
-}
+};
 
 /** 業種リードラグのランキング取得（Phase 7・GET /lead-lag）。台帳が空でも 200（ranking=[]）。 */
 export function getLeadLag(signal?: AbortSignal): Promise<LeadLagResponse> {
@@ -1142,23 +1142,23 @@ export function getLeadLag(signal?: AbortSignal): Promise<LeadLagResponse> {
 // 評価額・含み損益は backend が計算済み（market_value/unrealized_pnl）。frontend で再計算しない（ADR-014）。
 
 /** 投信マスタ 1 件（ISIN を主キーに名称・協会コードを持つ）。 */
-export interface Fund {
+export type Fund = {
   isin: string;
   name: string;
   assoc_code: string | null; // 協会コード（NAV 取得キー・任意）
   updated_at: string | null;
-}
+};
 
 /** `POST /funds` リクエスト（ISIN＋名称＋協会コードで登録）。
  * assoc_code は NAV 取得（投信総合検索ライブラリー associFundCd）に必須。未指定だと backend が 422。 */
-export interface FundInput {
+export type FundInput = {
   isin: string;
   name: string;
   assoc_code: string; // NAV 取得に必須（空不可）
-}
+};
 
 /** 投信取引 1 件（株の Transaction に対応）。price は 10,000 口あたりの基準価額（円）。 */
-export interface FundTransaction {
+export type FundTransaction = {
   id: number;
   portfolio_id: number;
   isin: string;
@@ -1167,10 +1167,10 @@ export interface FundTransaction {
   price: number; // 約定基準価額（10,000 口あたりの円）
   fee: number | null; // 手数料（任意）
   traded_at: string; // 約定日 YYYY-MM-DD
-}
+};
 
 /** `POST /fund-transactions`・`PUT /fund-transactions/{id}` リクエスト。 */
-export interface FundTransactionInput {
+export type FundTransactionInput = {
   portfolio_id: number;
   isin: string;
   side: "buy" | "sell";
@@ -1178,10 +1178,10 @@ export interface FundTransactionInput {
   price: number;
   fee?: number | null;
   traded_at: string;
-}
+};
 
 /** 投信保有 1 件（取引から導出。評価額・含み損益は backend 計算＝ADR-014）。 */
-export interface FundHolding {
+export type FundHolding = {
   isin: string;
   name: string | null;
   units: number; // 口数（小数）
@@ -1191,13 +1191,13 @@ export interface FundHolding {
   market_value: number | null; // 評価額（backend 計算）
   unrealized_pnl: number | null; // 含み損益（backend 計算）
   weight: number | null; // 投信内比率（0..1・UI で ×100）
-}
+};
 
 /** NAV 推移の 1 点（スパークライン用・date 昇順）。 */
-export interface FundNavPoint {
+export type FundNavPoint = {
   date: string;
   nav: number | null; // 10,000 口あたりの円
-}
+};
 
 /** 投信マスタ一覧（ADR-054・GET /funds）。 */
 export function getFunds(signal?: AbortSignal): Promise<Fund[]> {
