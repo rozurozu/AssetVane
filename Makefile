@@ -19,9 +19,15 @@ endif
 IMAGE_TAG ?= $(shell cat .last_good_tag 2>/dev/null)
 export IMAGE_TAG
 
-.PHONY: discord-test jquants-test batch-full logs restart reload test lint format deploy deploy-build
+.PHONY: up down discord-test jquants-test batch-full logs restart reload test lint format deploy deploy-build
 
 # ===== 運用（dev / Pi 共通・compose 自動判定）=====
+
+up: ## front/back を起動（バックグラウンド・初回はイメージ build/pull も走る）
+	$(COMPOSE) up -d
+
+down: ## front/back を停止してコンテナ/ネットワークを削除（data は bind mount なので残る）
+	$(COMPOSE) down
 
 discord-test: ## Discord に疎通テストを 1 通送る（冪等回避＝毎回飛ぶ）
 	$(COMPOSE) exec backend uv run python -m app.scripts.notify_test

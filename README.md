@@ -170,6 +170,8 @@ CODEX_MODEL=gpt-5.5            # codex 側の強モデル
 
 | コマンド | 内容 | 実行場所 |
 |---|---|---|
+| `make up` | front/back をバックグラウンド起動（初回は build/pull も走る） | dev / Pi 共通 |
+| `make down` | front/back を停止してコンテナ/ネットワークを削除（`./data` は bind mount なので残る） | dev / Pi 共通 |
 | `make discord-test` | Discord に疎通テストを 1 通送る（冪等回避＝毎回飛ぶ。digest を待たず通知を確認） | dev / Pi 共通 |
 | `make jquants-test` | J-Quants V2 に認証ピングを 1 発投げる（DB 非依存。初回デプロイ前の確認・ADR-036） | dev / Pi 共通 |
 | `make batch-full` | 全銘柄フルバックフィルを 1 回流す（初回投入/復旧・約100〜150分・ADR-036） | dev / Pi 共通 |
