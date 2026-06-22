@@ -33,6 +33,7 @@ import logging
 from datetime import UTC, date, datetime
 
 from app.adapters.us_equity import UsEquityAdapter
+from app.batch import state
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -97,8 +98,16 @@ def run(adapter: UsEquityAdapter | None = None) -> JobResult:
     now = datetime.now(UTC).isoformat()
     n_ok = 0
     failures: list[str] = []
+    stopped = False
 
     for symbol in symbols:
+        # `.info` は 1 銘柄ごとに HTTP で重く、夜天井 cap（最大 900 本）の巡回は数十分かかりうる。
+        # ジョブ境界停止（ADR-036）だけだと長く止まらないため、銘柄境界でも停止要求を見て中断する
+        # （ADR-036 追補）。per-symbol カーソルは焼いた銘柄まで前進済み＝再開可（ADR-018）。
+        if state.should_stop():
+            logger.info("fetch_us_fundamentals: 停止要求を検知。焼いた分で中断する（ADR-036）。")
+            stopped = True
+            break
         try:
             snap = adapter.fetch_fundamentals(symbol)
             # us_stocks に実在する列だけ残す（YoY 率など未知キーは捨てる・ADR-055）。
@@ -129,6 +138,8 @@ def run(adapter: UsEquityAdapter | None = None) -> JobResult:
             failures.append(f"{symbol}: {exc}")
 
     detail = f"巡回 {len(symbols)} 件中 成功 {n_ok}・失敗 {len(failures)}（夜天井 {cap}）"
+    if stopped:
+        detail += "・停止により中断"
     if failures:
         detail += " / 失敗詳細: " + "; ".join(failures[:5])
     return JobResult(name="fetch_us_fundamentals", ok=not failures, rows=n_ok, detail=detail)

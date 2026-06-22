@@ -12,7 +12,7 @@ import logging
 from datetime import date, timedelta
 
 from app.adapters.jquants import JQuantsAdapter, JQuantsCoverageError
-from app.batch import calendar
+from app.batch import calendar, state
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -61,10 +61,18 @@ def run(*, full_backfill: bool = False) -> JobResult:
 
     total_rows = 0
     days = 0
+    stopped = False
     frontier: str | None = None  # 契約範囲の前線に達して打ち切った日付（あれば）
     try:
         adapter = JQuantsAdapter()
         for d in calendar.candidate_days(start, today):
+            # full_backfill は数年分の営業日を 1 ジョブで回す（≒数時間）。ジョブ境界停止（ADR-036）
+            # だけだと長時間止まらないため、営業日境界でも停止要求を見て中断する（ADR-036 追補）。
+            # fetch_meta は処理済み日まで前進済み＝続きから再開できる（冪等・ADR-018）。
+            if state.should_stop():
+                logger.info("fetch_quotes: 停止要求を検知。取得済み日で中断（ADR-036）。")
+                stopped = True
+                break
             try:
                 rows = adapter.fetch_daily_quotes_by_date(d)
             except JQuantsCoverageError:
@@ -91,6 +99,8 @@ def run(*, full_backfill: bool = False) -> JobResult:
         )
 
     tail = f"・前線 {frontier} で打ち切り" if frontier else f"〜{today}"
+    if stopped:
+        tail += "・停止により中断"
     return JobResult(
         name="fetch_quotes",
         ok=True,

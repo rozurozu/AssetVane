@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.batch import state
 from app.batch.jobs import fetch_us_quotes
 from app.config import settings
 from app.db import repo
@@ -163,3 +164,39 @@ def test_no_new_data_keeps_cursor_and_ok(temp_db) -> None:
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "us_daily_quotes")
     assert meta["last_fetched_date"] == "2026-06-08"  # 新規無しなので前進しない（後退もしない）
+
+
+def test_stop_mid_batch_breaks_loop(temp_db, monkeypatch) -> None:
+    """バッチ境界で should_stop を見て中断し、残りシンボルを取得しない（ADR-036 追補）。
+
+    batch_size=1（1 バッチ=1 銘柄）にし、1 件目取得中に停止要求 → 次バッチ先頭で break。
+    取れた分はカーソル前進し冪等再開でき、detail に「停止により中断」が載る。
+    """
+    _seed_universe(["AAA", "BBB", "CCC"])
+    monkeypatch.setattr(settings, "us_quotes_batch_size", 1)
+
+    class _StoppingAdapter(_FakeAdapter):
+        def fetch_quotes(self, symbol, from_=None, to=None):  # type: ignore[override]
+            rows = super().fetch_quotes(symbol, from_, to)
+            state.request_stop()  # 1 件目取得中に WebUI から停止が来た状況を模す
+            return rows
+
+    fake = _StoppingAdapter(
+        {
+            "AAA": [_q("AAA", "2026-06-05", 10.0)],
+            "BBB": [_q("BBB", "2026-06-05", 20.0)],
+            "CCC": [_q("CCC", "2026-06-05", 30.0)],
+        }
+    )
+    state.begin(full_backfill=False)  # request_stop は running 中のみ受理されるため
+    try:
+        result = fetch_us_quotes.run(adapter=fake)  # type: ignore[arg-type]
+    finally:
+        state.end()
+
+    assert [c[0] for c in fake.calls] == ["AAA"]  # BBB/CCC のバッチ先頭で break
+    assert result.ok is True
+    assert "停止により中断" in result.detail
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, "us_daily_quotes")
+    assert meta["last_fetched_date"] == "2026-06-05"  # 取れた分でカーソル前進

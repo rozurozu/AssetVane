@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.batch import state
 from app.batch.jobs import fetch_us_fundamentals
 from app.config import settings
 from app.db import repo
@@ -194,3 +195,35 @@ def test_business_summary_upserted_to_company_descriptions(temp_db, monkeypatch)
     # 欠損・空白のみの銘柄は書かれない（捏造しない・ADR-014）。
     assert bbb_desc is None
     assert ccc_desc is None
+
+
+def test_stop_mid_loop_breaks(temp_db, monkeypatch) -> None:
+    """銘柄境界で should_stop を見て中断し、残り銘柄を焼かない（ADR-036 追補）。
+
+    1 銘柄を焼いた直後に停止要求 → 次銘柄のループ先頭で break。detail に「停止により中断」。
+    """
+    repo.upsert_us_stocks(
+        [
+            {"symbol": "AAA", "company_name": "A", "is_etf": 0, "updated_at": "t"},
+            {"symbol": "BBB", "company_name": "B", "is_etf": 0, "updated_at": "t"},
+            {"symbol": "CCC", "company_name": "C", "is_etf": 0, "updated_at": "t"},
+        ]
+    )
+    monkeypatch.setattr(settings, "us_fundamentals_nightly_max", 5)
+
+    class _StoppingAdapter(_FakeAdapter):
+        def fetch_fundamentals(self, symbol):  # type: ignore[override]
+            info = super().fetch_fundamentals(symbol)
+            state.request_stop()  # 1 銘柄を焼いた直後に停止要求が来た状況を模す
+            return info
+
+    fake = _StoppingAdapter({"AAA": _info("A"), "BBB": _info("B"), "CCC": _info("C")})
+    state.begin(full_backfill=False)  # request_stop は running 中のみ受理されるため
+    try:
+        result = fetch_us_fundamentals.run(adapter=fake)  # type: ignore[arg-type]
+    finally:
+        state.end()
+
+    assert len(fake.calls) == 1  # 2 銘柄目のループ先頭で break
+    assert result.ok is True
+    assert "停止により中断" in result.detail

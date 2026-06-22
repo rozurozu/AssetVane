@@ -26,6 +26,7 @@ import logging
 from datetime import date
 
 from app.adapters.us_equity import UsEquityAdapter
+from app.batch import state
 from app.batch.jobs._cursor import resolve_differential_start
 from app.batch.runner import JobResult
 from app.config import settings
@@ -93,8 +94,16 @@ def run(*, full_backfill: bool = False, adapter: UsEquityAdapter | None = None) 
     attempted = 0
     failed: list[str] = []
     max_date: str | None = None
+    stopped = False
 
     for batch in _batches(symbols, settings.us_quotes_batch_size):
+        # 全 us_stocks（約 1 万銘柄×スロットル≒数時間）を 1 ジョブで走査するため、ジョブ境界停止
+        # （ADR-036）だけだと「今のジョブ完了後」が最大数時間になる。バッチ境界でも停止要求を見て
+        # 中断する（ADR-036 追補）。取れた分は下の max_date でカーソル前進＝冪等（ADR-018）。
+        if state.should_stop():
+            logger.info("fetch_us_quotes: 停止要求を検知。取得済み分で中断する（ADR-036）。")
+            stopped = True
+            break
         batch_rows: list[dict] = []
         for symbol in batch:
             attempted += 1
@@ -136,7 +145,7 @@ def run(*, full_backfill: bool = False, adapter: UsEquityAdapter | None = None) 
 
     detail = (
         f"シンボル {attempted} 件試行・{total_rows} 行 UPSERT（start={start}〜{today}"
-        f"{'・full_backfill' if full_backfill else ''}）"
+        f"{'・full_backfill' if full_backfill else ''}{'・停止により中断' if stopped else ''}）"
     )
     if failed:
         detail += f"・失敗 {len(failed)} 件: {'; '.join(failed[:5])}"

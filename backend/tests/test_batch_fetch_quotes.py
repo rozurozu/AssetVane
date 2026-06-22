@@ -12,6 +12,7 @@ from datetime import date
 import pytest
 
 from app.adapters.jquants import JQuantsCoverageError
+from app.batch import state
 from app.batch.jobs import fetch_quotes
 from app.db import repo
 from app.db.engine import get_engine
@@ -154,3 +155,34 @@ def test_full_backfill_start_uses_backfill_years(temp_db, _patch, monkeypatch) -
     # 最初の呼び出し日が 2024-06-05（today=2026-06-05 の 2 年前・平日）であること。
     assert fake.calls[0] == "2024-06-05"
     assert result.ok is True
+
+
+def test_stop_mid_dayloop_breaks(temp_db, _patch, monkeypatch) -> None:
+    """営業日境界で should_stop を見て中断し、残り営業日を取得しない（ADR-036 追補）。
+
+    カーソルを 2026-06-02 に置き start=2026-06-03（水）にする。1 営業日処理中に停止要求 →
+    翌営業日（06-04 木）のループ先頭で break。取れた日まで fetch_meta 前進・detail に中断表示。
+    """
+    repo.upsert_fetch_meta("daily_quotes", "2026-06-02")  # start=2026-06-03
+
+    class _StoppingAdapter(_FakeAdapter):
+        def fetch_daily_quotes_by_date(self, d):  # type: ignore[override]
+            rows = super().fetch_daily_quotes_by_date(d)
+            state.request_stop()  # 1 営業日処理中に停止要求が来た状況を模す
+            return rows
+
+    fake = _StoppingAdapter({"2026-06-03": [_quote("7203", "2026-06-03")]})
+    monkeypatch.setattr(fetch_quotes, "JQuantsAdapter", lambda: fake)
+
+    state.begin(full_backfill=False)  # request_stop は running 中のみ受理されるため
+    try:
+        result = fetch_quotes.run(full_backfill=False)
+    finally:
+        state.end()
+
+    assert fake.calls == ["2026-06-03"]  # 06-04 の営業日先頭で break
+    assert result.ok is True
+    assert "停止により中断" in result.detail
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, "daily_quotes")
+    assert meta["last_fetched_date"] == "2026-06-03"  # 取れた日まで前進

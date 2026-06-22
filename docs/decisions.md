@@ -409,6 +409,11 @@
   - **`batch_runs` テーブルで履歴永続化** → 進捗・ジョブ別結果・履歴が豊かだが、本件にはオーバー。将来ダッシュボードが要れば足せる（本 ADR は禁じない）。
   - **強制 kill（スレッド中断）** → UPSERT 途中で切れてジョブ冪等性を壊す危険。不採用。
 - **詳細**: `backend/app/batch/state.py`（メモリ状態）・`batch/runner.py`（境界で `should_stop`・停止は通知なし）・`routers/batch.py`（`/batch/status`・`/batch/stop`）・`services/diagnostics.py`＋`routers/diagnostics.py`＋`scripts/jquants_test.py`（J-Quants 疎通 3 口）・`Makefile`（`make batch-full`/`jquants-test`）・`frontend/src/app/settings/page.tsx`（フルチェックボックス＋確認・進捗ポーリング＋停止・疎通ボタン）。
+- **追補（2026-06-22）— 長尺ジョブは内部ループでも `should_stop` を見る**:
+  - **問題**: 上の「今のジョブ完了後に止まる」は、当初の前提（1 ジョブ＝1 営業日や数百銘柄で短い）では実用十分だった。だが Phase 7(B-1) の `fetch_us_quotes` は**全 us_stocks（約 1 万銘柄）×スロットルを 1 ジョブ内ループで走査**し最大数時間かかる。`POST /batch/stop` で `stop_requested` は立つのに、ジョブ内ループは誰も `should_stop` を見ないため、`/settings` の停止が「停止待ち」のまま最大数時間固まった（2026-06-22 実機・`fetch_us_quotes` 差分実行を停止できず）。
+  - **決定**: **全ユニバース走査の長尺ジョブは、最外ループの先頭でも `state.should_stop()` を見て break する**（ジョブ境界停止に加える二段構え）。break 後は「取れた分まで UPSERT 済み・カーソル（`fetch_meta`）前進済み」で**冪等に再開可能**（ADR-018）なので、中断しても歴史に穴は空かない。対象は `fetch_us_quotes`（バッチ境界）・`fetch_quotes`（営業日境界）・`fetch_us_fundamentals`（銘柄境界）。検知粒度はループ 1 単位（米株 quotes なら 1 バッチ＝`us_quotes_batch_size`≒数十秒）。夜天井 cap で数十分以内に収まるタガー/embed/巡回系には足さない（過剰）。
+  - **理由**: 強制 kill を避ける協調キャンセルの方針（上記「協調キャンセルが唯一安全な停止」）は維持したまま、**長尺ジョブだけ停止の応答性を上げる**最小変更。ジョブ境界停止（runner）と内部ループ停止（ジョブ）は同じ `should_stop()` を見るので意味が一貫し、停止は「正常終了」扱い（通知なし）も変わらない。
+  - **詳細**: `batch/jobs/fetch_us_quotes.py`・`fetch_quotes.py`・`fetch_us_fundamentals.py`（各最外ループ先頭の `should_stop` ＋ detail への「停止により中断」表示）。走行中ジョブを**今すぐ**止めたい場合は backend プロセス再起動（`docker compose restart backend`）が確実で、UPSERT 冪等＋named volume なので DB は壊れない。
 
 ## ADR-037: Next ↔ FastAPI は同一オリジン化（Next rewrites プロキシ）——CORS と API_URL 焼き込みを廃止
 
