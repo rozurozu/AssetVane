@@ -12,6 +12,9 @@ data/
 *.db-wal
 *.db-shm
 
+# DB バックアップ（make db-backup の書き出し先・復旧時の forensic コピー。VCS に入れない）
+backups/
+
 # 機械学習モデル（Phase 5・別 PC 産・git 管理外。bind mount 先のディレクトリだけ .gitkeep で残す）
 *.pkl
 backend/models/*

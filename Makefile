@@ -19,7 +19,7 @@ endif
 IMAGE_TAG ?= $(shell cat .last_good_tag 2>/dev/null)
 export IMAGE_TAG
 
-.PHONY: up down discord-test jquants-test batch-full logs restart reload test lint format deploy deploy-build
+.PHONY: up down discord-test jquants-test batch-full logs restart reload test lint format deploy deploy-build db-backup db-restore
 
 # ===== 運用（dev / Pi 共通・compose 自動判定）=====
 
@@ -63,6 +63,25 @@ lint: ## backend lint（Ruff・ADR-023）
 
 format: ## backend format（Ruff・ADR-023）
 	cd backend && uv run ruff format .
+
+# ===== dev の DB バックアップ/復元（named volume 化に伴う・2026-06-22）=====
+# dev は SQLite を named volume（assetvane-db）に載せるため、ホストから素ファイルとして見えない。
+# 旧 bind mount 時の「./data/assetvane.db をそのままコピー」に代わる手段。prod（Pi）は bind mount の
+# ままなので /data/backups を直接見られる（ADR-017）。container に sqlite3 CLI が無いので Python で取る。
+db-backup: ## dev: named volume の SQLite を一貫スナップショット（VACUUM INTO）でホスト ./backups/ に書き出す
+	@mkdir -p backups
+	$(COMPOSE) exec -T backend uv run python -c 'import sqlite3; sqlite3.connect("/data/assetvane.db").execute("VACUUM main INTO \x27/data/_backup_tmp.db\x27"); print("snapshot ok")'
+	$(COMPOSE) cp backend:/data/_backup_tmp.db backups/assetvane-$(shell date +%Y%m%d-%H%M%S).db
+	$(COMPOSE) exec -T backend rm -f /data/_backup_tmp.db
+	@echo "✓ backups/ に書き出したのだ"
+
+db-restore: ## dev: ./backups/<FILE> を named volume に書き戻して再起動（make db-restore FILE=assetvane-YYYYmmdd-HHMMSS.db）
+	@test -n "$(FILE)" || { echo "✖ FILE=<backups/ 内のファイル名> を指定するのだ"; exit 1; }
+	@test -f "backups/$(FILE)" || { echo "✖ backups/$(FILE) が無いのだ"; exit 1; }
+	$(COMPOSE) stop backend
+	$(COMPOSE) run --rm --no-deps -v $(CURDIR)/backups:/restore backend sh -c 'cp /restore/$(FILE) /data/assetvane.db && rm -f /data/assetvane.db-wal /data/assetvane.db-shm && echo restored'
+	$(COMPOSE) up -d backend
+	@echo "✓ backups/$(FILE) を復元して再起動したのだ"
 
 deploy: ## Mac で arm64 ビルド → ghcr.io → ラズパイへデプロイ
 	@test -f compose.yaml || { echo "✖ deploy は本番（Pi）では不要なのだ。Mac から実行するのだ。"; exit 1; }
