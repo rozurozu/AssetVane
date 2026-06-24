@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 
-from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
 from app.db.schema import news, stocks
@@ -202,7 +201,7 @@ def test_ingest_user_news_immediate_embed_failure_still_saves(temp_db, monkeypat
 
     monkeypatch.setattr(news_svc, "summarize_article", _fake_summarize)
     monkeypatch.setattr(news_svc, "embedding_enabled", lambda: True)
-    monkeypatch.setattr(settings, "embedding_model", "m1")
+    monkeypatch.setattr(news_svc, "embedding_model", lambda: "m1")
 
     async def _boom(texts: list[str]) -> list[list[float]]:
         raise RuntimeError("embeddings API down")
@@ -242,7 +241,7 @@ def test_embed_news_fills_null_rows(temp_db, monkeypatch) -> None:
     n2 = _insert_news("https://x/b", embedding=None)
 
     monkeypatch.setattr(embed_news, "embedding_enabled", lambda: True)
-    monkeypatch.setattr(settings, "embedding_model", "m1")
+    monkeypatch.setattr(embed_news, "embedding_model", lambda: "m1")
 
     async def _fake_embed(texts: list[str]) -> list[list[float]]:
         return [[0.5, 0.5] for _ in texts]
@@ -270,7 +269,7 @@ def test_embed_news_failed_batch_returns_not_ok(temp_db, monkeypatch) -> None:
     _insert_news("https://x/fail", embedding=None)
 
     monkeypatch.setattr(embed_news, "embedding_enabled", lambda: True)
-    monkeypatch.setattr(settings, "embedding_model", "m1")
+    monkeypatch.setattr(embed_news, "embedding_model", lambda: "m1")
 
     async def _boom(texts: list[str]) -> list[list[float]]:
         raise RuntimeError("embeddings API down")
@@ -295,7 +294,7 @@ def test_embed_news_partial_success_persists_then_not_ok(temp_db, monkeypatch) -
     _insert_news("https://x/b", embedding=None)
 
     monkeypatch.setattr(embed_news, "embedding_enabled", lambda: True)
-    monkeypatch.setattr(settings, "embedding_model", "m1")
+    monkeypatch.setattr(embed_news, "embedding_model", lambda: "m1")
     monkeypatch.setattr(embed_news, "EMBED_BATCH", 1)  # 2 バッチに分割させる
 
     calls = {"n": 0}

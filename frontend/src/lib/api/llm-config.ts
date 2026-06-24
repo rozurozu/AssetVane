@@ -19,13 +19,24 @@ export type FaceConfig = {
   provider_id: number | null; // null=未設定 / 0=codex / >0=Provider.id
   provider_name: string | null; // codex は "codex"・宙づりは null
   model: string;
+  reasoning_effort: string; // 空=既定 / minimal / low / medium / high / xhigh（ADR-059）
   configured: boolean; // resolve_face が通るか（=その面の LLM が動くか）
 };
 
-/** provider 疎通テストの結果（200＋フラグ）。 */
+/** 疎通テストの結果（200＋フラグ・provider/codex/embedding 共通）。 */
 export type ProviderTestResult = {
   ok: boolean;
   detail: string;
+};
+
+/** embedding（意味検索）接続の現在値（api_key はマスク済み・ADR-059）。 */
+export type EmbeddingConfig = {
+  base_url: string;
+  api_key_masked: string;
+  has_api_key: boolean;
+  model: string;
+  dim: number;
+  configured: boolean; // 3 キー揃いで意味検索が有効か
 };
 
 /** provider 一覧（api_key はマスク済み）。 */
@@ -71,10 +82,35 @@ export function getFaces(signal?: AbortSignal): Promise<FaceConfig[]> {
   return getJSON<FaceConfig[]>("/llm/faces", signal);
 }
 
-/** 面の provider/model 割当を更新（provider_id=0 で codex・null で未設定）。 */
+/** 面の provider/model/reasoning 割当を更新（provider_id=0 で codex・null で未設定）。 */
 export function updateFace(
   face: string,
-  body: { provider_id: number | null; model: string },
+  body: { provider_id: number | null; model: string; reasoning_effort: string },
 ): Promise<FaceConfig> {
   return putJSON<FaceConfig>(`/llm/faces/${encodeURIComponent(face)}`, body);
+}
+
+/** codex（ChatGPT サブスク）が使用可能か実ターン 1 発で確認（ADR-059）。 */
+export function testCodex(): Promise<ProviderTestResult> {
+  return postJSON<ProviderTestResult>("/llm/codex/test", {});
+}
+
+/** embedding 接続の現在値（api_key はマスク済み・ADR-059）。 */
+export function getEmbedding(signal?: AbortSignal): Promise<EmbeddingConfig> {
+  return getJSON<EmbeddingConfig>("/llm/embedding", signal);
+}
+
+/** embedding 接続を更新（api_key は空送信で据え置き＝write-only）。 */
+export function updateEmbedding(body: {
+  base_url?: string;
+  api_key?: string;
+  model?: string;
+  dim?: number;
+}): Promise<EmbeddingConfig> {
+  return putJSON<EmbeddingConfig>("/llm/embedding", body);
+}
+
+/** embedding 接続に 1 件投げて疎通テスト（200＋フラグ）。 */
+export function testEmbedding(): Promise<ProviderTestResult> {
+  return postJSON<ProviderTestResult>("/llm/embedding/test", {});
 }

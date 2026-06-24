@@ -42,6 +42,9 @@ class ResolvedFace:
     base_url: str | None  # codex のとき None
     api_key: str | None  # codex のとき None（鍵なし）
     model: str  # 実際に使う model（face.model 空なら provider 既定 or codex 既定）
+    # 推論努力（空=既定。codex は env フォールバック適用後の値・ADR-059）。resolve_face は常に明示
+    # 渡しするが、既定 "" を置いて呼び出し側（テスト等）の構築を楽にする。
+    reasoning_effort: str = ""
 
 
 def resolve_face(conn: Connection, face: str) -> ResolvedFace:
@@ -60,14 +63,17 @@ def resolve_face(conn: Connection, face: str) -> ResolvedFace:
 
     provider_id = int(row["provider_id"])
     model = (row["model"] or "").strip()
+    reasoning = (row.get("reasoning_effort") or "").strip()
 
     if provider_id == CODEX_PROVIDER_ID:
+        # codex の reasoning は face 空なら env codex_reasoning_effort にフォールバック（ADR-059）。
         return ResolvedFace(
             face=face,
             provider="codex",
             base_url=None,
             api_key=None,
             model=model or settings.codex_model,
+            reasoning_effort=reasoning or settings.codex_reasoning_effort,
         )
 
     prov = repo.get_provider(conn, provider_id)
@@ -82,12 +88,14 @@ def resolve_face(conn: Connection, face: str) -> ResolvedFace:
             f"面 '{face}' の model が未指定（face か provider 既定に model を設定）"
         )
 
+    # openai 経路の reasoning は face の値のみ（空なら送らない・provider 既定なし・ADR-059）。
     return ResolvedFace(
         face=face,
         provider="openai",
         base_url=prov["base_url"],
         api_key=prov["api_key"] or "",
         model=eff_model,
+        reasoning_effort=reasoning,
     )
 
 
@@ -104,6 +112,7 @@ def describe_faces(conn: Connection) -> list[dict[str, Any]]:
         row = rows.get(face)
         provider_id = row["provider_id"] if row else None
         model = (row["model"] if row else "") or ""
+        reasoning = (row.get("reasoning_effort") if row else "") or ""
         if provider_id == CODEX_PROVIDER_ID:
             provider_name: str | None = "codex"
         elif provider_id is not None:
@@ -121,7 +130,25 @@ def describe_faces(conn: Connection) -> list[dict[str, Any]]:
                 "provider_id": provider_id,
                 "provider_name": provider_name,
                 "model": model,
+                "reasoning_effort": reasoning,
                 "configured": configured,
             }
         )
     return out
+
+
+def resolve_embedding_config(conn: Connection) -> dict[str, Any] | None:
+    """意味検索の embedding 接続を DB から解決する（ADR-059・ADR-045）。
+
+    base_url / api_key / model の 3 キーが揃って初めて有効。1 つでも欠ければ None（静かに機能オフ・
+    ADR-006/018）。戻り値は {base_url, api_key, model, dim}。dim は未設定で 0。
+    """
+    row = repo.get_embedding_config(conn)
+    if row is None:
+        return None
+    base_url = (row.get("base_url") or "").strip()
+    api_key = (row.get("api_key") or "").strip()
+    model = (row.get("model") or "").strip()
+    if not (base_url and api_key and model):
+        return None
+    return {"base_url": base_url, "api_key": api_key, "model": model, "dim": row.get("dim") or 0}

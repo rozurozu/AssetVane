@@ -218,11 +218,14 @@ async def complete(
 
     client = get_client(face.base_url or "", face.api_key or "")
     # tools 指定時のみ tool_choice="auto"。未指定は omit（送らない）で従来の純テキスト応答。
+    # reasoning_effort は面が非空のときだけ送る（非対応 model では provider が 400・自動縮退しない
+    # ＝誤設定を隠さない・ADR-059）。
     resp = await client.chat.completions.create(
         model=face.model,
         messages=messages,  # type: ignore[arg-type]
         tools=tools if tools else omit,  # type: ignore[arg-type]
         tool_choice="auto" if tools else omit,
+        reasoning_effort=face.reasoning_effort if face.reasoning_effort else omit,  # type: ignore[arg-type]
     )
 
     # 呼び出し後: 実コストを計上（失敗しても応答は返す・spec §7.1）。

@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import Connection, delete, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from app.db.schema import llm_face_config, llm_providers
+from app.db.schema import embedding_config, llm_face_config, llm_providers
 
 # ===== providers（鍵あり provider のレジストリ） =====
 
@@ -108,17 +108,32 @@ def get_face(conn: Connection, face: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def upsert_face(conn: Connection, *, face: str, provider_id: int | None, model: str) -> None:
-    """面の割当を upsert する（PK=face・provider_id=0 で codex・W2・commit しない・ADR-058）。"""
+def upsert_face(
+    conn: Connection,
+    *,
+    face: str,
+    provider_id: int | None,
+    model: str,
+    reasoning_effort: str | None = None,
+) -> None:
+    """面の割当を upsert する（PK=face・provider_id=0 で codex・W2・commit しない・ADR-058/059）。
+
+    reasoning_effort は空/None=既定（openai は送らない・codex は env フォールバック・ADR-059）。
+    """
     now = datetime.now(UTC).isoformat()
     stmt = sqlite_insert(llm_face_config).values(
-        face=face, provider_id=provider_id, model=model, updated_at=now
+        face=face,
+        provider_id=provider_id,
+        model=model,
+        reasoning_effort=reasoning_effort or None,
+        updated_at=now,
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=["face"],
         set_={
             "provider_id": stmt.excluded.provider_id,
             "model": stmt.excluded.model,
+            "reasoning_effort": stmt.excluded.reasoning_effort,
             "updated_at": stmt.excluded.updated_at,
         },
     )
@@ -133,3 +148,32 @@ def faces_using_provider(conn: Connection, provider_id: int) -> list[str]:
         .order_by(llm_face_config.c.face)
     )
     return [row[0] for row in conn.execute(stmt).all()]
+
+
+# ===== embedding_config（意味検索の埋め込み接続・単一行運用） =====
+
+
+def get_embedding_config(conn: Connection) -> dict[str, Any] | None:
+    """embedding_config の 1 行を素の dict で返す（無ければ None・ADR-059）。
+
+    api_key は生のまま返す（マスクは router の責務）。3 キーの揃い判定は services が担う。
+    """
+    row = (
+        conn.execute(select(embedding_config).order_by(embedding_config.c.id).limit(1))
+        .mappings()
+        .first()
+    )
+    return dict(row) if row else None
+
+
+def upsert_embedding_config(conn: Connection, fields: dict[str, Any]) -> None:
+    """embedding_config を 1 行運用で upsert する（id 固定・policy 同型・W2・ADR-059）。
+
+    fields は変更したい列のみ（api_key 未送信＝据え置きは呼び出し側が除外して渡す＝write-only）。
+    """
+    payload = {k: v for k, v in fields.items() if k != "id"}
+    payload.setdefault("updated_at", datetime.now(UTC).isoformat())
+    stmt = sqlite_insert(embedding_config).values(id=1, **payload)
+    update_cols = {col: stmt.excluded[col] for col in payload}
+    stmt = stmt.on_conflict_do_update(index_elements=["id"], set_=update_cols)
+    conn.execute(stmt)

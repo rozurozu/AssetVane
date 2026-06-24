@@ -59,6 +59,28 @@ def seed_llm_config() -> None:
                 )
 
 
+def seed_embedding_config() -> None:
+    """temp DB に embedding 接続を seed する（ADR-059・意味検索を踏むテスト用）。
+
+    既定はシードしない（未設定＝機能オフ）。embedding を有効にしたいテストが明示的に呼ぶ。
+    """
+    from sqlalchemy import insert
+
+    from app.db.engine import get_engine
+    from app.db.schema import embedding_config
+
+    with get_engine().begin() as conn:
+        conn.execute(
+            insert(embedding_config).values(
+                id=1,
+                base_url="https://embed.test.invalid/v1",
+                api_key="embed-key",
+                model="text-embedding-test",
+                dim=0,
+            )
+        )
+
+
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch) -> Iterator[None]:
     """settings.database_path を一時ファイルに差し替え、スキーマ＋LLM 面設定を用意する。"""

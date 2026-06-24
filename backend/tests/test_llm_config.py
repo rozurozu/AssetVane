@@ -145,3 +145,100 @@ def test_assign_face_unknown_provider_422(client: Any) -> None:
     """存在しない provider_id(>0) を面に割り当てると 422。"""
     res = client.put("/llm/faces/chat", json={"provider_id": 9999, "model": "m"})
     assert res.status_code == 422
+
+
+# ===== reasoning_effort（面別・ADR-059） =====
+
+
+def test_resolve_face_reasoning_openai(temp_db: None) -> None:
+    """openai 面の reasoning は face の値のみ（空なら空のまま・provider 既定なし）。"""
+    with get_engine().begin() as conn:
+        # seed 済みの chat 面（openai provider）に reasoning を付ける。
+        pid = repo.get_provider_by_name(conn, "test-openai")["id"]  # type: ignore[index]
+        repo.upsert_face(conn, face="chat", provider_id=pid, model="m", reasoning_effort="high")
+    with get_engine().connect() as conn:
+        rf = llm_config.resolve_face(conn, "chat")
+    assert rf.provider == "openai"
+    assert rf.reasoning_effort == "high"
+
+
+def test_resolve_face_reasoning_codex_env_fallback(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """codex 面の reasoning は face 空なら env codex_reasoning_effort へ降りる（ADR-059）。"""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "codex_reasoning_effort", "medium")
+    with get_engine().begin() as conn:
+        repo.upsert_face(conn, face="nightly", provider_id=0, model="", reasoning_effort=None)
+    with get_engine().connect() as conn:
+        rf = llm_config.resolve_face(conn, "nightly")
+    assert rf.provider == "codex"
+    assert rf.reasoning_effort == "medium"  # env フォールバック
+
+
+def test_update_face_persists_reasoning(client: Any) -> None:
+    """PUT /llm/faces で reasoning_effort を保存でき、GET で返る。"""
+    res = client.put(
+        "/llm/faces/dossier",
+        json={"provider_id": 0, "model": "gpt-5.5", "reasoning_effort": "xhigh"},
+    )
+    assert res.status_code == 200
+    assert res.json()["reasoning_effort"] == "xhigh"
+    faces = {f["face"]: f for f in client.get("/llm/faces").json()}
+    assert faces["dossier"]["reasoning_effort"] == "xhigh"
+
+
+# ===== embedding 接続（ADR-059） =====
+
+
+def test_resolve_embedding_unconfigured_none(temp_db: None) -> None:
+    """embedding 未設定（行なし）なら resolve は None＝機能オフ。"""
+    with get_engine().connect() as conn:
+        assert llm_config.resolve_embedding_config(conn) is None
+
+
+def test_resolve_embedding_configured(temp_db: None) -> None:
+    """3 キー揃いで resolve は dict を返す。"""
+    from tests.conftest import seed_embedding_config
+
+    seed_embedding_config()
+    with get_engine().connect() as conn:
+        cfg = llm_config.resolve_embedding_config(conn)
+    assert cfg is not None
+    assert cfg["base_url"] == "https://embed.test.invalid/v1"
+    assert cfg["model"] == "text-embedding-test"
+
+
+def test_get_embedding_masks_key(client: Any) -> None:
+    """GET /llm/embedding は未設定なら configured=false・キーは生で返さない。"""
+    res = client.get("/llm/embedding")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["configured"] is False
+    assert body["has_api_key"] is False
+
+
+def test_update_embedding_write_only(client: Any) -> None:
+    """PUT /llm/embedding で設定でき、キーはマスクで返り configured=true。空キー送信は据え置き。"""
+    res = client.put(
+        "/llm/embedding",
+        json={
+            "base_url": "https://embed.invalid/v1",
+            "api_key": "sk-embed-123456",
+            "model": "text-embedding-3-small",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["configured"] is True
+    assert body["has_api_key"] is True
+    assert "sk-embed-123456" not in body["api_key_masked"]
+    # 空キー送信は据え置き（base_url だけ更新）。
+    res2 = client.put(
+        "/llm/embedding", json={"base_url": "https://embed2.invalid/v1", "api_key": ""}
+    )
+    assert res2.json()["base_url"] == "https://embed2.invalid/v1"
+    with get_engine().connect() as conn:
+        cfg = repo.get_embedding_config(conn)
+    assert cfg is not None and cfg["api_key"] == "sk-embed-123456"

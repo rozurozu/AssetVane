@@ -25,9 +25,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app.adapters.embedding import embed_texts, embedding_enabled
+from app.adapters.embedding import embed_texts, embedding_enabled, embedding_model
 from app.batch.runner import JobResult
-from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
 
@@ -51,7 +50,7 @@ def run() -> JobResult:
     if not embedding_enabled():
         return JobResult(name="embed_news", ok=True, rows=0, detail="embedding 未設定で skip")
 
-    model = settings.embedding_model
+    model = embedding_model()
     embedded = 0
     failed_batches = 0
     try:

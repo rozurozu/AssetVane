@@ -274,7 +274,15 @@ class _AppServer:
     # -- ターン実行 ----------------------------------------------------------
 
     async def run(
-        self, *, base: str, developer: str, prompt: str, with_tools: bool, source: str, model: str
+        self,
+        *,
+        base: str,
+        developer: str,
+        prompt: str,
+        with_tools: bool,
+        source: str,
+        model: str,
+        reasoning_effort: str = "",
     ) -> tuple[str, list[dict[str, object]]]:
         """1 ターンを実行する（直列化＋一過性リトライ）。戻り値 (最終テキスト, tool_runs)。"""
         async with self._turn_lock:
@@ -290,6 +298,7 @@ class _AppServer:
                         with_tools=with_tools,
                         source=source,
                         model=model,
+                        reasoning_effort=reasoning_effort,
                     )
                 except CodexEngineError as exc:
                     last_exc = exc
@@ -309,20 +318,31 @@ class _AppServer:
             raise last_exc
 
     async def _one_turn(
-        self, *, base: str, developer: str, prompt: str, with_tools: bool, source: str, model: str
+        self,
+        *,
+        base: str,
+        developer: str,
+        prompt: str,
+        with_tools: bool,
+        source: str,
+        model: str,
+        reasoning_effort: str = "",
     ) -> tuple[str, list[dict[str, object]]]:
         """thread/start → turn/start → turn/completed まで回し、テキストと tool_runs を返す。"""
         self._event_q = asyncio.Queue()
         # 面別に解決された model（空なら codex 既定にフォールバック＝ADR-058）。
         effective_model = model or settings.codex_model
+        # 推論努力は面別に解決された値（resolve_face が env フォールバック適用済み）。直接呼び出し
+        # 用にここでも env フォールバックを冪等に持つ（結果は同じ・ADR-059）。
+        effective_reasoning = reasoning_effort or settings.codex_reasoning_effort
         try:
             config: dict[str, object] = {}
             if with_tools:
                 # 自前 Tool を FastAPI 内 MCP 越しに公開（DB は FastAPI に閉じる・ADR-005）。
                 config["mcp_servers"] = {"assetvane": {"url": settings.codex_mcp_url}}
-            if settings.codex_reasoning_effort:
+            if effective_reasoning:
                 # 推論努力レベル（none/minimal/low/medium/high/xhigh）。空なら codex 既定。
-                config["model_reasoning_effort"] = settings.codex_reasoning_effort
+                config["model_reasoning_effort"] = effective_reasoning
             thread_params: dict[str, object] = {
                 "sandbox": settings.codex_sandbox,  # read-only（Advisor は書かない・ADR-005）
                 "approvalPolicy": "never",  # 非対話（承認待ちで固まらない）
@@ -445,6 +465,7 @@ async def run_turn(
     phase: int,
     source: str,
     model: str = "",
+    reasoning_effort: str = "",
 ) -> tuple[str, list[dict[str, object]]]:
     """エージェント形（Tool ループ）を codex app-server で回す。service.run_tool_loop の代替。
 
@@ -460,21 +481,35 @@ async def run_turn(
     """
     base, developer, prompt = _split_messages(messages)
     return await _server.run(
-        base=base, developer=developer, prompt=prompt, with_tools=True, source=source, model=model
+        base=base,
+        developer=developer,
+        prompt=prompt,
+        with_tools=True,
+        source=source,
+        model=model,
+        reasoning_effort=reasoning_effort,
     )
 
 
-async def generate_once(messages: list[dict[str, object]], *, source: str, model: str = "") -> str:
+async def generate_once(
+    messages: list[dict[str, object]], *, source: str, model: str = "", reasoning_effort: str = ""
+) -> str:
     """単発テキスト形（Tool 無し）を codex app-server で生成する。llm.complete の代替。
 
-    （plans・ADR-014/058）
+    （plans・ADR-014/058/059）
 
     ドシエ要約（dossier.summarize_dossier）等、事前計算した事実を渡して文章/JSON を返すだけの
     用途。MCP は付けない（with_tools=False）。最終テキストをそのまま返す（呼び出し側が必要なら
-    JSON パースする）。model は面別に解決された codex モデル（空なら settings.codex_model）。
+    JSON パースする）。model/reasoning_effort は面別に解決された値（空なら settings の既定）。
     """
     base, developer, prompt = _split_messages(messages)
     text, _ = await _server.run(
-        base=base, developer=developer, prompt=prompt, with_tools=False, source=source, model=model
+        base=base,
+        developer=developer,
+        prompt=prompt,
+        with_tools=False,
+        source=source,
+        model=model,
+        reasoning_effort=reasoning_effort,
     )
     return text

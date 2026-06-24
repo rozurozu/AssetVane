@@ -572,9 +572,23 @@ LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settin
 | `face` | TEXT PK | `chat`/`nightly`/`dossier`/`tagger` |
 | `provider_id` | INTEGER | NULL=未設定 / 0=codex（組み込み） / >0=`llm_providers.id`（FK は張らない） |
 | `model` | TEXT | 自由入力（空なら provider 既定 / codex 既定） |
+| `reasoning_effort` | TEXT | 空=既定 / minimal / low / medium / high / xhigh（ADR-059・0023） |
 | `updated_at` | TEXT | ISO8601 |
 
-> シードしない（行が無い面＝未設定）。未設定面は [ADR-018](decisions.md) 準拠で chat=503・nightly/dossier=通知付き skip・tagger=沈黙 skip。provider 削除は使用中の面があれば 409。
+> シードしない（行が無い面＝未設定）。未設定面は [ADR-018](decisions.md) 準拠で chat=503・nightly/dossier=通知付き skip・tagger=沈黙 skip。provider 削除は使用中の面があれば 409。`reasoning_effort` は openai 面なら `chat.completions` の reasoning_effort、codex 面なら thread config に渡す（空なら openai は送らず・codex は env `codex_reasoning_effort` にフォールバック・[ADR-059](decisions.md)）。
+
+**`embedding_config`**（意味検索の埋め込み接続・単一行運用・[ADR-059](decisions.md)・`0023`）
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `id` | INTEGER PK | 1 行運用（id 固定） |
+| `base_url` | TEXT | OpenAI 互換 `/v1`（埋め込みは `/v1/embeddings`） |
+| `api_key` | TEXT | 平文（GET ではマスク）。空可 |
+| `model` | TEXT | 例 `text-embedding-3-small` |
+| `dim` | INTEGER | 任意（0/NULL=未設定・次元非依存格納） |
+| `updated_at` | TEXT | ISO8601 |
+
+> chat provider とは独立（別エンドポイント・別 model・別キーが普通）。3 キー（base_url/api_key/model）が揃って初めて有効＝欠ければ静かに機能オフ（[ADR-006](decisions.md)/045）。`EMBEDDING_*`（base/key/model/dim）は env から撤去し DB へ移管（[ADR-059](decisions.md)）。`/settings` で編集する。
 
 ---
 

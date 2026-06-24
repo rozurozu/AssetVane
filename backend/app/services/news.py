@@ -25,9 +25,8 @@ from typing import Any
 
 from sqlalchemy import Connection
 
-from app.adapters.embedding import embed_texts, embedding_enabled
+from app.adapters.embedding import embed_texts, embedding_enabled, embedding_model
 from app.adapters.news import summarize_article
-from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
 from app.reference.sector_codes import normalize_sector17, sector17_label
@@ -194,9 +193,7 @@ async def ingest_user_news(
                 vectors = await embed_texts([summary])
                 if vectors:
                     blob = repo.pack_embedding(vectors[0])
-                    repo.update_news_embedding(
-                        conn, int(saved["id"]), blob, settings.embedding_model
-                    )
+                    repo.update_news_embedding(conn, int(saved["id"]), blob, embedding_model())
             except Exception:  # noqa: BLE001 — 即時埋め込み失敗は握り貼付を成功させる（夜ジョブが拾う）
                 logger.warning("ingest_user_news: 即時埋め込みに失敗（夜ジョブで拾う・ADR-045）")
     return saved or row

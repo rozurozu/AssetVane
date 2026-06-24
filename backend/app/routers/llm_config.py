@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import Connection
 
 from app.advisor.llm import get_client
+from app.config import settings
 from app.db import repo
 from app.db.engine import get_conn, get_engine
 from app.services.llm_config import FACES, describe_faces
@@ -57,17 +58,37 @@ class FaceOut(BaseModel):
     provider_id: int | None  # None=未設定 / 0=codex / >0=llm_providers.id
     provider_name: str | None  # codex は "codex"・宙づりは None
     model: str
+    reasoning_effort: str  # 空=既定 / minimal / low / medium / high / xhigh（ADR-059）
     configured: bool  # resolve_face が通るか（=その面の LLM が動くか）
 
 
 class FaceUpdate(BaseModel):
     provider_id: int | None  # 0=codex / None=未設定に戻す / >0=登録 provider
     model: str = ""
+    reasoning_effort: str = ""  # 空=既定（ADR-059）
 
 
 class ProviderTestResponse(BaseModel):
     ok: bool  # /v1/models に疎通できたか
     detail: str  # 人間向けメッセージ（成功＝モデル数／失敗＝エラー要旨）
+
+
+class EmbeddingOut(BaseModel):
+    """embedding 接続の公開表現（api_key はマスク・ADR-059）。"""
+
+    base_url: str
+    api_key_masked: str
+    has_api_key: bool
+    model: str
+    dim: int
+    configured: bool  # 3 キー揃いで意味検索が有効か
+
+
+class EmbeddingUpdate(BaseModel):
+    base_url: str | None = None
+    api_key: str | None = None  # None/空文字＝据え置き（write-only）
+    model: str | None = None
+    dim: int | None = None
 
 
 def _mask(api_key: str) -> str:
@@ -201,7 +222,13 @@ def update_face(
                 raise HTTPException(
                     status_code=422, detail=f"provider(id={body.provider_id}) が存在しません。"
                 )
-        repo.upsert_face(conn, face=face, provider_id=body.provider_id, model=body.model.strip())
+        repo.upsert_face(
+            conn,
+            face=face,
+            provider_id=body.provider_id,
+            model=body.model.strip(),
+            reasoning_effort=body.reasoning_effort.strip() or None,
+        )
         rows = describe_faces(conn)
     row = next(r for r in rows if r["face"] == face)
     return FaceOut(**row)
@@ -225,5 +252,91 @@ async def test_provider(provider_id: int = Path(..., ge=1)) -> ProviderTestRespo
         page = await client.models.list()
         n = len(getattr(page, "data", []) or [])
         return ProviderTestResponse(ok=True, detail=f"疎通 OK（モデル {n} 件）")
+    except OpenAIError as exc:
+        return ProviderTestResponse(ok=False, detail=f"疎通失敗: {exc}")
+
+
+# ===== codex 状態（疎通テストのみ・設定は面別・ADR-059） =====
+
+
+@router.post("/llm/codex/test", response_model=ProviderTestResponse)
+async def test_codex() -> ProviderTestResponse:
+    """codex が使用可能か（ChatGPT login・app-server 起動）を実ターン 1 発で確認する（ADR-059）。
+
+    最小の単発生成を試す（ChatGPT サブスク経由＝USD コスト無し）。失敗（未ログイン・バイナリ不在・
+    app-server 起動不可）も例外にせず ok=false で返す（Web UI が表示）。reasoning/model は面別で
+    設定するため、ここでは codex 既定 model で疎通だけ見る。
+    """
+    from app.advisor import codex_engine
+
+    messages: list[dict[str, object]] = [{"role": "user", "content": "ping"}]
+    try:
+        text = await codex_engine.generate_once(messages, source="chat", model=settings.codex_model)
+        snippet = (text or "").strip().replace("\n", " ")[:40]
+        return ProviderTestResponse(ok=True, detail=f"使用可（応答: {snippet}…）")
+    except codex_engine.CodexEngineError as exc:
+        return ProviderTestResponse(
+            ok=False, detail=f"使用不可（codex login / バイナリ確認）: {exc}"
+        )
+
+
+# ===== embedding 接続（意味検索・単一行・ADR-059） =====
+
+
+def _embedding_out(conn: Connection) -> EmbeddingOut:
+    """embedding_config の現在値を表示用にまとめる（api_key はマスク・ADR-059）。"""
+    row = repo.get_embedding_config(conn) or {}
+    key = str(row.get("api_key") or "")
+    base_url = str(row.get("base_url") or "")
+    model = str(row.get("model") or "")
+    return EmbeddingOut(
+        base_url=base_url,
+        api_key_masked=_mask(key),
+        has_api_key=bool(key),
+        model=model,
+        dim=int(row.get("dim") or 0),
+        configured=bool(base_url and key and model),
+    )
+
+
+@router.get("/llm/embedding", response_model=EmbeddingOut)
+def get_embedding(conn: Connection = Depends(get_conn)) -> EmbeddingOut:
+    """embedding 接続の現在値を返す（api_key はマスク・ADR-059）。"""
+    return _embedding_out(conn)
+
+
+@router.put("/llm/embedding", response_model=EmbeddingOut)
+def update_embedding(body: EmbeddingUpdate) -> EmbeddingOut:
+    """embedding 接続を部分更新する（api_key は write-only＝空送信は据え置き・ADR-059）。"""
+    with get_engine().begin() as conn:
+        fields: dict[str, object] = {}
+        if body.base_url is not None:
+            fields["base_url"] = body.base_url.strip()
+        if body.model is not None:
+            fields["model"] = body.model.strip()
+        if body.dim is not None:
+            fields["dim"] = body.dim
+        if body.api_key:  # 非空文字列のときだけ更新（空・None は据え置き＝write-only）
+            fields["api_key"] = body.api_key
+        if fields:
+            repo.upsert_embedding_config(conn, fields)
+        out = _embedding_out(conn)
+    return out
+
+
+@router.post("/llm/embedding/test", response_model=ProviderTestResponse)
+async def test_embedding() -> ProviderTestResponse:
+    """embedding 接続に 1 件投げて疎通を確認する（200＋結果フラグ・ADR-059）。
+
+    未設定（機能オフ）は ok=false で返す。失敗も例外にせず ok=false（Web UI が表示）。
+    """
+    from app.adapters.embedding import embed_texts, embedding_enabled
+
+    if not embedding_enabled():
+        return ProviderTestResponse(ok=False, detail="embedding 未設定（base_url/api_key/model）")
+    try:
+        vectors = await embed_texts(["ping"])
+        dim = len(vectors[0]) if vectors else 0
+        return ProviderTestResponse(ok=True, detail=f"疎通 OK（次元 {dim}）")
     except OpenAIError as exc:
         return ProviderTestResponse(ok=False, detail=f"疎通失敗: {exc}")

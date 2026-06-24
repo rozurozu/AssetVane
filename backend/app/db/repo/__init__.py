@@ -57,6 +57,7 @@ from app.db.repo.lead_lag import (
 from app.db.repo.llm_config import (
     delete_provider,
     faces_using_provider,
+    get_embedding_config,
     get_face,
     get_provider,
     get_provider_by_name,
@@ -64,6 +65,7 @@ from app.db.repo.llm_config import (
     list_faces,
     list_providers,
     update_provider,
+    upsert_embedding_config,
     upsert_face,
 )
 from app.db.repo.news import (
@@ -328,4 +330,6 @@ __all__ = [
     "get_face",
     "upsert_face",
     "faces_using_provider",
+    "get_embedding_config",
+    "upsert_embedding_config",
 ]

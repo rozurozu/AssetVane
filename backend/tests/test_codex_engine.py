@@ -176,7 +176,14 @@ def test_run_turn_delegates_with_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
     async def _fake_run(
-        *, base: str, developer: str, prompt: str, with_tools: bool, source: str, model: str = ""
+        *,
+        base: str,
+        developer: str,
+        prompt: str,
+        with_tools: bool,
+        source: str,
+        model: str = "",
+        reasoning_effort: str = "",
     ):
         captured.update(
             base=base, developer=developer, prompt=prompt, with_tools=with_tools, source=source
@@ -227,7 +234,14 @@ def test_generate_once_delegates_without_tools(monkeypatch: pytest.MonkeyPatch) 
     """generate_once は with_tools=False で委譲し最終テキストだけ返す（dossier）。"""
 
     async def _fake_run(
-        *, base: str, developer: str, prompt: str, with_tools: bool, source: str, model: str = ""
+        *,
+        base: str,
+        developer: str,
+        prompt: str,
+        with_tools: bool,
+        source: str,
+        model: str = "",
+        reasoning_effort: str = "",
     ):
         assert with_tools is False
         return "要約JSON", []

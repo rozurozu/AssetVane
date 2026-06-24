@@ -48,7 +48,13 @@ async def run_turn(
     """
     face = resolve_face(source)
     if face.provider == "codex":
-        return await codex_engine.run_turn(messages, phase=phase, source=source, model=face.model)
+        return await codex_engine.run_turn(
+            messages,
+            phase=phase,
+            source=source,
+            model=face.model,
+            reasoning_effort=face.reasoning_effort,
+        )
     return await run_tool_loop(messages, face=face, phase=phase, source=source)
 
 
@@ -59,6 +65,8 @@ async def generate_once(messages: list[dict[str, object]], *, source: str) -> st
     """
     face = resolve_face(source)
     if face.provider == "codex":
-        return await codex_engine.generate_once(messages, source=source, model=face.model)
+        return await codex_engine.generate_once(
+            messages, source=source, model=face.model, reasoning_effort=face.reasoning_effort
+        )
     resp = await complete(messages, face=face, source=source)
     return resp.content or ""

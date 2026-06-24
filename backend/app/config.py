@@ -48,16 +48,10 @@ class Settings(BaseSettings):
     llm_cost_limit_usd: float = 50.0
     llm_cost_guard_mode: str = "warn"
 
-    # --- Embedding（ニュース意味検索・Phase 4〜・ADR-045/012/006/018） ---
-    # ニュース意味検索の段階A 基盤。embedding プロバイダは OpenAI 互換 1 本のみ（chat と同型・
-    # ADR-012）。base_url / api_key / model を差し替えれば openai 直 / localllm を吸収する
-    # （Anthropic/Voyage ブランチは作らない）。3 キーのいずれかが未設定なら静かに機能オフ
-    # （llm_api_key 未設定と同じ作法・ADR-006/018）。
-    embedding_base_url: str = ""  # OpenAI 互換 /v1（例 https://api.openai.com/v1）
-    embedding_api_key: str = ""
-    embedding_model: str = ""  # 例 text-embedding-3-small
-    # 0=未設定。格納は次元非依存（BLOB＋vec_distance_cosine）だが、将来の検証/ログ用に保持する。
-    embedding_dim: int = 0
+    # --- Embedding（ニュース意味検索・Phase 4〜・ADR-045/012/006/018/059） ---
+    # base_url / api_key / model / dim は DB（embedding_config・/settings で編集）へ移管した
+    # （ADR-059）。env には接続パラメータ（timeout）だけ残す。3 キーのいずれかが未設定なら静かに
+    # 機能オフ（resolve_embedding_config が None を返す・ADR-006/018）。
     embedding_timeout_seconds: float = 30.0  # embeddings API のタイムアウト（秒）
 
     # --- codex app-server（provider="codex" のとき使う） ---
@@ -238,20 +232,14 @@ class Settings(BaseSettings):
 
         未設定でも Phase 0 は動く。実データ取得や AI を使う段階で必要になる。
         """
-        # LLM の充足は env ではなく DB（面別設定）で決まるため env_status からは外す（ADR-058）。
-        # 画面は GET /llm/faces の configured フラグで面ごとの設定状況を表示する。
+        # LLM・embedding の充足は env ではなく DB（面別設定 / embedding_config）で決まるため
+        # env_status からは外す（ADR-058/059）。画面は GET /llm/faces・/llm/embedding の configured
+        # フラグで設定状況を表示する。
         return {
             "jquants_api_key": {"set": bool(self.jquants_api_key), "required_from_phase": 0},
             "discord_webhook_url": {
                 "set": bool(self.discord_webhook_url),
                 "required_from_phase": 6,
-            },
-            # ニュース意味検索（ADR-045）。3 キーが揃って初めて有効＝未設定なら機能オフ。
-            "embedding": {
-                "set": bool(
-                    self.embedding_base_url and self.embedding_api_key and self.embedding_model
-                ),
-                "required_from_phase": 4,
             },
             # EDINET 有報の事業の内容（テーマタグ段階C・ADR-056）。未設定なら段階C 取得は機能オフ。
             "edinet_api_key": {"set": bool(self.edinet_api_key), "required_from_phase": 7},

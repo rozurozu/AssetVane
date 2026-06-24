@@ -11,13 +11,18 @@ import { Card } from "@/components/ui/Card";
 import { inputCls, labelCls } from "@/components/ui/Field";
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import {
+  type EmbeddingConfig,
   type FaceConfig,
   type Provider,
   createProvider,
   deleteProvider,
+  getEmbedding,
   getFaces,
   getProviders,
+  testCodex,
+  testEmbedding,
   testProvider,
+  updateEmbedding,
   updateFace,
   updateProvider,
 } from "@/lib/api";
@@ -31,6 +36,16 @@ const FACE_LABELS: Record<string, string> = {
   dossier: "ドシエ要約",
   tagger: "タグ付け（テーマ/極性）",
 };
+
+// reasoning_effort の選択肢（固定 enum・ADR-059）。"" = 既定（openai は送らない / codex は env）。
+const REASONING_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "（既定）" },
+  { value: "minimal", label: "minimal" },
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+  { value: "xhigh", label: "xhigh" },
+];
 
 const btnCls =
   "rounded-md border border-hairline bg-surface-2 px-3 py-1.5 text-[13px] font-medium hover:bg-surface-3 disabled:opacity-50";
@@ -339,6 +354,7 @@ function FaceRow({
   // provider セレクト値: "" = 未設定(null) / "0" = codex / "<id>" = provider。
   const [sel, setSel] = useState<string>(face.provider_id === null ? "" : String(face.provider_id));
   const [model, setModel] = useState(face.model);
+  const [reasoning, setReasoning] = useState(face.reasoning_effort);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
@@ -347,7 +363,7 @@ function FaceRow({
     setNote(null);
     try {
       const providerId = sel === "" ? null : Number(sel);
-      await updateFace(face.face, { provider_id: providerId, model });
+      await updateFace(face.face, { provider_id: providerId, model, reasoning_effort: reasoning });
       setNote("保存したのだ ✅");
       onChanged();
     } catch (e) {
@@ -372,7 +388,7 @@ function FaceRow({
           {face.configured ? "● 設定済み" : "○ 未設定（この面は動かない）"}
         </span>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-2 sm:grid-cols-3">
         <div>
           <span className={labelCls}>provider</span>
           <select className={inputCls} value={sel} onChange={(e) => setSel(e.target.value)}>
@@ -394,6 +410,20 @@ function FaceRow({
             onChange={(e) => setModel(e.target.value)}
           />
         </div>
+        <div>
+          <span className={labelCls}>reasoning effort</span>
+          <select
+            className={inputCls}
+            value={reasoning}
+            onChange={(e) => setReasoning(e.target.value)}
+          >
+            {REASONING_OPTIONS.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
       <div className="mt-2 flex items-center gap-2">
         <button type="button" className={btnCls} onClick={onSave} disabled={busy}>
@@ -402,6 +432,190 @@ function FaceRow({
         {note && <span className="text-[12px] text-ink-muted">{note}</span>}
       </div>
     </div>
+  );
+}
+
+/** codex の状態カード（疎通テストのみ・設定は面別で・ADR-059）。 */
+function CodexStatusCard() {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  async function onTest() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await testCodex();
+      setNote(r.ok ? `● 使用可 ${r.detail}` : `⚠ 使用不可 ${r.detail}`);
+    } catch (e) {
+      setNote(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-md border border-hairline bg-surface-2 p-2.5">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-ink-muted">{PROVIDER_ICONS.openai}</span>
+        <span className="font-medium text-[13px]">codex（ChatGPT サブスク・鍵不要）</span>
+      </div>
+      <p className="mb-2 text-[12px] text-ink-muted">
+        鍵は要らない（要 codex login）。model・reasoning effort は下の「面別 LLM 割当」で provider
+        に codex を選んで設定する。下のボタンで使用可否（ログイン・app-server
+        起動）を確認できるのだ。
+      </p>
+      <div className="flex items-center gap-2">
+        <button type="button" className={btnCls} onClick={onTest} disabled={busy}>
+          {busy ? "確認中…" : "疎通テスト"}
+        </button>
+        {note ? (
+          <span className="text-[12px] text-ink-muted">{note}</span>
+        ) : (
+          <span className="text-[11px] text-ink-subtle">○ 未確認</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** embedding（意味検索）接続カード（base_url/api_key/model/dim・ADR-059）。 */
+function EmbeddingCard() {
+  const [cfg, setCfg] = useState<EmbeddingConfig | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("");
+  const [dim, setDim] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const c = await getEmbedding();
+      setCfg(c);
+      setBaseUrl(c.base_url);
+      setModel(c.model);
+      setDim(c.dim ? String(c.dim) : "");
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function onSave() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const c = await updateEmbedding({
+        base_url: baseUrl,
+        api_key: apiKey, // 空は backend が据え置き（write-only）
+        model,
+        dim: dim ? Number(dim) : 0,
+      });
+      setCfg(c);
+      setApiKey("");
+      setNote("保存したのだ ✅");
+    } catch (e) {
+      setNote(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onTest() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await testEmbedding();
+      setNote(r.ok ? `疎通OK ✅ ${r.detail}` : `疎通NG ⚠ ${r.detail}`);
+    } catch (e) {
+      setNote(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card title="Embedding（意味検索）">
+      <p className="mb-2 text-[12px] text-ink-muted">
+        ニュース意味検索の埋め込み接続（OpenAI 互換 /v1/embeddings）。chat provider
+        とは独立に設定する （埋め込み用の別キー・別 model が普通）。3
+        キーが揃って初めて有効（ADR-059）。
+      </p>
+      <StatusBlock loading={loading} error={error}>
+        {cfg && (
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between">
+              <span
+                className={cfg.configured ? "text-[11px] text-up" : "text-[11px] text-ink-subtle"}
+              >
+                {cfg.configured ? "● 設定済み（有効）" : "○ 未設定（意味検索は機能オフ）"}
+              </span>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div>
+                <span className={labelCls}>base_url（OpenAI 互換 /v1）</span>
+                <input
+                  className={inputCls}
+                  placeholder="https://api.openai.com/v1"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                />
+              </div>
+              <div>
+                <span className={labelCls}>
+                  API キー（現在: {cfg.has_api_key ? cfg.api_key_masked : "未設定"}
+                  ・変更時のみ入力）
+                </span>
+                <input
+                  className={inputCls}
+                  type="password"
+                  placeholder="変更しないなら空のまま"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                />
+              </div>
+              <div>
+                <span className={labelCls}>model</span>
+                <input
+                  className={inputCls}
+                  placeholder="text-embedding-3-small"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              </div>
+              <div>
+                <span className={labelCls}>dim（任意・次元）</span>
+                <input
+                  className={inputCls}
+                  type="number"
+                  placeholder="0=未設定"
+                  value={dim}
+                  onChange={(e) => setDim(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className={btnCls} onClick={onSave} disabled={busy}>
+                {busy ? "処理中…" : "保存"}
+              </button>
+              <button type="button" className={btnCls} onClick={onTest} disabled={busy}>
+                疎通テスト
+              </button>
+              {note && <span className="text-[12px] text-ink-muted">{note}</span>}
+            </div>
+          </div>
+        )}
+      </StatusBlock>
+    </Card>
   );
 }
 
@@ -475,6 +689,8 @@ export function LlmSettings() {
                   <AddCustomForm onChanged={refresh} />
                 </div>
               </details>
+              {/* codex は鍵なし組み込みで一覧に出ないため、状態カードを並べる（ADR-059）。 */}
+              <CodexStatusCard />
             </div>
           )}
         </StatusBlock>
@@ -496,6 +712,8 @@ export function LlmSettings() {
           )}
         </StatusBlock>
       </Card>
+
+      <EmbeddingCard />
     </>
   );
 }

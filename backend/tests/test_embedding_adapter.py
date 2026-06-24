@@ -1,9 +1,9 @@
-"""Embedding アダプタ（adapters/embedding.py）の単体テスト（ADR-045/012/006/018）。
+"""Embedding アダプタ（adapters/embedding.py）の単体テスト（ADR-045/012/006/018/059）。
 
-何を担保するか: (1) 3 キーのいずれかが未設定なら機能オフ＝embed_texts は None・
-embedding_enabled は False、(2) 3 キー設定時は OpenAI 互換 embeddings の応答を
-list[list[float]] に整形して返す、(3) 入力が空なら API を呼ばず空リストを返す。
-ネットには出さず AsyncOpenAI を mock で差し替える（testing-strategy）。
+何を担保するか: (1) 接続未設定なら機能オフ＝embed_texts は None・embedding_enabled は False、
+(2) 設定済みなら OpenAI 互換 embeddings の応答を list[list[float]] に整形して返す、(3) 入力が空なら
+API を呼ばず空リストを返す。接続は DB（embedding_config）から解決する（ADR-059）ため、`_load_config`
+を差し替えて DB に触れず検証する。ネットには出さず AsyncOpenAI を mock で差す（testing-strategy）。
 """
 
 from __future__ import annotations
@@ -15,7 +15,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.adapters import embedding
-from app.config import settings
+
+_CONFIG = {
+    "base_url": "https://api.example.com/v1",
+    "api_key": "test-key",
+    "model": "text-embedding-3-small",
+    "dim": 0,
+}
 
 
 def _run(coro):
@@ -23,11 +29,14 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _set_embedding_keys(monkeypatch: pytest.MonkeyPatch) -> None:
-    """embedding 3 キーを設定済みにする（機能オン）。"""
-    monkeypatch.setattr(settings, "embedding_base_url", "https://api.example.com/v1")
-    monkeypatch.setattr(settings, "embedding_api_key", "test-key")
-    monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-small")
+def _set_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embedding 接続を設定済みにする（DB 解決を差し替え・機能オン）。"""
+    monkeypatch.setattr(embedding, "_load_config", lambda: dict(_CONFIG))
+
+
+def _set_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embedding 接続を未設定にする（resolve_embedding_config が None 相当）。"""
+    monkeypatch.setattr(embedding, "_load_config", lambda: None)
 
 
 def _mock_async_openai(monkeypatch: pytest.MonkeyPatch, vectors: list[list[float]]) -> MagicMock:
@@ -41,26 +50,22 @@ def _mock_async_openai(monkeypatch: pytest.MonkeyPatch, vectors: list[list[float
 
 
 def test_embed_texts_disabled_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    """3 キーが未設定なら機能オフ＝None を返し embedding_enabled も False（ADR-006/018）。"""
-    monkeypatch.setattr(settings, "embedding_base_url", "")
-    monkeypatch.setattr(settings, "embedding_api_key", "")
-    monkeypatch.setattr(settings, "embedding_model", "")
+    """接続未設定なら機能オフ＝None を返し embedding_enabled も False（ADR-006/018/059）。"""
+    _set_unconfigured(monkeypatch)
     assert embedding.embedding_enabled() is False
     assert _run(embedding.embed_texts(["foo"])) is None
 
 
 def test_embed_texts_partial_keys_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """一部キーだけ設定でも機能オフ（3 キー全て揃って初めて有効・ADR-045）。"""
-    monkeypatch.setattr(settings, "embedding_base_url", "https://api.example.com/v1")
-    monkeypatch.setattr(settings, "embedding_api_key", "")
-    monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-small")
+    """一部キーだけ設定でも機能オフ（resolve_embedding_config が None を返す・ADR-045/059）。"""
+    _set_unconfigured(monkeypatch)  # resolve_embedding_config が 3 キー未充足で None を返す相当
     assert embedding.embedding_enabled() is False
     assert _run(embedding.embed_texts(["foo"])) is None
 
 
 def test_embed_texts_returns_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
-    """3 キー設定時は応答を list[list[float]] に整形して返す（ADR-045/012）。"""
-    _set_embedding_keys(monkeypatch)
+    """設定済みなら応答を list[list[float]] に整形して返す（ADR-045/012/059）。"""
+    _set_configured(monkeypatch)
     client = _mock_async_openai(monkeypatch, [[0.1, 0.2], [0.3, 0.4]])
 
     result = _run(embedding.embed_texts(["foo", "bar"]))
@@ -73,7 +78,7 @@ def test_embed_texts_returns_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_embed_texts_empty_input_no_api_call(monkeypatch: pytest.MonkeyPatch) -> None:
     """入力が空なら API を呼ばず空リストを返す（ADR-045）。"""
-    _set_embedding_keys(monkeypatch)
+    _set_configured(monkeypatch)
     client = _mock_async_openai(monkeypatch, [])
 
     result = _run(embedding.embed_texts([]))

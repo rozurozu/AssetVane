@@ -16,7 +16,6 @@ vec_distance_cosine で検証する（test_news_embedding と同流儀）。
 from __future__ import annotations
 
 from app.batch.jobs import embed_themes
-from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
 from app.db.schema import themes
@@ -31,7 +30,7 @@ def _theme_rows() -> dict[str, dict]:
 def _setup_embedding(monkeypatch, vectors_by_name: dict[str, list[float]]) -> None:
     """embedding を有効化し、テーマ名→ベクトルの fake embed_texts を差し込む。"""
     monkeypatch.setattr(embed_themes, "embedding_enabled", lambda: True)
-    monkeypatch.setattr(settings, "embedding_model", "m1")
+    monkeypatch.setattr(embed_themes, "embedding_model", lambda: "m1")
 
     async def _fake_embed(texts: list[str]) -> list[list[float]]:
         return [vectors_by_name[t] for t in texts]
@@ -56,7 +55,7 @@ def test_failed_batch_returns_not_ok(temp_db, monkeypatch) -> None:
     """
     repo.insert_themes_if_absent(["生成AI"], "2026-06-01T00:00:00+00:00")
     monkeypatch.setattr(embed_themes, "embedding_enabled", lambda: True)
-    monkeypatch.setattr(settings, "embedding_model", "m1")
+    monkeypatch.setattr(embed_themes, "embedding_model", lambda: "m1")
 
     async def _boom(texts: list[str]) -> list[list[float]]:
         raise RuntimeError("embeddings API down")
@@ -77,7 +76,7 @@ def test_partial_success_persists_then_not_ok(temp_db, monkeypatch) -> None:
     """
     repo.insert_themes_if_absent(["生成AI", "防衛"], "2026-06-01T00:00:00+00:00")
     monkeypatch.setattr(embed_themes, "embedding_enabled", lambda: True)
-    monkeypatch.setattr(settings, "embedding_model", "m1")
+    monkeypatch.setattr(embed_themes, "embedding_model", lambda: "m1")
     monkeypatch.setattr(embed_themes, "_EMBED_BATCH", 1)  # 2 バッチに分割させる
 
     calls = {"n": 0}

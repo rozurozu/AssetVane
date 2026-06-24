@@ -722,5 +722,23 @@ llm_face_config = Table(
     Column("face", String, primary_key=True),  # 'chat'/'nightly'/'dossier'/'tagger'
     Column("provider_id", Integer),  # NULL=未設定 / 0=codex / >0=llm_providers.id
     Column("model", String, nullable=False, server_default=""),  # 自由入力（空なら provider 既定）
+    # 推論努力（ADR-059・0023）。空=既定（openai は送らない・codex は env codex_reasoning_effort）。
+    # 値域は minimal/low/medium/high/xhigh（openai→chat.completions・codex→thread config）。
+    Column("reasoning_effort", String),
+    Column("updated_at", String),  # ISO8601
+)
+
+# 意味検索の embedding 接続（ADR-059・0023・単一行運用＝policy 同型）。env から DB へ移管。
+# chat provider とは独立（/v1/embeddings・別 model・別キーが普通）。api_key は平文（ADR-058 同方針・
+# GET ではマスク）。3 キー（base_url/api_key/model）が揃って初めて有効＝欠ければ静かに機能オフ
+# （ADR-006/045）。dim は次元非依存格納のため任意（検証/ログ用）。timeout は env 据え置き。
+embedding_config = Table(
+    "embedding_config",
+    metadata,
+    Column("id", Integer, primary_key=True),  # 1 行運用（id 固定）
+    Column("base_url", String, nullable=False, server_default=""),  # OpenAI 互換 /v1
+    Column("api_key", String, nullable=False, server_default=""),  # 平文・GET でマスク
+    Column("model", String, nullable=False, server_default=""),  # 例 text-embedding-3-small
+    Column("dim", Integer),  # 任意（0/NULL=未設定）
     Column("updated_at", String),  # ISO8601
 )
