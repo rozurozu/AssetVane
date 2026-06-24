@@ -313,7 +313,7 @@ advisor_journal = Table(
     Column("proposal", String),  # 当日の提案（自由文 or 参照）
     Column("proposed_policy_change", String),  # JSON 単一 {field,to}（任意 from/reason・ADR-030）
     Column("policy_snapshot", String),  # JSON（その時点の policy まるごと・履歴）
-    Column("llm_model", String),  # 監査用（settings.llm_model）
+    Column("llm_model", String),  # 監査用（面別に解決された実 model・ADR-058）
     Column("created_at", String),  # ISO8601
     Index("ix_advisor_journal_date", "date"),
 )
@@ -685,4 +685,42 @@ company_descriptions = Table(
     Column("doc_id", String),  # EDINET 書類管理番号（provenance・US は NULL）
     Column("fetched_at", String),  # テキスト最終変化時刻 ISO8601（時刻まで）
     UniqueConstraint("market", "code", name="uq_company_descriptions_market_code"),
+)
+
+# ===== ADR-058: LLM プロバイダ複数登録・面別 provider/model 設定（0022_llm_providers） =====
+#
+# LLM 接続の正本を env（起動時固定）から DB へ移し、/settings の WebUI から複数 provider を
+# 登録し、面（chat/nightly/dossier/tagger）ごとに provider と model を割り当てられるようにする
+# （ADR-058・ADR-012 の延長）。OpenAI 互換 1 本で全 provider を吸収し、真に特殊なのは codex のみ
+# （codex はここに行を持たない＝鍵なし組み込み・provider_id=0 を解決層がセンチネルとして扱う）。
+
+# 鍵あり provider のレジストリ（OpenAI 互換 {base_url, api_key, model} で全部吸収・ADR-012）。
+# codex はここに行を持たない（鍵なし・組み込み固定の仮想 provider＝services/llm_config が合成）。
+# api_key は平文（ADR-001 単一ユーザー・認証なし・LAN 内が前提。将来は暗号化＝ADR-058 に明記）。
+llm_providers = Table(
+    "llm_providers",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False),  # UI 表示名（一意・"OpenRouter" 等）
+    Column("base_url", String, nullable=False),  # OpenAI 互換 /v1（例 https://api.openai.com/v1）
+    Column("api_key", String, nullable=False, server_default=""),  # 平文。空可（ローカル LLM）
+    Column(
+        "default_model", String, nullable=False, server_default=""
+    ),  # 面が空のとき使う既定 model
+    Column("created_at", String),  # ISO8601
+    Column("updated_at", String),  # ISO8601
+    UniqueConstraint("name", name="uq_llm_providers_name"),
+)
+
+# 面（face）→ {provider, model} の割当（chat/nightly/dossier/tagger の 4 行運用・ADR-058 確定3）。
+# provider_id は NULL=未設定 / 0=codex（組み込み固定） / >0=llm_providers.id。FK は張らない
+# （SQLite で FK 無効運用・整合は services/router が守る＝ADR-058 確定7）。model は自由入力文字列
+# （v1 は reasoning_effort 等の細目を持たない＝確定5）。シードなし（行が無い面＝未設定＝確定4）。
+llm_face_config = Table(
+    "llm_face_config",
+    metadata,
+    Column("face", String, primary_key=True),  # 'chat'/'nightly'/'dossier'/'tagger'
+    Column("provider_id", Integer),  # NULL=未設定 / 0=codex / >0=llm_providers.id
+    Column("model", String, nullable=False, server_default=""),  # 自由入力（空なら provider 既定）
+    Column("updated_at", String),  # ISO8601
 )

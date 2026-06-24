@@ -550,6 +550,34 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 
 ---
 
+### LLM プロバイダ・面別設定 — `llm_providers`／`llm_face_config`（[ADR-058](decisions.md)・`0022_llm_providers`）
+
+LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settings` で編集する。OpenAI 互換 1 本で全 provider を吸収し、真に特殊なのは codex（鍵なし組み込み＝行を持たず `provider_id=0` で表す）だけ。api_key は平文（[ADR-001](decisions.md)・将来は暗号化予定）で、API の GET では必ずマスクして返す。
+
+**`llm_providers`**（鍵あり provider のレジストリ・複数行）
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `id` | INTEGER PK | autoincrement |
+| `name` | TEXT | UI 表示名（UNIQUE） |
+| `base_url` | TEXT | OpenAI 互換 `/v1`（例 `https://api.openai.com/v1`） |
+| `api_key` | TEXT | 平文（空可＝ローカル LLM）。GET ではマスク |
+| `default_model` | TEXT | 面の model が空のとき使う既定 model |
+| `created_at` / `updated_at` | TEXT | ISO8601 |
+
+**`llm_face_config`**（面→割当・4 行運用＝chat/nightly/dossier/tagger）
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `face` | TEXT PK | `chat`/`nightly`/`dossier`/`tagger` |
+| `provider_id` | INTEGER | NULL=未設定 / 0=codex（組み込み） / >0=`llm_providers.id`（FK は張らない） |
+| `model` | TEXT | 自由入力（空なら provider 既定 / codex 既定） |
+| `updated_at` | TEXT | ISO8601 |
+
+> シードしない（行が無い面＝未設定）。未設定面は [ADR-018](decisions.md) 準拠で chat=503・nightly/dossier=通知付き skip・tagger=沈黙 skip。provider 削除は使用中の面があれば 409。
+
+---
+
 ## 6. 記録・運用
 
 ### `asset_snapshots` — 日次総資産スナップショット

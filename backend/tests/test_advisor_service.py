@@ -20,6 +20,13 @@ from app.advisor.llm import LLMResponse, ToolCall
 from app.advisor.tools.registry import ToolDef
 from app.db import repo
 from app.db.engine import get_engine
+from app.services.llm_config import ResolvedFace
+
+# run_tool_loop は engine が解決した face を受け取る（ADR-058）。complete はモックするので
+# provider/model は使われないが、シグネチャ充足にダミー face を渡す。
+_FACE = ResolvedFace(
+    face="chat", provider="openai", base_url="https://test.invalid/v1", api_key="k", model="m"
+)
 
 
 def _run(coro: Any) -> Any:
@@ -66,7 +73,9 @@ def test_run_tool_loop_resolves_tool_calls(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(service, "complete", _fake_complete)
     _stub_handler(monkeypatch, "get_signals", _fake_handler)
 
-    reply, tool_runs = _run(service.run_tool_loop([{"role": "user", "content": "兆候は?"}]))
+    reply, tool_runs = _run(
+        service.run_tool_loop([{"role": "user", "content": "兆候は?"}], face=_FACE)
+    )
 
     assert reply == "最終応答"
     # tool_runs には呼んだ Tool 名と引数のみ（結果の数値は載らない＝ADR-025）。
@@ -96,7 +105,7 @@ def test_run_tool_loop_unknown_tool_does_not_crash(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(service, "complete", _fake_complete)
 
-    reply, tool_runs = _run(service.run_tool_loop([{"role": "user", "content": "x"}]))
+    reply, tool_runs = _run(service.run_tool_loop([{"role": "user", "content": "x"}], face=_FACE))
 
     assert reply == "リカバリ応答"
     assert tool_runs == [{"name": "does_not_exist", "args": {}}]
@@ -119,7 +128,9 @@ def test_run_tool_loop_max_rounds_cutoff(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(service, "complete", _always_tool)
     _stub_handler(monkeypatch, "get_signals", _fake_handler)
 
-    reply, tool_runs = _run(service.run_tool_loop([{"role": "user", "content": "x"}], max_rounds=2))
+    reply, tool_runs = _run(
+        service.run_tool_loop([{"role": "user", "content": "x"}], face=_FACE, max_rounds=2)
+    )
 
     # 2 往復で打ち切り、最後の content を返す。
     assert reply == "まだ続けたい"

@@ -1,10 +1,12 @@
 """LLM アダプタ（OpenAI 互換・Tool Calling 対応）。
 
-設計の真実: docs/phase-specs/phase3-spec.md §4.3・§7.1・ADR-012/028。
+設計の真実: docs/phase-specs/phase3-spec.md §4.3・§7.1・ADR-012/028/058。
 
-ADR-012: LLM 接続は共通インターフェースのアダプタで抽象化し、`.env` の base_url / model /
-api_key を差し替えるだけで OpenRouter（既定・クラウド）と Ollama（ローカル）を切り替える。
-Ollama も OpenAI 互換エンドポイント（`/v1/chat/completions`）を持つため provider 分岐は不要。
+ADR-012/058: LLM 接続は共通インターフェースのアダプタで抽象化する。base_url / model / api_key は
+面（chat/nightly/dossier/tagger）ごとに DB から解決され（engine が resolve_face で渡す）、provider
+エントリ（base_url, api_key）ごとにクライアントをキャッシュ生成する。OpenAI 互換 1 本で
+OpenRouter / OpenAI 直 / Ollama / Sakana 等をすべて吸収し（`/v1/chat/completions`）provider 分岐は
+不要。真に特殊な codex だけは codex_engine が別経路で扱う。
 
 ここは「messages（＋tools）を送って応答（テキスト or tool_calls）を返すだけ」のバカ運搬役に
 徹する。プロンプト組み立て（CORE/POLICY/Tool/文脈の差し込み）も Tool の dispatch も上位の責務
@@ -26,6 +28,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
+from app.services.llm_config import ResolvedFace
 
 logger = logging.getLogger(__name__)
 
@@ -53,16 +56,35 @@ class CostGuardError(RuntimeError):
     """
 
 
-# Ollama は認証キーが不要だが、OpenAI SDK は api_key が空だと初期化で例外を投げる。
-# 空ならダミーを入れて動かす（OpenRouter 等を使うときは .env に実キーを入れる）。
-# 指数バックオフ付きリトライ・タイムアウトは SDK の max_retries / timeout に委譲する
-# （spec §4.3・§7・data-arch §3.3）。
-_client = AsyncOpenAI(
-    base_url=settings.llm_base_url,
-    api_key=settings.llm_api_key or "ollama",
-    timeout=settings.llm_timeout_seconds,
-    max_retries=settings.llm_max_retries,
-)
+# base_url / api_key / model は面ごとに DB から解決する（ADR-058）ため、モジュール singleton を
+# 廃し provider エントリ（base_url, api_key）ごとにクライアントをキャッシュ生成する。鍵を更新すると
+# キーが変わり新クライアントが立つ＝実質的なキャッシュ無効化が自動で効く。timeout / max_retries は
+# 接続パラメータ（provider 別ではない）なので env 据え置き（spec §4.3・§7・data-arch §3.3）。
+# Ollama 等は認証キー不要だが OpenAI SDK は空 api_key で初期化例外を投げるためダミーを入れる。
+_clients: dict[tuple[str, str], AsyncOpenAI] = {}
+
+
+def get_client(base_url: str, api_key: str) -> AsyncOpenAI:
+    """(base_url, api_key) をキーに AsyncOpenAI をキャッシュ生成する（ADR-058）。
+
+    complete() と provider 疎通テスト（routers/llm_config）が共有する。
+    """
+    cache_key = (base_url, api_key)
+    client = _clients.get(cache_key)
+    if client is None:
+        client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key or "ollama",
+            timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        )
+        _clients[cache_key] = client
+    return client
+
+
+def invalidate_clients() -> None:
+    """クライアントキャッシュを破棄する（provider 更新の即時反映用・ADR-058 任意フック）。"""
+    _clients.clear()
 
 
 def _current_month() -> str:
@@ -107,10 +129,11 @@ def _check_cost_guard() -> None:
     )
 
 
-def _record_usage(usage: object, *, source: str) -> None:
-    """OpenRouter のレスポンス usage を `llm_usage` に計上する（spec §7.1・ADR-028）。
+def _record_usage(usage: object, *, source: str, model: str) -> None:
+    """OpenRouter のレスポンス usage を `llm_usage` に計上する（spec §7.1・ADR-028/058）。
 
-    cost は OpenRouter の `usage.cost`（無ければ 0.0・Ollama は cost 無し）。
+    cost は OpenRouter の `usage.cost`（無ければ 0.0・OpenRouter 以外は cost を返さず 0 計上＝
+    コストガードが空洞化する既知の限界・ADR-058）。model は面別に解決された実 model を記録する。
     計上失敗で LLM 応答を壊さない（try/except で握ってログのみ）。
     """
     if usage is None:
@@ -128,7 +151,7 @@ def _record_usage(usage: object, *, source: str) -> None:
             repo.insert_llm_usage(
                 conn,
                 source=source,
-                model=settings.llm_model,
+                model=model,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 cost_usd=float(cost) if cost is not None else 0.0,
@@ -168,16 +191,19 @@ def _parse_tool_calls(message: object) -> list[ToolCall]:
 async def complete(
     messages: list[dict[str, object]],
     *,
+    face: ResolvedFace,
     tools: list[dict[str, object]] | None = None,
     stream: bool = False,
     source: str = "chat",
 ) -> LLMResponse:
-    """messages（＋tools）を LLM に投げ、テキストか tool_calls を返す（spec §4.3）。
+    """messages（＋tools）を面別 provider/model で LLM に投げる（spec §4.3・ADR-058）。
 
     数値計算や事実生成はしない（ADR-014）。Tool の dispatch は上位（router/nightly）の責務。
+    provider/model/base_url/api_key は engine が resolve_face で解決した face から取る。
 
     Args:
         messages: OpenAI 形式の会話列（system/user/assistant/tool）。
+        face: engine が resolve_face で解決した面（provider="openai" 経路のみがここに来る）。
         tools: OpenAI tools スキーマ（registry.openai_tools が供給）。None なら無効。
         stream: 将来用。Phase 3 は False 固定（非ストリーミング・spec §4.3）。
         source: `llm_usage` の呼び出し文脈タグ（"chat"/"nightly" 等）。
@@ -190,16 +216,17 @@ async def complete(
     # 呼び出し前: コストガード（block なら CostGuardError で止める・spec §7.1）。
     _check_cost_guard()
 
+    client = get_client(face.base_url or "", face.api_key or "")
     # tools 指定時のみ tool_choice="auto"。未指定は omit（送らない）で従来の純テキスト応答。
-    resp = await _client.chat.completions.create(
-        model=settings.llm_model,
+    resp = await client.chat.completions.create(
+        model=face.model,
         messages=messages,  # type: ignore[arg-type]
         tools=tools if tools else omit,  # type: ignore[arg-type]
         tool_choice="auto" if tools else omit,
     )
 
     # 呼び出し後: 実コストを計上（失敗しても応答は返す・spec §7.1）。
-    _record_usage(getattr(resp, "usage", None), source=source)
+    _record_usage(getattr(resp, "usage", None), source=source, model=face.model)
 
     message = resp.choices[0].message
     return LLMResponse(

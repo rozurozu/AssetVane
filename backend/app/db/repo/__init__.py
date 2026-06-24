@@ -54,6 +54,18 @@ from app.db.repo.lead_lag import (
     get_daily_ohlc_by_codes,
     get_index_closes_by_symbols,
 )
+from app.db.repo.llm_config import (
+    delete_provider,
+    faces_using_provider,
+    get_face,
+    get_provider,
+    get_provider_by_name,
+    insert_provider,
+    list_faces,
+    list_providers,
+    update_provider,
+    upsert_face,
+)
 from app.db.repo.news import (
     add_watchlist,
     delete_user_news,
@@ -306,4 +318,14 @@ __all__ = [
     "upsert_us_holding",
     "delete_us_holding",
     "list_us_holdings",
+    "list_providers",
+    "get_provider",
+    "get_provider_by_name",
+    "insert_provider",
+    "update_provider",
+    "delete_provider",
+    "list_faces",
+    "get_face",
+    "upsert_face",
+    "faces_using_provider",
 ]

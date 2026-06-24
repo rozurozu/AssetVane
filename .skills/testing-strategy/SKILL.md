@@ -34,7 +34,7 @@ def temp_db(tmp_path, monkeypatch) -> Iterator[None]:
 
 - J-Quants 等の取得は**呼ばない**。アダプタの正規化（外部キー→内部列）は**サンプル dict を渡して検証**する（[[backend-adapter-pattern]] の `_first`/`_norm_*` の入出力）。HTTP は実際に飛ばさない。
 - 取得→保存の結合を見たい場合はアダプタを差し替える（モック/フェイク）か、正規化済み行を直接 repo に渡す。
-- **LLM も同じ。`client` フィクスチャは `settings.llm_provider_{chat,nightly,dossier}` を openai に固定**する（開発者の `.env` の `LLM_PROVIDER_*=codex` がテストに漏れるのを断つ）。これがないと `/chat` 等が `codex_engine` へ分岐し、実 `codex app-server` subprocess＋MCP が起動してモックが素通り・teardown で `Event loop is closed` になる（ADR-012/ADR-032）。LLM 応答は `app.advisor.service.complete` を monkeypatch でモックする。codex 経路自体の振り分けは `test_engine_dispatch.py`/`test_codex_engine.py` がモックで別途検証する。
+- **LLM も同じ。`client`/`temp_db` フィクスチャは `seed_llm_config()` で openai provider 1 行＋4 面（chat/nightly/dossier/tagger）を一時 DB に seed** し、LLM 経路を openai（モック可能）に固定する（ADR-058・面別設定は env ではなく DB なので・旧 `settings.llm_provider_*=openai` monkeypatch の後継）。これがないと `resolve_face` が `FaceNotConfiguredError` で落ち `/chat` は 503、あるいは codex を割り当てると実 `codex app-server` subprocess＋MCP が起動してモック素通り・teardown で `Event loop is closed` になる（ADR-012/032/058）。LLM 応答は `app.advisor.service.complete`（`get_client` を fake に差し替え or `service.complete` を monkeypatch）でモックする。面解決の振り分けは `test_llm_config.py`（resolve_face）/`test_engine_dispatch.py`/`test_codex_engine.py` がモックで別途検証する。
 
 ## quant 純関数は DataFrame 直書き
 

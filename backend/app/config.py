@@ -34,28 +34,19 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # --- LLM (AI Advisor) --- Phase 3〜
-    llm_api_key: str = ""
-    llm_base_url: str = "https://openrouter.ai/api/v1"
-    llm_model: str = "anthropic/claude-sonnet-4-6"
+    # provider/model/api_key/base_url と面別割当は DB（llm_providers/llm_face_config）に移管し
+    # /settings の WebUI から編集する（ADR-058）。env には接続パラメータとコストガードだけ残す。
     # LLM 呼び出しのタイムアウト・リトライ（phase3-spec.md §4.3/§7・data-arch §3.3・ADR-012/018）。
-    # AsyncOpenAI の timeout / max_retries に渡す。指数バックオフは base × 2^n。
+    # AsyncOpenAI の timeout / max_retries に渡す（provider 共通の接続パラメータ）。base × 2^n。
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 3
     llm_retry_base_seconds: float = 2.0
     # LLM コストガードレール（ADR-028・spec §7.1）。クラウド LLM 期間限定の月額ガード。
     # mode: "off"（監視しない）/ "warn"（既定・止めず通知）/ "block"（超過で呼び出しを止める）。
-    # OpenRouter 実コスト（usage.cost）を llm_usage に積み、当月累計で判定。Ollama は $0。
+    # OpenRouter 実コスト（usage.cost）を llm_usage に積み当月累計で判定。OpenRouter 以外は cost を
+    # 返さず 0 計上＝ガードが空洞化する既知の限界（ADR-058）。
     llm_cost_limit_usd: float = 50.0
     llm_cost_guard_mode: str = "warn"
-
-    # --- LLM provider 面別切替（codex 接続・ADR-012 の延長／plans 参照） ---
-    # source（chat/nightly/dossier）ごとに "openai"（既定・OpenRouter 等）か "codex"
-    # （codex app-server ＋ FastAPI ホストの MCP）を選ぶ。何も設定しなければ全面 openai＝従来通り。
-    # codex は ChatGPT サブスク認証（API キー不要）で限界費用ゼロ。無人 cron のトークン継続に
-    # 制約があるため nightly は既定 openai のまま実証後に寄せる方針。
-    llm_provider_chat: str = "openai"
-    llm_provider_nightly: str = "openai"
-    llm_provider_dossier: str = "openai"
 
     # --- Embedding（ニュース意味検索・Phase 4〜・ADR-045/012/006/018） ---
     # ニュース意味検索の段階A 基盤。embedding プロバイダは OpenAI 互換 1 本のみ（chat と同型・
@@ -219,18 +210,6 @@ class Settings(BaseSettings):
     # 固定 N=3 を廃し、暴走防止の上限として残す（投資 dossier 巡回ジョブが消費する）。
     dossier_nightly_max: int = 3  # 夜あたり巡回上限の天井（暴走防止）
 
-    def provider_for(self, source: str) -> str:
-        """source（chat/nightly/dossier）から LLM provider を返す（既定 openai）。
-
-        未知 source や未設定は安全側に openai（従来経路）へ落とす。engine が参照する。
-        """
-        mapping = {
-            "chat": self.llm_provider_chat,
-            "nightly": self.llm_provider_nightly,
-            "dossier": self.llm_provider_dossier,
-        }
-        return mapping.get(source, "openai") or "openai"
-
     @property
     def index_symbol_list(self) -> list[str]:
         """カンマ区切りの指数シンボルをリストにする（phase2-spec.md §3.1）。"""
@@ -259,9 +238,10 @@ class Settings(BaseSettings):
 
         未設定でも Phase 0 は動く。実データ取得や AI を使う段階で必要になる。
         """
+        # LLM の充足は env ではなく DB（面別設定）で決まるため env_status からは外す（ADR-058）。
+        # 画面は GET /llm/faces の configured フラグで面ごとの設定状況を表示する。
         return {
             "jquants_api_key": {"set": bool(self.jquants_api_key), "required_from_phase": 0},
-            "llm_api_key": {"set": bool(self.llm_api_key), "required_from_phase": 3},
             "discord_webhook_url": {
                 "set": bool(self.discord_webhook_url),
                 "required_from_phase": 6,

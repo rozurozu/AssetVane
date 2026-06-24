@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Connection
 
 from app.advisor.core_prompt import CORE
-from app.advisor.engine import run_turn
+from app.advisor.engine import resolve_face, run_turn
 from app.advisor.journaling import (
     persist_journal_from_tool_runs,
     persist_trade_proposals_from_tool_runs,
@@ -32,7 +32,6 @@ from app.advisor.method_cards import METHOD_CARDS
 from app.advisor.prompt_builder import Message, build_messages
 from app.advisor.tools import handlers
 from app.advisor.tools.registry import CURRENT_PHASE
-from app.config import settings
 from app.db import repo
 
 logger = logging.getLogger(__name__)
@@ -87,6 +86,9 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
     いずれも当日 journal をスキップし、通知は呼び出し側経由で runner 集約が担う（ADR-018）。
     """
     today = datetime.now(UTC).strftime("%Y-%m-%d")
+    # nightly 面を先に解決（未設定/宙づりは FaceNotConfiguredError → 上位 run_advisor ジョブが
+    # ok=False に集約し runner が通知＝ADR-018/058）。journal の監査 model にも使う。
+    face = resolve_face("nightly")
     policy = repo.get_policy(conn)
     # 非同期コンテキスト内なので handler を直接 await する（同期 collect は asyncio.run で衝突）。
     briefing = await _gather_briefing()
@@ -115,7 +117,7 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
         date=today,
         situation_briefing=json.dumps(briefing, ensure_ascii=False),
         policy=policy,
-        llm_model=settings.llm_model,
+        llm_model=face.model,  # 面別に解決された実 model を監査に残す（ADR-058）
     )
 
     # ニュース起点の buy/sell 提案を起票（ADR-052・journal とは独立＝縮退で journal_id=None でも

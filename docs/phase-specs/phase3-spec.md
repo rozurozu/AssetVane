@@ -475,7 +475,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
 ## 7. LLM アダプタ・障害処理（ADR-012/018）
 
-- **インフラ（ADR-012）**: `.env` の `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` で OpenRouter（既定）↔ Ollama 差替（`config.py:28-31` 既設）。本 Phase で `llm_timeout_seconds=60.0`/`llm_max_retries=3`/`llm_retry_base_seconds=2.0` を `config.py` に追記（data-arch §3.3）。
+- **インフラ（ADR-012）**: OpenAI 互換アダプタで OpenRouter / OpenAI 直 / Ollama 等を差し替える。本 Phase で `llm_timeout_seconds=60.0`/`llm_max_retries=3`/`llm_retry_base_seconds=2.0` を `config.py` に追記（data-arch §3.3）。〔追記: provider/api_key/base_url/model と面別割当は **[ADR-058](../decisions.md) で env→DB＋WebUI（/settings）へ移管**済み。旧 `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`/`LLM_PROVIDER_*` は撤去。〕
 - **リトライ**: LLM 呼び出しは指数バックオフ・上限あり（`AsyncOpenAI` の `max_retries`/`timeout`）。
 - **失敗時（ADR-018）**: リトライ → ダメなら **journal をスキップ**して `run_advisor` ジョブが `ok=False` で返す。スキップは 2 経路を同じ結末に揃える：
   - **②ハード失敗（LLM 例外/タイムアウト）**: `run_nightly_advisor` は例外を握らず**上位へ伝播**し、`run_advisor.run` が握って `JobResult.ok=False`。

@@ -1,5 +1,6 @@
 "use client";
 
+import { LlmSettings } from "@/components/settings/LlmSettings";
 import { Card } from "@/components/ui/Card";
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import {
@@ -22,9 +23,10 @@ import { useEffect, useState } from "react";
 // （Discord / J-Quants）。Webhook URL・しきい値は .env 固定で UI から編集しない（L-25）。
 
 // env キーの日本語ラベル（順序固定・config.py env_status のキーに対応）。
+// LLM のキーは env ではなく DB（面別設定）へ移したので env_status からは外れた（ADR-058）。
+// LLM の設定状況は下の「面別 LLM 割当」カード（GET /llm/faces の configured）で見る。
 const ENV_LABELS: { key: string; label: string }[] = [
   { key: "jquants_api_key", label: "J-Quants API キー" },
-  { key: "llm_api_key", label: "LLM API キー" },
   { key: "discord_webhook_url", label: "Discord Webhook URL（通知）" },
   { key: "edinet_api_key", label: "EDINET API キー（テーマタグ段階C）" },
 ];
@@ -177,8 +179,9 @@ export default function SettingsPage() {
       <div className="mb-3">
         <div className="font-semibold text-[20px] tracking-[-0.4px]">Settings</div>
         <div className="mt-0.5 text-[12px] text-ink-muted">
-          backend の健全性と環境変数の充足、夜間バッチの手動起動、外部依存の疎通テスト。秘密情報は
-          backend の .env のみ。
+          backend の健全性と環境変数の充足、LLM
+          プロバイダ・面別割当、夜間バッチの手動起動、外部依存の 疎通テスト。J-Quants/EDINET/Discord
+          の秘密は backend の .env、LLM のキーは DB（下の LLM プロバイダ）で管理する（ADR-058）。
         </div>
       </div>
 
@@ -217,6 +220,9 @@ export default function SettingsPage() {
             )}
           </StatusBlock>
         </Card>
+
+        {/* LLM プロバイダ複数登録・面別 provider/model 設定（ADR-058） */}
+        <LlmSettings />
 
         {/* 夜間バッチ手動起動（差分/全銘柄フル）＋進捗＋停止（ADR-036） */}
         <Card title="夜間バッチ">

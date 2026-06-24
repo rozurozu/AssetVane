@@ -21,8 +21,8 @@ from sqlalchemy import Connection
 
 from app.advisor.llm import complete
 from app.advisor.tools.registry import CURRENT_PHASE, REGISTRY, openai_tools
-from app.config import settings
 from app.db import repo
+from app.services.llm_config import FaceNotConfiguredError, ResolvedFace, resolve_face
 from app.services.policy import DEFAULT_POLICY, encode_policy_field, normalize_policy_row
 
 # ---------------------------------------------------------------------------
@@ -56,15 +56,16 @@ def _assistant_tool_call_record(content: str | None, tool_calls: list) -> dict[s
 async def run_tool_loop(
     messages: list[dict[str, object]],
     *,
+    face: ResolvedFace,
     phase: int = CURRENT_PHASE,
     source: str = "chat",
     max_rounds: int = 6,
 ) -> tuple[str, list[dict[str, object]]]:
-    """build 済み messages を LLM に投げ、tool_calls を解決して最終テキストと tool_runs を返す。
+    """build 済み messages を面別 provider/model で LLM に投げ、最終テキストと tool_runs を返す。
 
-    （spec §4.2・ADR-014/025）
+    （spec §4.2・ADR-014/025/058）。face は engine が resolve_face で解決して渡す。
 
-    1. resp = complete(messages, tools=openai_tools(phase), source=source)
+    1. resp = complete(messages, face=face, tools=openai_tools(phase), source=source)
     2. resp.tool_calls がある限り（max_rounds まで）:
        - 各 tool_call の handler を呼ぶ（未知 name は {"error": ...}・落とさない）
        - assistant の tool_calls 記録 → 各結果を {"role":"tool", ...} で messages に append
@@ -77,7 +78,7 @@ async def run_tool_loop(
     tools = openai_tools(phase)
     tool_runs: list[dict[str, object]] = []
 
-    resp = await complete(messages, tools=tools, source=source)
+    resp = await complete(messages, face=face, tools=tools, source=source)
     rounds = 0
     while resp.tool_calls and rounds < max_rounds:
         # 1) この往復で要求された tool_calls を assistant 記録として積む（OpenAI 形式）。
@@ -101,7 +102,7 @@ async def run_tool_loop(
             tool_runs.append({"name": tc.name, "args": tc.arguments})
 
         rounds += 1
-        resp = await complete(messages, tools=tools, source=source)
+        resp = await complete(messages, face=face, tools=tools, source=source)
 
     if resp.tool_calls and rounds >= max_rounds:
         # 上限到達で Tool 要求が続いている → 打ち切る。最後の content があれば返す。
@@ -173,13 +174,19 @@ def apply_policy_change(
         )
     else:
         # チャット承認など journal が無い入口は当日 journal を 1 件起票して snapshot を残す。
+        # 監査 model は source 面の解決値を best-effort で（未設定なら None＝この snapshot は LLM
+        # 生成物ではなく方針適用の記録なので model は付帯情報・ADR-058）。
+        try:
+            journal_model: str | None = resolve_face(conn, source).model
+        except FaceNotConfiguredError:
+            journal_model = None
         repo.insert_journal(
             conn,
             date=today,
             source=source,
             observations=observations,
             policy_snapshot=snapshot,
-            llm_model=settings.llm_model,
+            llm_model=journal_model,
         )
 
 

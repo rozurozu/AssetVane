@@ -22,6 +22,8 @@ import json
 import logging
 import re
 
+from app.services.llm_config import FaceNotConfiguredError
+
 logger = logging.getLogger(__name__)
 
 # polarity の値域（3 値 enum・NULL=未判定）。これ以外は破棄して NULL のまま（ADR-049）。
@@ -73,7 +75,13 @@ async def classify_polarities(articles: list[dict[str, object]]) -> dict[int, st
     # engine は import 鎖の先にあるため関数内で遅延 import して循環を断つ（theme_tagger と同流儀）。
     from app.advisor.engine import generate_once
 
-    content = await generate_once(messages, source="tagger")
+    # tagger 面が未設定なら沈黙 skip（enrichment 扱い＝通知しない・ADR-058 確定8）。polarity を
+    # 付けない側に倒し（空 dict＝NULL のまま）、設定後の夜に再判定される。
+    try:
+        content = await generate_once(messages, source="tagger")
+    except FaceNotConfiguredError:
+        logger.info("news_polarity: tagger 面が未設定のため polarity 判定を沈黙 skip（ADR-058）")
+        return {}
     valid_ids = {int(a["id"]) for a in articles}
     return _parse_polarity_response(content, valid_ids)
 

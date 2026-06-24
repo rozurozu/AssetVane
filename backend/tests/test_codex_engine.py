@@ -125,7 +125,7 @@ def test_drain_turn_collects_text_and_tool_runs(monkeypatch: pytest.MonkeyPatch)
         ("turn/completed", {"turn": {"status": "completed"}}),
     ]
     server = _server_with_events(events)
-    text, tool_runs = _run(server._drain_turn("th-1", source="chat"))
+    text, tool_runs = _run(server._drain_turn("th-1", source="chat", model="gpt-test"))
     assert text == "最終回答"
     assert tool_runs == [{"name": "get_signals", "args": {"code": "7203"}}]
 
@@ -146,7 +146,7 @@ def test_drain_turn_failed_status_raises(monkeypatch: pytest.MonkeyPatch) -> Non
     ]
     server = _server_with_events(events)
     with pytest.raises(CodexEngineError) as exc:
-        _run(server._drain_turn("th-1", source="chat"))
+        _run(server._drain_turn("th-1", source="chat", model="gpt-test"))
     # 一過性マーカーが乗っていること（リトライ判定が効く）。
     assert codex_engine._is_transient(str(exc.value))
 
@@ -157,7 +157,7 @@ def test_drain_turn_empty_text_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     events = [("turn/completed", {"turn": {"status": "completed"}})]
     server = _server_with_events(events)
     with pytest.raises(CodexEngineError):
-        _run(server._drain_turn("th-1", source="chat"))
+        _run(server._drain_turn("th-1", source="chat", model="gpt-test"))
 
 
 def test_drain_turn_eof_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,7 +165,7 @@ def test_drain_turn_eof_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(codex_engine, "_record_usage", lambda *a, **k: None)
     server = _server_with_events([("__eof__", {})])
     with pytest.raises(CodexEngineError):
-        _run(server._drain_turn("th-1", source="chat"))
+        _run(server._drain_turn("th-1", source="chat", model="gpt-test"))
 
 
 # --- run_turn / generate_once（_AppServer.run への委譲）---------------------
@@ -175,7 +175,9 @@ def test_run_turn_delegates_with_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     """run_turn は with_tools=True で _server.run に委譲し (text, tool_runs) を返す。"""
     captured: dict[str, Any] = {}
 
-    async def _fake_run(*, base: str, developer: str, prompt: str, with_tools: bool, source: str):
+    async def _fake_run(
+        *, base: str, developer: str, prompt: str, with_tools: bool, source: str, model: str = ""
+    ):
         captured.update(
             base=base, developer=developer, prompt=prompt, with_tools=with_tools, source=source
         )
@@ -224,7 +226,9 @@ def test_read_loop_eof_old_generation_does_not_clobber() -> None:
 def test_generate_once_delegates_without_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     """generate_once は with_tools=False で委譲し最終テキストだけ返す（dossier）。"""
 
-    async def _fake_run(*, base: str, developer: str, prompt: str, with_tools: bool, source: str):
+    async def _fake_run(
+        *, base: str, developer: str, prompt: str, with_tools: bool, source: str, model: str = ""
+    ):
         assert with_tools is False
         return "要約JSON", []
 

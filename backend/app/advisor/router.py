@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from app.advisor.codex_engine import CodexEngineError
 from app.advisor.core_prompt import CORE
-from app.advisor.engine import run_turn
+from app.advisor.engine import resolve_face, run_turn
 from app.advisor.journaling import (
     persist_journal_from_tool_runs,
     persist_trade_proposals_from_tool_runs,
@@ -28,10 +28,10 @@ from app.advisor.llm import CostGuardError
 from app.advisor.method_cards import METHOD_CARDS
 from app.advisor.prompt_builder import Message, ScreenContext, build_messages
 from app.advisor.tools.registry import CURRENT_PHASE
-from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
 from app.services import policy as policy_service
+from app.services.llm_config import FaceNotConfiguredError
 
 router = APIRouter(tags=["advisor"])
 
@@ -79,8 +79,17 @@ async def chat(req: ChatRequest) -> ChatResponse:
         recent_journal=recent,
     )
 
+    # 面（provider/model）は engine が source="chat" から解決する（ADR-058）。未設定なら明示エラー
+    # （対話チャットなので Discord 通知はしない＝ADR-018・確定8）。journal の監査 model にも使う。
     try:
-        # provider（openai/codex）は engine が source="chat" から解決する（plans・ADR-012）。
+        face = resolve_face("chat")
+    except FaceNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"chat 面の LLM が未設定です（/settings で provider/model を割り当て）: {exc}",
+        ) from exc
+
+    try:
         reply, tool_runs = await run_turn(messages, phase=CURRENT_PHASE, source="chat")
     except CostGuardError as exc:
         # 月額コスト上限超過（block）。frontend が detail を吹き出しに出す（spec §7.1・ADR-028）。
@@ -126,7 +135,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
                     date=today,
                     situation_briefing=None,  # 軸2 は画面コンテキストのみで監査 briefing は持たない
                     policy=policy,
-                    llm_model=settings.llm_model,
+                    llm_model=face.model,  # 面別に解決された実 model を監査に残す（ADR-058）
                 )
             # buy/sell 提案を起票（journal_id があれば紐付け・無ければ独立＝journal_id=None）。
             persist_trade_proposals_from_tool_runs(

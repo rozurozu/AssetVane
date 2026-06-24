@@ -18,6 +18,7 @@ import pytest
 from app.advisor.tools import handlers
 from app.advisor.tools.registry import CURRENT_PHASE, REGISTRY, openai_tools
 from app.quant.indicators import compute_indicators
+from app.services.llm_config import ResolvedFace
 
 # ---------------------------------------------------------------------------
 # Phase ゲート（openai_tools）
@@ -651,8 +652,30 @@ class _FakeResp:
     usage = _FakeUsage()
 
 
+# complete は engine が解決した face を受け取る（ADR-058）。get_client を fake に差し替えるので
+# base_url/api_key は実接続に使われない。
+_FACE = ResolvedFace(
+    face="chat", provider="openai", base_url="https://test.invalid/v1", api_key="k", model="m"
+)
+
+
+def _fake_client(create_fn: Any) -> Any:
+    """get_client が返す AsyncOpenAI 互換の最小スタブ（chat.completions.create だけ持つ）。"""
+
+    class _Completions:
+        create = staticmethod(create_fn)
+
+    class _Chat:
+        completions = _Completions()
+
+    class _Client:
+        chat = _Chat()
+
+    return _Client()
+
+
 def _patch_fake_openai(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """llm._client.chat.completions.create を成功モックに差し替える。"""
+    """llm.get_client を成功モック（chat.completions.create）に差し替える（ADR-058）。"""
     from app.advisor import llm
 
     calls: dict[str, Any] = {"created": 0}
@@ -661,7 +684,7 @@ def _patch_fake_openai(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         calls["created"] += 1
         return _FakeResp()
 
-    monkeypatch.setattr(llm._client.chat.completions, "create", _fake_create)
+    monkeypatch.setattr(llm, "get_client", lambda base_url, api_key: _fake_client(_fake_create))
     return calls
 
 
@@ -676,7 +699,7 @@ def test_complete_cost_guard_block(monkeypatch: pytest.MonkeyPatch, temp_db: Non
     calls = _patch_fake_openai(monkeypatch)
 
     with pytest.raises(llm.CostGuardError):
-        _run(llm.complete([{"role": "user", "content": "x"}]))
+        _run(llm.complete([{"role": "user", "content": "x"}], face=_FACE))
     assert calls["created"] == 0  # API は呼ばれない
 
 
@@ -698,7 +721,7 @@ def test_complete_cost_guard_warn_proceeds(monkeypatch: pytest.MonkeyPatch, temp
     monkeypatch.setattr(llm.repo, "insert_llm_usage", _fake_insert)
     calls = _patch_fake_openai(monkeypatch)
 
-    resp = _run(llm.complete([{"role": "user", "content": "x"}], source="nightly"))
+    resp = _run(llm.complete([{"role": "user", "content": "x"}], face=_FACE, source="nightly"))
     assert resp.content == "最終応答"
     assert resp.tool_calls == []
     assert calls["created"] == 1  # 続行して API を呼んだ
@@ -736,9 +759,9 @@ def test_complete_parses_tool_calls(monkeypatch: pytest.MonkeyPatch, temp_db: No
     async def _fake_create(**_: Any) -> _Resp:
         return _Resp()
 
-    monkeypatch.setattr(llm._client.chat.completions, "create", _fake_create)
+    monkeypatch.setattr(llm, "get_client", lambda base_url, api_key: _fake_client(_fake_create))
 
-    resp = _run(llm.complete([{"role": "user", "content": "x"}], tools=openai_tools(3)))
+    resp = _run(llm.complete([{"role": "user", "content": "x"}], face=_FACE, tools=openai_tools(3)))
     assert resp.content is None
     assert len(resp.tool_calls) == 1
     tc = resp.tool_calls[0]

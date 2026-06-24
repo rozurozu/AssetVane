@@ -34,8 +34,10 @@ async def summarize_business_description(text: str) -> str:
     """事業の内容の生テキストを LLM 単発で compact 要約する（ADR-056/020・grounding 保持）。
 
     advisor の CORE/POLICY は使わず最小指示＋本文を渡して generate_once を 1 回呼ぶ
-    （summarize_article と同じ流儀）。source="dossier"＝夜間のテキスト要約レーンの provider 設定
-    （ADR-012・provider_for）を流用する。engine は import 鎖の先にあるため遅延 import で循環を断つ。
+    （summarize_article と同じ流儀）。source="dossier"＝夜のテキスト要約レーンの面別 provider/model
+    設定（ADR-012/058・resolve_face）を流用する。engine は import 鎖の先にあるため遅延 import で
+    循環を断つ。dossier 面が未設定なら FaceNotConfiguredError が伝播し、呼び出し元（夜間ジョブ）が
+    runner 集約で通知する（ADR-018・確定8）。
 
     Args:
         text: EdinetAdapter が抜いた事業の内容（HTML strip 済みプレーンテキスト）。

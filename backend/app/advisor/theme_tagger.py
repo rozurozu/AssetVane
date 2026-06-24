@@ -31,6 +31,7 @@ from typing import Any
 from sqlalchemy import Connection
 
 from app.db import repo
+from app.services.llm_config import FaceNotConfiguredError
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,13 @@ async def classify_themes(
     # 循環 import を断つ（dossier.py と同じ流儀）。
     from app.advisor.engine import generate_once
 
-    content = await generate_once(messages, source="tagger")
+    # tagger 面が未設定なら沈黙 skip（enrichment 扱い＝通知しない・ADR-058 確定8）。タグを付けない
+    # 側に倒し（空リスト）、設定後の夜に再タグされる（cursor は自己回復）。
+    try:
+        content = await generate_once(messages, source="tagger")
+    except FaceNotConfiguredError:
+        logger.info("theme_tagger: tagger 面が未設定のためテーマ判定を沈黙 skip（ADR-058）")
+        return []
     return _parse_tagger_response(content, description_text)
 
 

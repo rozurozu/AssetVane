@@ -274,7 +274,7 @@ class _AppServer:
     # -- ターン実行 ----------------------------------------------------------
 
     async def run(
-        self, *, base: str, developer: str, prompt: str, with_tools: bool, source: str
+        self, *, base: str, developer: str, prompt: str, with_tools: bool, source: str, model: str
     ) -> tuple[str, list[dict[str, object]]]:
         """1 ターンを実行する（直列化＋一過性リトライ）。戻り値 (最終テキスト, tool_runs)。"""
         async with self._turn_lock:
@@ -289,6 +289,7 @@ class _AppServer:
                         prompt=prompt,
                         with_tools=with_tools,
                         source=source,
+                        model=model,
                     )
                 except CodexEngineError as exc:
                     last_exc = exc
@@ -308,10 +309,12 @@ class _AppServer:
             raise last_exc
 
     async def _one_turn(
-        self, *, base: str, developer: str, prompt: str, with_tools: bool, source: str
+        self, *, base: str, developer: str, prompt: str, with_tools: bool, source: str, model: str
     ) -> tuple[str, list[dict[str, object]]]:
         """thread/start → turn/start → turn/completed まで回し、テキストと tool_runs を返す。"""
         self._event_q = asyncio.Queue()
+        # 面別に解決された model（空なら codex 既定にフォールバック＝ADR-058）。
+        effective_model = model or settings.codex_model
         try:
             config: dict[str, object] = {}
             if with_tools:
@@ -324,7 +327,7 @@ class _AppServer:
                 "sandbox": settings.codex_sandbox,  # read-only（Advisor は書かない・ADR-005）
                 "approvalPolicy": "never",  # 非対話（承認待ちで固まらない）
                 "baseInstructions": base,  # CORE（ADR-015 の不変 base ペルソナ）
-                "model": settings.codex_model,
+                "model": effective_model,
                 "ephemeral": True,  # セッションを残さない
                 "cwd": tempfile.gettempdir(),  # read-only ゆえ作業ディレクトリは scratch で十分
                 "config": config,
@@ -341,12 +344,12 @@ class _AppServer:
                 "turn/start",
                 {"threadId": thread_id, "input": [{"type": "text", "text": prompt}]},
             )
-            return await self._drain_turn(str(thread_id), source=source)
+            return await self._drain_turn(str(thread_id), source=source, model=effective_model)
         finally:
             self._event_q = None
 
     async def _drain_turn(
-        self, thread_id: str, *, source: str
+        self, thread_id: str, *, source: str, model: str
     ) -> tuple[str, list[dict[str, object]]]:
         """turn/completed まで通知を読み、最終テキスト・tool_runs・usage を集約する。"""
         assert self._event_q is not None
@@ -395,14 +398,17 @@ class _AppServer:
             elif method == "error":
                 raise CodexEngineError(f"codex app-server エラー（{source}）: {params}")
 
-        _record_usage(token_usage, source=source)
+        _record_usage(token_usage, source=source, model=model)
         if not final_text:
             raise CodexEngineError(f"codex app-server が空応答を返しました（{source}）")
         return final_text, tool_runs
 
 
-def _record_usage(token_usage: dict[str, object] | None, *, source: str) -> None:
-    """thread/tokenUsage/updated の total から token を llm_usage に積む（cost_usd=0・ADR-028）。"""
+def _record_usage(token_usage: dict[str, object] | None, *, source: str, model: str) -> None:
+    """tokenUsage の total から token を llm_usage に積む（cost_usd=0・ADR-028/058）。
+
+    model は面別に解決された codex モデル（監査用）。ChatGPT サブスク経由のため cost_usd は常に 0。
+    """
     tokens_in: int | None = None
     tokens_out: int | None = None
     if isinstance(token_usage, dict):
@@ -415,7 +421,7 @@ def _record_usage(token_usage: dict[str, object] | None, *, source: str) -> None
             repo.insert_llm_usage(
                 conn,
                 source=source,
-                model=settings.codex_model,
+                model=model or settings.codex_model,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 cost_usd=0.0,  # ChatGPT サブスク経由は per-call の USD コストが無い
@@ -438,35 +444,37 @@ async def run_turn(
     *,
     phase: int,
     source: str,
+    model: str = "",
 ) -> tuple[str, list[dict[str, object]]]:
     """エージェント形（Tool ループ）を codex app-server で回す。service.run_tool_loop の代替。
 
-    （plans・ADR-014/018/025）
+    （plans・ADR-014/018/025/058）
 
     codex が MCP（FastAPI 内・[[mcp_server]]）越しに自前 Tool を呼ぶ。呼ばれた Tool の名前＋
     引数は app-server の item/completed イベントから回収する（結果値は載せない＝ADR-025）。
     phase はインターフェース整合のため受けるが、露出 Tool 集合は MCP サーバ側が CURRENT_PHASE で
-    固定している（openai_tools と同集合）。
+    固定している（openai_tools と同集合）。model は面別に解決された codex モデル（空なら
+    settings.codex_model フォールバック＝ADR-058）。
 
     戻り値: (最終テキスト, tool_runs)。tool_runs は [{name, args}]。
     """
     base, developer, prompt = _split_messages(messages)
     return await _server.run(
-        base=base, developer=developer, prompt=prompt, with_tools=True, source=source
+        base=base, developer=developer, prompt=prompt, with_tools=True, source=source, model=model
     )
 
 
-async def generate_once(messages: list[dict[str, object]], *, source: str) -> str:
+async def generate_once(messages: list[dict[str, object]], *, source: str, model: str = "") -> str:
     """単発テキスト形（Tool 無し）を codex app-server で生成する。llm.complete の代替。
 
-    （plans・ADR-014）
+    （plans・ADR-014/058）
 
     ドシエ要約（dossier.summarize_dossier）等、事前計算した事実を渡して文章/JSON を返すだけの
     用途。MCP は付けない（with_tools=False）。最終テキストをそのまま返す（呼び出し側が必要なら
-    JSON パースする）。
+    JSON パースする）。model は面別に解決された codex モデル（空なら settings.codex_model）。
     """
     base, developer, prompt = _split_messages(messages)
     text, _ = await _server.run(
-        base=base, developer=developer, prompt=prompt, with_tools=False, source=source
+        base=base, developer=developer, prompt=prompt, with_tools=False, source=source, model=model
     )
     return text

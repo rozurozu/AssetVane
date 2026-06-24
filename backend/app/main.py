@@ -30,6 +30,7 @@ from app.routers.dossier import router as dossier_router
 from app.routers.funds import router as funds_router
 from app.routers.general_news import router as general_news_router
 from app.routers.lead_lag import router as lead_lag_router
+from app.routers.llm_config import router as llm_config_router
 from app.routers.news import router as news_router
 from app.routers.portfolio import router as portfolio_router
 from app.routers.screening_filters import router as screening_filters_router
@@ -138,6 +139,8 @@ app.include_router(general_news_router)
 app.include_router(news_router)
 # 日米業種リードラグ（Phase 7／SIG-FIN-036-13）。GET /lead-lag（routers/lead_lag.py）。
 app.include_router(lead_lag_router)
+# LLM プロバイダ複数登録・面別 provider/model 設定（ADR-058）。/llm/providers・/llm/faces。
+app.include_router(llm_config_router)
 
 # codex 接続用 MCP（plans / ADR-012）。FastAPI 内に streamable HTTP の自前 Tool を立てる。
 # DB に触れるのは FastAPI だけ（ADR-005）を保ちつつ codex に Tool を渡す。
