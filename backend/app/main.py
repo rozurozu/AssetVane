@@ -29,6 +29,7 @@ from app.routers.diagnostics import router as diagnostics_router
 from app.routers.dossier import router as dossier_router
 from app.routers.funds import router as funds_router
 from app.routers.general_news import router as general_news_router
+from app.routers.jquants_config import router as jquants_config_router
 from app.routers.lead_lag import router as lead_lag_router
 from app.routers.llm_config import router as llm_config_router
 from app.routers.news import router as news_router
@@ -141,6 +142,8 @@ app.include_router(news_router)
 app.include_router(lead_lag_router)
 # LLM プロバイダ複数登録・面別 provider/model 設定（ADR-058）。/llm/providers・/llm/faces。
 app.include_router(llm_config_router)
+# J-Quants 接続設定（api_key/plan を DB+WebUI で管理・ADR-061）。GET/PUT /jquants/config。
+app.include_router(jquants_config_router)
 
 # codex 接続用 MCP（plans / ADR-012）。FastAPI 内に streamable HTTP の自前 Tool を立てる。
 # DB に触れるのは FastAPI だけ（ADR-005）を保ちつつ codex に Tool を渡す。

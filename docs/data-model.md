@@ -590,6 +590,19 @@ LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settin
 
 > chat provider とは独立（別エンドポイント・別 model・別キーが普通）。3 キー（base_url/api_key/model）が揃って初めて有効＝欠ければ静かに機能オフ（[ADR-006](decisions.md)/045）。`EMBEDDING_*`（base/key/model/dim）は env から撤去し DB へ移管（[ADR-059](decisions.md)）。`/settings` で編集する。
 
+### J-Quants 接続設定 — `jquants_config`（[ADR-061](decisions.md)・`0024_jquants_config`）
+
+**`jquants_config`**（J-Quants V2 接続・単一行運用＝`embedding_config` 同型）
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `id` | INTEGER PK | 1 行運用（id 固定） |
+| `api_key` | TEXT | V2 の `x-api-key`。平文（GET ではマスク）。空可（未設定） |
+| `plan` | TEXT | 契約プラン名 `free`/`light`/`standard`/`premium`（既定 `free`） |
+| `updated_at` | TEXT | ISO8601 |
+
+> `JQUANTS_API_KEY`/`JQUANTS_PLAN` は env から撤去し DB へ移管（[ADR-061](decisions.md)）。`/settings` の「J-Quants 設定」カードで編集（api_key は write-only＝空送信は据え置き）。スロットル間隔（秒）は `adapters/jquants.py` の `_PLAN_INTERVALS` がプラン名から決める（[ADR-008](decisions.md)・秒数は DB に持たない）。未登録（鍵空）なら取得バッチは `JQuantsError` で落ち通知される（[ADR-018](decisions.md)）。
+
 ---
 
 ## 6. 記録・運用

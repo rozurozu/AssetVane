@@ -79,7 +79,7 @@ def test_universe_by_date_upserts_and_advances_meta(temp_db, _patch, monkeypatch
         # 06-03・06-05 は開示なし（空）
     }
     fake = _FakeAdapter(by_date)
-    monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda: fake)
+    monkeypatch.setattr(fetch_financials, "build_jquants_adapter", lambda: fake)
 
     result = fetch_financials.run(full_backfill=False)
 
@@ -99,7 +99,7 @@ def test_idempotent(temp_db, _patch, monkeypatch) -> None:
     for _ in range(2):
         repo.upsert_fetch_meta("financials", "2026-06-03")  # 毎回 start=06-04 に戻す
         fake = _FakeAdapter(by_date)
-        monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda fake=fake: fake)
+        monkeypatch.setattr(fetch_financials, "build_jquants_adapter", lambda fake=fake: fake)
         fetch_financials.run(full_backfill=False)
     with get_engine().connect() as conn:
         count = conn.execute(select(func.count()).select_from(financials_table)).scalar()
@@ -121,7 +121,7 @@ def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
             return [_fin("72030", date)]
 
     fake = _CoverageAdapter()
-    monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda: fake)
+    monkeypatch.setattr(fetch_financials, "build_jquants_adapter", lambda: fake)
 
     result = fetch_financials.run(full_backfill=False)
     assert result.ok is True
@@ -139,7 +139,7 @@ def test_failure_returns_not_ok(temp_db, _patch, monkeypatch) -> None:
         def fetch_financials(self, code=None, date=None) -> list[dict]:  # noqa: A002
             raise JQuantsError("API 失敗")
 
-    monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda: _Boom())
+    monkeypatch.setattr(fetch_financials, "build_jquants_adapter", lambda: _Boom())
     result = fetch_financials.run(full_backfill=False)
     assert result.ok is False
     assert "API 失敗" in result.detail
@@ -151,7 +151,7 @@ def test_full_backfill_start_uses_backfill_years(temp_db, _patch, monkeypatch) -
     monkeypatch.setattr(settings, "backfill_years", 2)
     repo.upsert_fetch_meta("financials", "2026-06-04")  # full では無視される
     fake = _FakeAdapter({})
-    monkeypatch.setattr(fetch_financials, "JQuantsAdapter", lambda: fake)
+    monkeypatch.setattr(fetch_financials, "build_jquants_adapter", lambda: fake)
 
     result = fetch_financials.run(full_backfill=True)
     assert fake.calls[0] == "2024-06-05"  # today - 2 年

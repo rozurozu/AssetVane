@@ -14,3 +14,4 @@ export * from "./lead-lag";
 export * from "./funds";
 export * from "./us";
 export * from "./llm-config";
+export * from "./jquants-config";

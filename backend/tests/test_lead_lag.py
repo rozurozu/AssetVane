@@ -284,7 +284,7 @@ def test_get_lead_lag_after_job(client: Any) -> None:
     # JSON キーは "lambda"（Python 名 lambda_ のエイリアス）。
     assert "lambda" in meta
     assert meta["window"] == 60 and meta["k"] == 3
-    # free プランは遅延扱い（既定 settings.jquants_plan=free）。
+    # free プランは遅延扱い（jquants_config 未登録なので current_plan は既定 "free"・ADR-061）。
     assert meta["is_delayed"] is True
     assert meta["plan"] == "free"
 

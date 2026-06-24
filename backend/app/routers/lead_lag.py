@@ -18,9 +18,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Connection
 
-from app.config import settings
 from app.db import repo
 from app.db.engine import get_conn
+from app.services.jquants_config import current_plan
 
 router = APIRouter(tags=["lead-lag"])
 
@@ -76,9 +76,12 @@ def _parse_payload(raw: Any, code: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _is_delayed(as_of: str | None) -> bool:
-    """plan=free、または as_of が today から閾値以上離れていれば遅延扱い（低信頼バナー材料）。"""
-    if settings.jquants_plan == "free":
+def _is_delayed(as_of: str | None, plan: str) -> bool:
+    """plan=free、または as_of が today から閾値以上離れていれば遅延扱い（低信頼バナー材料）。
+
+    plan は DB（jquants_config）から解決した契約プラン名（ADR-061）。Free は 12 週遅延のハード遅延。
+    """
+    if plan == "free":
         return True
     if not as_of:
         return False
@@ -115,9 +118,10 @@ def get_lead_lag(conn: Connection = Depends(get_conn)) -> LeadLagResponse:
             )
         )
 
+    plan = current_plan(conn)
     meta = LeadLagMeta(
-        plan=settings.jquants_plan,
-        is_delayed=_is_delayed(resolved),
+        plan=plan,
+        is_delayed=_is_delayed(resolved, plan),
         model_as_of=resolved,
         ic=head_payload.get("ic"),
         hit_rate=head_payload.get("hit_rate"),

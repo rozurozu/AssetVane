@@ -1,7 +1,9 @@
 """環境変数の読み込みと検証。
 
-秘密情報（J-Quants / LLM のキー）は backend の .env のみに置く（ADR-005・architecture.md §7.1）。
-LLM / J-Quants のキーが無くても Phase 0 は起動できる（architecture.md §7.4）。
+秘密情報のうち LLM・embedding・J-Quants の接続（キー/プラン）は env ではなく DB へ移管し
+（ADR-058/059/061）、/settings の WebUI から編集する。env に残る秘密情報（Discord / EDINET 等）は
+backend の .env のみに置く（ADR-005・architecture.md §7.1）。キーが無くても Phase 0 は起動できる
+（architecture.md §7.4）。
 """
 
 from __future__ import annotations
@@ -20,7 +22,9 @@ class Settings(BaseSettings):
     )
 
     # --- J-Quants API (V2) --- Phase 0〜（実データ取得時に必須）
-    jquants_api_key: str = ""
+    # api_key と契約プラン名は DB（jquants_config・単一行）へ移管し /settings の WebUI から編集する
+    # （ADR-061・ADR-058/059 と同方針）。env には接続パラメータを残さない（鍵もプランも DB 一本）。
+    # スロットル間隔はプラン名から adapters/jquants.py の _PLAN_INTERVALS が決める（ADR-008）。
 
     # --- データベース ---
     database_path: str = "./data/assetvane.db"
@@ -96,11 +100,6 @@ class Settings(BaseSettings):
     batch_tz: str = "Asia/Tokyo"
     # 初回バックフィルで頭から取り直す年数（spec §3.4）。
     backfill_years: int = 2
-    # J-Quants の契約プラン名。許容値は free / light（ADR-008）。秒数（スロットル間隔）は env で
-    # お守りせず、アダプタ（adapters/jquants.py の _PLAN_INTERVALS）がプラン名から決める＝
-    # free→16s / light→1s。V2 にプランを返す API は無いため env でプラン名だけ指定する。
-    # プラン移行（実運用時に1回・ADR-008）は env のこの1語を変えるだけ（秒数のコード変更は不要）。
-    jquants_plan: str = "free"
 
     # --- IndexAdapter（主要指数・Phase 2〜・phase2-spec.md §3.1・ADR-010） ---
     # 複数ソースをフォールバック連鎖（優先順）。落ちたら次ソースを試す（grill 2026-06）。
@@ -234,11 +233,10 @@ class Settings(BaseSettings):
 
         未設定でも Phase 0 は動く。実データ取得や AI を使う段階で必要になる。
         """
-        # LLM・embedding の充足は env ではなく DB（面別設定 / embedding_config）で決まるため
-        # env_status からは外す（ADR-058/059）。画面は GET /llm/faces・/llm/embedding の configured
-        # フラグで設定状況を表示する。
+        # LLM・embedding・J-Quants の充足は env ではなく DB（面別設定 / embedding_config /
+        # jquants_config）で決まるため env_status からは外す（ADR-058/059/061）。画面は
+        # GET /llm/faces・/llm/embedding・/jquants/config の configured フラグで設定状況を表示する。
         return {
-            "jquants_api_key": {"set": bool(self.jquants_api_key), "required_from_phase": 0},
             "discord_webhook_url": {
                 "set": bool(self.discord_webhook_url),
                 "required_from_phase": 6,

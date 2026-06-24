@@ -20,7 +20,6 @@ from app.adapters.jquants import (
     _norm_date,
     _to_jq_code,
 )
-from app.config import settings
 
 
 class _FakeResp:
@@ -339,26 +338,34 @@ def test_get_with_retry_other_400_raises_plain_error(monkeypatch: pytest.MonkeyP
     assert not isinstance(exc_info.value, JQuantsCoverageError)
 
 
-def test_min_interval_free_plan(monkeypatch: pytest.MonkeyPatch) -> None:
-    """JQUANTS_PLAN=free でスロットル間隔が 16 秒（5 req/分対策・本番投入の実測根拠・ADR-008）。"""
-    monkeypatch.setattr(settings, "jquants_plan", "free")
-    adapter = JQuantsAdapter(api_key="dummy")
+def test_min_interval_free_plan() -> None:
+    """plan=free でスロットル間隔が 16 秒（5 req/分対策・本番投入の実測根拠・ADR-008/061）。"""
+    adapter = JQuantsAdapter(api_key="dummy", plan="free")
     assert adapter._min_interval == 16.0
 
 
-def test_min_interval_light_plan(monkeypatch: pytest.MonkeyPatch) -> None:
-    """JQUANTS_PLAN=light で 1 秒（60 req/分・緩いレート制限・ADR-008）。大文字・前後空白も吸収。"""
-    monkeypatch.setattr(settings, "jquants_plan", " Light ")
-    adapter = JQuantsAdapter(api_key="dummy")
+def test_min_interval_light_plan() -> None:
+    """plan=light で 1 秒（60 req/分・緩いレート制限・ADR-008）。大文字・前後空白も吸収。"""
+    adapter = JQuantsAdapter(api_key="dummy", plan=" Light ")
     assert adapter._min_interval == 1.0
 
 
+def test_min_interval_standard_premium_plans() -> None:
+    """standard=0.5s（120req/分）・premium=0.12s（500req/分）の概算間隔（ADR-061）。"""
+    assert JQuantsAdapter(api_key="dummy", plan="standard")._min_interval == 0.5
+    assert JQuantsAdapter(api_key="dummy", plan="premium")._min_interval == 0.12
+
+
+def test_min_interval_default_plan_is_free() -> None:
+    """plan 省略時は free（16 秒・最安全）（ADR-061・既定引数）。"""
+    assert JQuantsAdapter(api_key="dummy")._min_interval == 16.0
+
+
 def test_min_interval_unknown_plan_falls_back_to_free(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """未知プラン名は free（16 秒・最安全）に倒し warning を出す（ADR-008）。"""
-    monkeypatch.setattr(settings, "jquants_plan", "platinum")
+    """未知プラン名は free（16 秒・最安全）に倒し warning を出す（ADR-008/061）。"""
     with caplog.at_level(logging.WARNING):
-        adapter = JQuantsAdapter(api_key="dummy")
+        adapter = JQuantsAdapter(api_key="dummy", plan="platinum")
     assert adapter._min_interval == 16.0
-    assert any("未知の JQUANTS_PLAN" in r.message for r in caplog.records)
+    assert any("未知の J-Quants plan" in r.message for r in caplog.records)

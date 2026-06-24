@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import sys
 
-from app.adapters.jquants import JQuantsAdapter, JQuantsError
+from app.adapters.jquants import JQuantsError
 from app.db.engine import init_db
 from app.db.repo import upsert_daily_quotes, upsert_stocks
+from app.services.jquants_config import build_jquants_adapter
 
 # 既定の 3 銘柄（縦スライス検証用）。トヨタ / ソニーG / ソフトバンクG。
 DEFAULT_CODES = ["7203", "6758", "9984"]
@@ -24,7 +25,7 @@ DEFAULT_CODES = ["7203", "6758", "9984"]
 
 def backfill(codes: list[str]) -> int:
     init_db()
-    adapter = JQuantsAdapter()
+    adapter = build_jquants_adapter()
 
     print(f"▶ 銘柄マスタ取得: {codes}")
     stocks = adapter.fetch_master(codes)

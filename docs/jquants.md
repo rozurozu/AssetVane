@@ -29,7 +29,7 @@ AssetVane が日本株・ETF・財務データを取得する API。
 
 - **方式**: API キー方式（1 段階）。ダッシュボードの「設定 » API キー」で発行したキーを HTTP ヘッダー `x-api-key` に付けてリクエストする。
 - **旧 V1 の 2 段階方式（メール/PW → リフレッシュトークン → ID トークン）は廃止**。よって**夜間バッチでのトークン更新自動化は不要**になった。
-- API キーは `.env` で渡す（[.env.example](../.env.example)）。
+- API キーは env ではなく **DB（`jquants_config`）＋`/settings` の「J-Quants 設定」カード**で管理する（[ADR-061](decisions.md)）。`JquantsAdapter` には `services/jquants_config.build_jquants_adapter` が DB から解決して渡す（直結ハードコード禁止・[ADR-010](decisions.md)）。
 
 ### リクエスト例
 
@@ -60,7 +60,7 @@ curl -G https://api.jquants.com/v2/equities/bars/daily \
 - Free は **5 req/分**と厳しい。**銘柄ごとに 1 リクエストで全銘柄（約4000）を巡回すると初回バックフィルが理論上 13 時間超**になる。
 - 対策: 株価四本値 API は**日付指定で「その日の全銘柄」を一括取得できる**。✅ **実機確認済み（2026-06）**: `/v2/equities/bars/daily?date=20251215` に `code` を渡さず叩くと、その日の東証全銘柄 **4428 行（1 銘柄 1 行・ETF/REIT 含む）** が 1 リクエスト（＋ページング）で返った。これを使い「日付ループ（営業日 × 1 リクエスト）」でバックフィルすれば、**全銘柄でも 2 年で約 500 リクエスト**に激減する（銘柄ループの 13 時間超に対し）。実装は `JQuantsAdapter.fetch_daily_quotes_by_date(date)`（Phase 1 の初回バックフィルの入口）。
 - ⚠️ **本番投入の実走で判明（2026-06-04・Phase 1 全銘柄バックフィル）**:
-  - **スロットルは 16 秒以上にする**。13 秒（4.6 req/分）は 60 秒の窓境界で 5 req に達し、4 営業日処理後に約 5 分ブロックを誘発して `fetch_quotes` が死んだ。**16 秒なら任意の 60 秒窓で最大 4 req** に収まり確実に下回る。間隔は **env のプラン名 `JQUANTS_PLAN`（`free`/`light`）から決まる**＝`free`→16s / `light`→1s（秒数はコードの `adapters/jquants.py` の `_PLAN_INTERVALS` が持ち、env で秒数をお守りしない・ADR-008）。V2 にプランを返す API は無い（§1 のレート表は手動参照）ので env でプラン名だけ指定する。
+  - **スロットルは 16 秒以上にする**。13 秒（4.6 req/分）は 60 秒の窓境界で 5 req に達し、4 営業日処理後に約 5 分ブロックを誘発して `fetch_quotes` が死んだ。**16 秒なら任意の 60 秒窓で最大 4 req** に収まり確実に下回る。間隔は **DB のプラン名（`jquants_config.plan`＝`free`/`light`/`standard`/`premium`）から決まる**＝`free`→16s / `light`→1s / `standard`→0.5s / `premium`→0.12s（秒数はコードの `adapters/jquants.py` の `_PLAN_INTERVALS` が持ち、DB/env で秒数をお守りしない・[ADR-008](decisions.md)/[ADR-061](decisions.md)）。プランは `/settings` の「J-Quants 設定」カードで選ぶ（V2 にプランを返す API は無い＝§1 のレート表は手動参照）。
   - **429 リトライは約 5 分ブロックを跨げる長さにする**。旧設定（最大 16 秒バックオフ）では乗り切れなかった。現在は合計待機が約 6 分（2+4+8+16+32+64+120+120 秒・`_MAX_RETRIES=8`・上限 120 秒）に達するまで耐えてからブロックを諦める（`adapters/jquants.py`・ADR-018）。
   - **スロットル時刻はプロセス共有（クラス変数）**。夜間バッチはジョブごとにアダプタを作り直すため、インスタンス変数だと `sync_master → fetch_quotes` の境界で 2 連続バーストが出てブロックを誘発する。
   - これらにより **2 年フルバックフィルの所要は約 133 分（16 秒 × 約 500 営業日）**。Free 遅延の都合で末尾 ~12 週（約 60 営業日）は空レスを吸収しつつ進む。

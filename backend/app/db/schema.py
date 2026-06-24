@@ -742,3 +742,18 @@ embedding_config = Table(
     Column("dim", Integer),  # 任意（0/NULL=未設定）
     Column("updated_at", String),  # ISO8601
 )
+
+# J-Quants V2 接続（ADR-061・0024_jquants_config・単一行運用＝embedding_config 同型）。
+# api_key とプラン名を env から DB へ移管し、/settings の WebUI から編集する（ADR-058/059）。
+# api_key は平文（ADR-001 単一ユーザー・LAN 内前提・GET ではマスク）。plan は契約プラン名
+# （free/light/standard/premium）で、スロットル間隔（秒）は adapters/jquants.py の _PLAN_INTERVALS
+# がプラン名から決める（ADR-008・秒数を DB に持たない）。env シードはしない＝初回は未登録（鍵空）で
+# 設定するまでバッチは JQuantsError で落ちる（LLM 面未設定と同じ割り切り・ADR-018）。
+jquants_config = Table(
+    "jquants_config",
+    metadata,
+    Column("id", Integer, primary_key=True),  # 1 行運用（id 固定）
+    Column("api_key", String, nullable=False, server_default=""),  # 平文・GET でマスク
+    Column("plan", String, nullable=False, server_default="free"),  # free/light/standard/premium
+    Column("updated_at", String),  # ISO8601
+)

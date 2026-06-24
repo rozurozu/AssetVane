@@ -11,12 +11,13 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
-from app.adapters.jquants import JQuantsAdapter, JQuantsCoverageError
+from app.adapters.jquants import JQuantsCoverageError
 from app.batch import calendar, state
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
+from app.services.jquants_config import build_jquants_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ def run(*, full_backfill: bool = False) -> JobResult:
     stopped = False
     frontier: str | None = None  # 契約範囲の前線に達して打ち切った日付（あれば）
     try:
-        adapter = JQuantsAdapter()
+        adapter = build_jquants_adapter()
         for d in calendar.candidate_days(start, today):
             # full_backfill は数年分の営業日を 1 ジョブで回す（≒数時間）。ジョブ境界停止（ADR-036）
             # だけだと長時間止まらないため、営業日境界でも停止要求を見て中断する（ADR-036 追補）。

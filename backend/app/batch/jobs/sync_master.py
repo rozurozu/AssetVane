@@ -15,11 +15,11 @@ import logging
 
 from sqlalchemy import select
 
-from app.adapters.jquants import JQuantsAdapter
 from app.batch.runner import JobResult
 from app.db import repo
 from app.db.engine import get_engine
 from app.db.schema import daily_quotes, stocks
+from app.services.jquants_config import build_jquants_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def run() -> JobResult:
     例外（JQuantsError 等）は握って JobResult(ok=False) で返す（runner が Discord 通知）。
     """
     try:
-        adapter = JQuantsAdapter()
+        adapter = build_jquants_adapter()
 
         # まず全件一括取得を試す（1〜数 req）。
         all_rows = adapter.fetch_master_all()

@@ -1,5 +1,6 @@
 "use client";
 
+import { JquantsSettings } from "@/components/settings/JquantsSettings";
 import { LlmSettings } from "@/components/settings/LlmSettings";
 import { Card } from "@/components/ui/Card";
 import { StatusBlock } from "@/components/ui/StatusBlock";
@@ -11,7 +12,6 @@ import {
   runBatch,
   runEdinetDifferential,
   sendDiscordTest,
-  sendJquantsTest,
   stopBatch,
 } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
@@ -19,14 +19,14 @@ import { useEffect, useState } from "react";
 
 // Settings 画面（screens.md #14・phase6-spec §6・ADR-005/007/036）。
 // 通知は backend（Discord）が送るので UI は最小: backend 健全性（/health）の env 詳細表示 ＋
-// 夜間バッチ手動起動（差分/全銘柄フル）＋進捗ポーリング＋停止（ADR-036）＋ 外部依存の疎通テスト
-// （Discord / J-Quants）。Webhook URL・しきい値は .env 固定で UI から編集しない（L-25）。
+// LLM プロバイダ・面別割当（ADR-058）＋ J-Quants 接続（api_key/plan＝ADR-061）＋ 夜間バッチ手動起動
+// （差分/全銘柄フル）＋進捗ポーリング＋停止（ADR-036）＋ Discord 疎通テスト。Discord Webhook URL・
+// しきい値は .env 固定で UI から編集しない（L-25）。
 
 // env キーの日本語ラベル（順序固定・config.py env_status のキーに対応）。
-// LLM のキーは env ではなく DB（面別設定）へ移したので env_status からは外れた（ADR-058）。
-// LLM の設定状況は下の「面別 LLM 割当」カード（GET /llm/faces の configured）で見る。
+// LLM・J-Quants のキーは env ではなく DB へ移したので env_status からは外れた（ADR-058/059/061）。
+// 設定状況は LLM=下の「面別 LLM 割当」、J-Quants=下の「J-Quants 設定」カードの configured で見る。
 const ENV_LABELS: { key: string; label: string }[] = [
-  { key: "jquants_api_key", label: "J-Quants API キー" },
   { key: "discord_webhook_url", label: "Discord Webhook URL（通知）" },
   { key: "edinet_api_key", label: "EDINET API キー（テーマタグ段階C）" },
 ];
@@ -149,29 +149,6 @@ export default function SettingsPage() {
     }
   }
 
-  // J-Quants 疎通テスト（認証ピング・DB 非依存・ADR-008/011/036）。
-  const [jquantsBusy, setJquantsBusy] = useState(false);
-  const [jquantsNote, setJquantsNote] = useState<string | null>(null);
-
-  async function onJquantsTest() {
-    setJquantsBusy(true);
-    setJquantsNote(null);
-    try {
-      const r = await sendJquantsTest();
-      if (!r.configured) {
-        setJquantsNote("J-Quants API キーが未設定なのだ（backend の .env を確認するのだ）。");
-      } else if (!r.ok) {
-        setJquantsNote(`疎通に失敗したのだ（${r.detail}）。`);
-      } else {
-        setJquantsNote(`疎通OK ✅ ${r.detail}`);
-      }
-    } catch (e) {
-      setJquantsNote(e instanceof Error ? e.message : String(e));
-    } finally {
-      setJquantsBusy(false);
-    }
-  }
-
   const running = batchStatus?.running ?? false;
 
   return (
@@ -179,9 +156,9 @@ export default function SettingsPage() {
       <div className="mb-3">
         <div className="font-semibold text-[20px] tracking-[-0.4px]">Settings</div>
         <div className="mt-0.5 text-[12px] text-ink-muted">
-          backend の健全性と環境変数の充足、LLM
-          プロバイダ・面別割当、夜間バッチの手動起動、外部依存の 疎通テスト。J-Quants/EDINET/Discord
-          の秘密は backend の .env、LLM のキーは DB（下の LLM プロバイダ）で管理する（ADR-058）。
+          backend の健全性と環境変数の充足、LLM プロバイダ・面別割当、J-Quants
+          接続、夜間バッチの手動起動、外部依存の疎通テスト。EDINET/Discord の秘密は backend の
+          .env、LLM・J-Quants のキーは DB（下の各カード）で管理する（ADR-058/061）。
         </div>
       </div>
 
@@ -223,6 +200,9 @@ export default function SettingsPage() {
 
         {/* LLM プロバイダ複数登録・面別 provider/model 設定（ADR-058） */}
         <LlmSettings />
+
+        {/* J-Quants 接続設定（api_key/plan を DB+WebUI で管理＋疎通テスト・ADR-061） */}
+        <JquantsSettings />
 
         {/* 夜間バッチ手動起動（差分/全銘柄フル）＋進捗＋停止（ADR-036） */}
         <Card title="夜間バッチ">
@@ -309,23 +289,6 @@ export default function SettingsPage() {
             {discordBusy ? "送信中…" : "テスト通知を送る"}
           </button>
           {discordNote && <p className="mt-2 text-[12px] text-ink-muted">{discordNote}</p>}
-        </Card>
-
-        {/* J-Quants 疎通テスト（認証ピング・DB 非依存・ADR-008/011/036） */}
-        <Card title="J-Quants 疎通">
-          <p className="mb-2 text-[12px] text-ink-muted">
-            J-Quants V2 に認証ピングを 1 発投げて、API キーが通って株価データを取れるか確認する。 DB
-            には触らないので、初回デプロイ前の確認に使えるのだ。
-          </p>
-          <button
-            type="button"
-            onClick={onJquantsTest}
-            disabled={jquantsBusy}
-            className="rounded-md border border-hairline bg-surface-2 px-3 py-1.5 text-[13px] font-medium hover:bg-surface-3 disabled:opacity-50"
-          >
-            {jquantsBusy ? "確認中…" : "疎通を確認する"}
-          </button>
-          {jquantsNote && <p className="mt-2 text-[12px] text-ink-muted">{jquantsNote}</p>}
         </Card>
       </div>
     </>

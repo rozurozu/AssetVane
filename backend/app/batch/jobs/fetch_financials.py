@@ -14,12 +14,13 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
-from app.adapters.jquants import JQuantsAdapter, JQuantsCoverageError
+from app.adapters.jquants import JQuantsCoverageError
 from app.batch import calendar
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
+from app.services.jquants_config import build_jquants_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def run(*, full_backfill: bool = False) -> JobResult:
         with get_engine().connect() as conn:
             known_codes = set(repo.list_stock_codes(conn))
 
-        adapter = JQuantsAdapter()
+        adapter = build_jquants_adapter()
         for d in calendar.candidate_days(start, today):
             try:
                 rows = adapter.fetch_financials(date=d)

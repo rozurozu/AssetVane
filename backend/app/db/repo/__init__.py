@@ -50,6 +50,10 @@ from app.db.repo.fx_us_holdings import (
     upsert_fx_rates,
     upsert_us_holding,
 )
+from app.db.repo.jquants_config import (
+    get_jquants_config,
+    upsert_jquants_config,
+)
 from app.db.repo.lead_lag import (
     get_daily_ohlc_by_codes,
     get_index_closes_by_symbols,
@@ -334,4 +338,6 @@ __all__ = [
     "faces_using_provider",
     "get_embedding_config",
     "upsert_embedding_config",
+    "get_jquants_config",
+    "upsert_jquants_config",
 ]

@@ -2,7 +2,8 @@
 
 discord-test（batch/notify.send_test_notification）と同じ思想で、外部依存に 1 発だけ投げて
 **生死を確認する脳**。CLI（make）/REST（/diagnostics/...）/WebUI の複数の起動口から同じ関数を
-叩く（ADR-011）。DB には一切触らない（疎通確認は読み取りのみ）。
+叩く（ADR-011）。接続値（api_key/plan）は env から DB（jquants_config）へ移管したため（ADR-061）、
+解決のため `conn` を受け取り DB を読む（DB に触れるのは FastAPI＝ADR-005）。
 
 J-Quants は `fetch_master(["7203"])` で「`x-api-key` 認証が通る＋1 銘柄返る」を確認する認証ピング
 （V2・ADR-008）。鮮度（Free の12週遅延でどこまで取れるか）は前線まで日付を遡る探索になり「ピング」
@@ -15,8 +16,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from app.adapters.jquants import JQuantsAdapter, JQuantsError
-from app.config import settings
+from sqlalchemy import Connection
+
+from app.adapters.jquants import JQuantsError
+from app.services.jquants_config import build_jquants_adapter, resolve_jquants_config
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +38,21 @@ class JquantsCheckResult:
     detail: str
 
 
-def check_jquants() -> JquantsCheckResult:
-    """J-Quants V2 に認証ピングを 1 発投げて生死を返す（DB 非依存・ADR-008/011）。
+def check_jquants(conn: Connection) -> JquantsCheckResult:
+    """J-Quants V2 に認証ピングを 1 発投げて生死を返す（接続値は DB 解決・ADR-008/011/061）。
 
-    キー未設定なら configured=False で即返す。`fetch_master(["7203"])` を叩き、JQuantsError
-    （キー不正・HTTP 失敗等）も予期せぬ例外も握って ok=False＋要旨に畳む。成功時は会社名と件数を
-    detail に載せる（Pi の WebUI から初回デプロイ前に疎通を確かめられるように）。
+    キー未設定（jquants_config 未登録）なら configured=False で即返す。`fetch_master(["7203"])` を
+    叩き、JQuantsError（キー不正・HTTP 失敗等）も予期せぬ例外も握って ok=False＋要旨に畳む。成功時は
+    会社名と件数を detail に載せる（Pi の WebUI から初回デプロイ前に疎通を確かめられるように）。
     """
-    if not settings.jquants_api_key:
+    if resolve_jquants_config(conn) is None:
         logger.warning("J-Quants 未設定のため疎通テストをスキップ")
-        return JquantsCheckResult(configured=False, ok=False, detail="JQUANTS_API_KEY が未設定です")
+        return JquantsCheckResult(
+            configured=False, ok=False, detail="J-Quants API キーが未設定です"
+        )
 
     try:
-        rows = JQuantsAdapter().fetch_master(["7203"])
+        rows = build_jquants_adapter(conn).fetch_master(["7203"])
     except JQuantsError as exc:
         return JquantsCheckResult(configured=True, ok=False, detail=str(exc)[:200])
     except Exception as exc:  # noqa: BLE001 — 疎通確認は例外を握って結果に畳む（ADR-018）

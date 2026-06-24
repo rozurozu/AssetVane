@@ -72,7 +72,7 @@ def test_skips_empty_days_and_advances_fetch_meta(temp_db, _patch, monkeypatch) 
         "2026-06-05": [_quote("72030", "2026-06-05")],
     }
     fake = _FakeAdapter(by_date)
-    monkeypatch.setattr(fetch_quotes, "JQuantsAdapter", lambda: fake)
+    monkeypatch.setattr(fetch_quotes, "build_jquants_adapter", lambda: fake)
 
     result = fetch_quotes.run(full_backfill=False)
 
@@ -98,7 +98,7 @@ def test_failure_returns_not_ok(temp_db, _patch, monkeypatch) -> None:
         def fetch_daily_quotes_by_date(self, d: str) -> list[dict]:
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(fetch_quotes, "JQuantsAdapter", lambda: _Boom())
+    monkeypatch.setattr(fetch_quotes, "build_jquants_adapter", lambda: _Boom())
     result = fetch_quotes.run(full_backfill=False)
     assert result.ok is False
     assert "boom" in result.detail
@@ -126,7 +126,7 @@ def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
             return [_quote("72030", d)]
 
     fake = _CoverageAdapter()
-    monkeypatch.setattr(fetch_quotes, "JQuantsAdapter", lambda: fake)
+    monkeypatch.setattr(fetch_quotes, "build_jquants_adapter", lambda: fake)
 
     result = fetch_quotes.run(full_backfill=False)
 
@@ -149,7 +149,7 @@ def test_full_backfill_start_uses_backfill_years(temp_db, _patch, monkeypatch) -
     repo.upsert_fetch_meta("daily_quotes", "2026-06-04")
 
     fake = _FakeAdapter({})  # 全日空（非営業日扱い）でも start 範囲が広いことを確認
-    monkeypatch.setattr(fetch_quotes, "JQuantsAdapter", lambda: fake)
+    monkeypatch.setattr(fetch_quotes, "build_jquants_adapter", lambda: fake)
 
     result = fetch_quotes.run(full_backfill=True)
     # 最初の呼び出し日が 2024-06-05（today=2026-06-05 の 2 年前・平日）であること。
@@ -172,7 +172,7 @@ def test_stop_mid_dayloop_breaks(temp_db, _patch, monkeypatch) -> None:
             return rows
 
     fake = _StoppingAdapter({"2026-06-03": [_quote("7203", "2026-06-03")]})
-    monkeypatch.setattr(fetch_quotes, "JQuantsAdapter", lambda: fake)
+    monkeypatch.setattr(fetch_quotes, "build_jquants_adapter", lambda: fake)
 
     state.begin(full_backfill=False)  # request_stop は running 中のみ受理されるため
     try:

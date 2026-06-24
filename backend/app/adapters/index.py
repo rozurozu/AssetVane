@@ -417,9 +417,12 @@ class JQuantsIndexSource(IndexSource):
             raise IndexAdapterError(f"JQuantsIndexSource は ^TPX 専用です: {symbol}")
         fetch = self._fetch_topix
         if fetch is None:
-            from app.adapters.jquants import JQuantsAdapter  # 遅延 import（API キーを要するため）
+            # 接続値（api_key/plan）は DB から解決するため services のファクトリを通す（ADR-061）。
+            # adapter→service は層逆行だが、API キーを要する fallback 専用パスの**局所例外**として
+            # 遅延 import に閉じ込める（既存の遅延 import と同方針・本パスは未注入時のみ）。
+            from app.services.jquants_config import build_jquants_adapter
 
-            fetch = JQuantsAdapter().fetch_topix
+            fetch = build_jquants_adapter().fetch_topix
         rows = fetch(from_, to)
         return [{"symbol": "^TPX", "date": r["date"], "close": r["close"]} for r in rows]
 

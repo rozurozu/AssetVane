@@ -4,15 +4,17 @@ cron/CLI と同じ脳を別口で叩く（ADR-011「1つの脳・複数の起動
 ~10s 以内に完結するため、batch のような非同期受付ではなく**同期**で結果フラグを返し、Web UI が
 即座に成否を表示できる。
 - POST /diagnostics/discord-test … Discord 疎通（send_test_notification・enabled/sent）。
-- POST /diagnostics/jquants-test … J-Quants V2 認証ピング（check_jquants・DB 非依存）。
+- POST /diagnostics/jquants-test … J-Quants 認証ピング（check_jquants・接続値は DB 解決・ADR-061）。
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import Connection
 
 from app.batch.notify import send_test_notification
+from app.db.engine import get_conn
 from app.services.diagnostics import check_jquants
 
 router = APIRouter(tags=["diagnostics"])
@@ -41,11 +43,11 @@ def discord_test() -> DiscordTestResponse:
 
 
 @router.post("/diagnostics/jquants-test", response_model=JquantsTestResponse)
-def jquants_test() -> JquantsTestResponse:
-    """J-Quants V2 に認証ピングを 1 発投げ、結果を返す（DB 非依存・ADR-008/011/036）。
+def jquants_test(conn: Connection = Depends(get_conn)) -> JquantsTestResponse:
+    """J-Quants V2 に認証ピングを 1 発投げ、結果を返す（接続値は DB 解決・ADR-008/011/036/061）。
 
     未設定（configured=false）も疎通失敗（ok=false）も例外にせず 200 で結果フラグとして返す
     （Web UI が両者を区別して表示するため）。実体・判定は services/diagnostics.py が持つ。
     """
-    result = check_jquants()
+    result = check_jquants(conn)
     return JquantsTestResponse(configured=result.configured, ok=result.ok, detail=result.detail)

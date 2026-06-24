@@ -6,7 +6,8 @@
   （フォールバック）。
 - 補完対象 code が無ければ ok=True・rows=0（同期不要）。
 - 例外（JQuantsError 等）は握って ok=False の JobResult を返す（runner が Discord 通知）。
-JQuantsAdapter を patch して実 HTTP に出ない。temp_db で本物 DB に触れない（testing-strategy）。
+build_jquants_adapter を patch し実 HTTP に出ない。
+temp_db で本物 DB に触れない（testing-strategy）。
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ def _master_row(code: str) -> dict[str, object]:
 
 def test_run_upserts_via_fetch_master_all(temp_db) -> None:
     """fetch_master_all に結果があれば stocks を UPSERT し ok=True（主経路）。"""
-    with patch("app.batch.jobs.sync_master.JQuantsAdapter") as MockAdapter:
+    with patch("app.batch.jobs.sync_master.build_jquants_adapter") as MockAdapter:
         instance = MockAdapter.return_value
         instance.fetch_master_all.return_value = [_master_row("72030"), _master_row("67580")]
 
@@ -42,7 +43,7 @@ def test_run_upserts_via_fetch_master_all(temp_db) -> None:
 
 def test_run_filters_rows_without_code(temp_db) -> None:
     """fetch_master_all が code 欠落行を混ぜても弾いて UPSERT する（PK NULL 防止）。"""
-    with patch("app.batch.jobs.sync_master.JQuantsAdapter") as MockAdapter:
+    with patch("app.batch.jobs.sync_master.build_jquants_adapter") as MockAdapter:
         instance = MockAdapter.return_value
         instance.fetch_master_all.return_value = [
             _master_row("72030"),
@@ -62,7 +63,7 @@ def test_run_fallback_completes_missing_codes(temp_db) -> None:
     # daily_quotes に code を撒き、stocks には無い状態を作る（補完対象）。
     repo.upsert_daily_quotes([{"code": "99990", "date": "2026-06-01", "close": 100.0}])
 
-    with patch("app.batch.jobs.sync_master.JQuantsAdapter") as MockAdapter:
+    with patch("app.batch.jobs.sync_master.build_jquants_adapter") as MockAdapter:
         instance = MockAdapter.return_value
         instance.fetch_master_all.return_value = []  # 全件取得は使えない
         instance.fetch_master.return_value = [_master_row("99990")]
@@ -83,7 +84,7 @@ def test_run_fallback_no_missing_is_noop(temp_db) -> None:
     repo.upsert_stocks([_master_row("72030")])
     repo.upsert_daily_quotes([{"code": "72030", "date": "2026-06-01", "close": 100.0}])
 
-    with patch("app.batch.jobs.sync_master.JQuantsAdapter") as MockAdapter:
+    with patch("app.batch.jobs.sync_master.build_jquants_adapter") as MockAdapter:
         instance = MockAdapter.return_value
         instance.fetch_master_all.return_value = []
 
@@ -97,7 +98,7 @@ def test_run_fallback_no_missing_is_noop(temp_db) -> None:
 
 def test_run_adapter_error_returns_failure(temp_db) -> None:
     """例外（JQuantsError 等）は握って ok=False の JobResult を返す（ADR-018）。"""
-    with patch("app.batch.jobs.sync_master.JQuantsAdapter") as MockAdapter:
+    with patch("app.batch.jobs.sync_master.build_jquants_adapter") as MockAdapter:
         instance = MockAdapter.return_value
         instance.fetch_master_all.side_effect = JQuantsError("接続失敗")
 
