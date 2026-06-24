@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Connection, and_, func, select
+from sqlalchemy import Connection, and_, delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.engine import get_engine
@@ -60,6 +60,25 @@ def get_us_stock(conn: Connection, symbol: str) -> dict[str, Any] | None:
     """米株 1 銘柄を symbol で引く（get_stock 同型・無ければ None）。"""
     row = conn.execute(select(us_stocks).where(us_stocks.c.symbol == symbol)).mappings().first()
     return dict(row) if row else None
+
+
+def delete_us_stock(symbol: str) -> int:
+    """米株 1 銘柄とその全関連行を削除する（過去混入したゴミ symbol の掃除用・ADR-055）。
+
+    `us_stocks`／`us_daily_quotes`／`us_valuation_snapshots` と fundamentals 巡回カーソル
+    `fetch_meta['us_fundamentals:<symbol>']` を消す。過去に列ズレで混入した日本株コード
+    （18330/18350）等を巡回対象から外すための一回掃除。`sync_us_universe` の UPSERT は削除を
+    伴わないため別途消す必要がある（directory からの差分同期＝上場廃止掃除は別 TODO）。W1（自前
+    begin）で 1 トランザクションに束ねる。戻り値は `us_stocks` から消えた行数（0＝元々存在しない）。
+    """
+    with get_engine().begin() as conn:
+        conn.execute(delete(us_daily_quotes).where(us_daily_quotes.c.symbol == symbol))
+        conn.execute(
+            delete(us_valuation_snapshots).where(us_valuation_snapshots.c.symbol == symbol)
+        )
+        conn.execute(delete(fetch_meta).where(fetch_meta.c.source == f"us_fundamentals:{symbol}"))
+        result = conn.execute(delete(us_stocks).where(us_stocks.c.symbol == symbol))
+        return result.rowcount or 0
 
 
 # ----- 米株 OHLCV・バリュエーション（fetch/calc/screen ＝ウェーブ2・ADR-031/039/048） -----

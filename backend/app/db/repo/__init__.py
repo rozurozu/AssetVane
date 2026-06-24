@@ -149,6 +149,7 @@ from app.db.repo.themes import (
     upsert_stock_themes,
 )
 from app.db.repo.us_equity import (
+    delete_us_stock,
     get_latest_us_closes,
     get_us_quotes,
     get_us_stock,
@@ -284,6 +285,7 @@ __all__ = [
     "upsert_us_stocks",
     "list_us_stocks",
     "get_us_stock",
+    "delete_us_stock",
     "upsert_us_daily_quotes",
     "upsert_us_valuation_snapshots",
     "get_us_quotes",

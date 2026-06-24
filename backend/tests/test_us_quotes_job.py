@@ -19,20 +19,27 @@ from app.db.engine import get_engine
 
 
 class _FakeAdapter:
-    """fetch_quotes だけ持つ fake（symbol→行リスト or 例外）。呼ばれた from_/to を記録する。"""
+    """fetch_quotes_bulk だけ持つ fake（symbol→行 or 例外）。呼ばれたバッチと from_/to を記録。
+
+    バルク契約（ADR-055）に合わせ、例外指定の symbol は raise せず dict から落とす（部分欠損＝応答に
+    含まれない）。`calls` は 1 バッチ＝1 要素で `(symbols タプル, from_, to)` を記録する。
+    """
 
     def __init__(self, by_symbol: dict[str, Any]) -> None:
         self._by_symbol = by_symbol
-        self.calls: list[tuple[str, str | None, str | None]] = []
+        self.calls: list[tuple[tuple[str, ...], str | None, str | None]] = []
 
-    def fetch_quotes(
-        self, symbol: str, from_: str | None = None, to: str | None = None
-    ) -> list[dict[str, Any]]:
-        self.calls.append((symbol, from_, to))
-        val = self._by_symbol[symbol]
-        if isinstance(val, Exception):
-            raise val
-        return val
+    def fetch_quotes_bulk(
+        self, symbols: list[str], from_: str | None = None, to: str | None = None
+    ) -> dict[str, list[dict[str, Any]]]:
+        self.calls.append((tuple(symbols), from_, to))
+        out: dict[str, list[dict[str, Any]]] = {}
+        for symbol in symbols:
+            val = self._by_symbol[symbol]
+            if isinstance(val, Exception):
+                continue  # 単数版の raise を「dict から落とす＝部分欠損」へ翻訳（バルク契約）
+            out[symbol] = val
+        return out
 
 
 def _q(symbol: str, date: str, close: float) -> dict[str, Any]:
@@ -176,10 +183,10 @@ def test_stop_mid_batch_breaks_loop(temp_db, monkeypatch) -> None:
     monkeypatch.setattr(settings, "us_quotes_batch_size", 1)
 
     class _StoppingAdapter(_FakeAdapter):
-        def fetch_quotes(self, symbol, from_=None, to=None):  # type: ignore[override]
-            rows = super().fetch_quotes(symbol, from_, to)
-            state.request_stop()  # 1 件目取得中に WebUI から停止が来た状況を模す
-            return rows
+        def fetch_quotes_bulk(self, symbols, from_=None, to=None):  # type: ignore[override]
+            out = super().fetch_quotes_bulk(symbols, from_, to)
+            state.request_stop()  # 1 バッチ目取得中に WebUI から停止が来た状況を模す
+            return out
 
     fake = _StoppingAdapter(
         {
@@ -194,7 +201,9 @@ def test_stop_mid_batch_breaks_loop(temp_db, monkeypatch) -> None:
     finally:
         state.end()
 
-    assert [c[0] for c in fake.calls] == ["AAA"]  # BBB/CCC のバッチ先頭で break
+    assert [c[0] for c in fake.calls] == [
+        ("AAA",)
+    ]  # BBB/CCC のバッチ先頭で break（1 バッチ=1 銘柄）
     assert result.ok is True
     assert "停止により中断" in result.detail
     with get_engine().connect() as conn:

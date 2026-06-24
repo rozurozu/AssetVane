@@ -230,3 +230,82 @@ def test_facade_all_sources_fail_raises() -> None:
     adapter = UsEquityAdapter(sources=[_NotSupportedSource()])
     with pytest.raises(UsEquityAdapterError):
         adapter.fetch_quotes("AAPL")
+
+
+# ── バルク取得（fetch_quotes_bulk・ADR-055 当初設計「yf.download バッチ一括」への収束） ──────
+def _bulk_df(symbols: list[str]) -> pd.DataFrame:
+    """group_by='ticker' の yf.download 戻り（columns=(ticker,種別) の 2 階層）を模す fake DF。"""
+    tuples: list[tuple[str, str]] = []
+    data_row1: list[float] = []
+    data_row2: list[float] = []
+    for i, s in enumerate(symbols):
+        base = 100.0 + i * 10
+        for kind, v in (
+            ("Open", base),
+            ("High", base + 5),
+            ("Low", base - 5),
+            ("Close", base + 1),
+            ("Volume", 1_000_000.0 + i),
+            ("Adj Close", base + 0.5),
+        ):
+            tuples.append((s, kind))
+            data_row1.append(v)
+            data_row2.append(v + 1)
+    cols = pd.MultiIndex.from_tuples(tuples)
+    return pd.DataFrame(
+        [data_row1, data_row2],
+        index=pd.to_datetime(["2026-05-28", "2026-05-29"]),
+        columns=cols,
+    )
+
+
+def test_fetch_quotes_bulk_splits_multiindex() -> None:
+    """MultiIndex を symbol 別に分解し内部列名へ正規化する（_rows_from_df 再利用）。"""
+    df = _bulk_df(["AA", "AAPL"])
+    source = YahooUsEquitySource(fetch_quotes_bulk=lambda _syms, _f, _t: df)
+    result = source.fetch_quotes_bulk(["AA", "AAPL"], "2026-05-28", "2026-05-29")
+
+    assert set(result) == {"AA", "AAPL"}
+    assert len(result["AA"]) == 2
+    first = result["AAPL"][0]
+    assert first["symbol"] == "AAPL"
+    assert first["date"] == "2026-05-28"
+    assert first["close"] == pytest.approx(111.0)  # base=110, Close=base+1
+    assert first["adj_close"] == pytest.approx(110.5)
+
+
+def test_fetch_quotes_bulk_partial_missing_drops_symbol() -> None:
+    """応答に含まれない symbol は dict から落ちる（部分欠損・取れた symbol だけ返す）。"""
+    df = _bulk_df(["AA"])  # AAPL は応答に無い
+    source = YahooUsEquitySource(fetch_quotes_bulk=lambda _syms, _f, _t: df)
+    result = source.fetch_quotes_bulk(["AA", "AAPL"], "2026-05-28", "2026-05-29")
+    assert set(result) == {"AA"}  # AAPL は黙って drop（呼び出し側が欠損を数える）
+
+
+def test_fetch_quotes_bulk_empty_raises() -> None:
+    """バッチ全滅（None/空 DataFrame）は UsEquityAdapterError（単数版と契約対称・ADR-018）。"""
+    source = YahooUsEquitySource(fetch_quotes_bulk=lambda _syms, _f, _t: None)
+    with pytest.raises(UsEquityAdapterError):
+        source.fetch_quotes_bulk(["AA", "AAPL"], "2026-05-28", "2026-05-29")
+
+
+def test_fetch_universe_rejects_numeric_symbol() -> None:
+    """純数字 symbol（過去に列ズレで混入した日本株コード）を弾く（ADR-055 再発防止）。"""
+    nasdaq = (
+        "Symbol|Security Name|Market Category|Test Issue|Financial Status|Round Lot Size|ETF|NextShares\n"  # noqa: E501 — NASDAQ Trader の実ヘッダ（分割で可読性低下）
+        "AAPL|Apple Inc. - Common Stock|Q|N|N|100|N|N\n"
+        "18330|1488184|Q|N|N|100|N|N\n"  # 純数字＝過去の列ズレ混入を模す
+        "File Creation Time: 0601202612:00|||||||\n"
+    )
+    other = (
+        "ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|Test Issue|NASDAQ Symbol\n"
+        "File Creation Time: 0601202612:00|||||||\n"
+    )
+
+    def fetch(path: str) -> str:
+        return nasdaq if "nasdaqlisted" in path else other
+
+    adapter = UsEquityAdapter(sources=[], directory_fetch=fetch)
+    by_symbol = {r["symbol"] for r in adapter.fetch_universe()}
+    assert "AAPL" in by_symbol
+    assert "18330" not in by_symbol  # 純数字は入口で弾かれる

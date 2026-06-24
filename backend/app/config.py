@@ -154,9 +154,11 @@ class Settings(BaseSettings):
     # fundamentals 低頻度ローテ巡回の夜あたり処理本数の天井（ADR-033 同型・約 6000 銘柄を約 7 夜で
     # 一周。`.info` が重いので暴走防止の上限として持つ）。後続ウェーブの fetch_us_fundamentals 用。
     us_fundamentals_nightly_max: int = 900
-    # OHLCV 取得（fetch_us_quotes）でティッカーを何銘柄ずつまとめて取得→UPSERT するかの分割幅。
-    # yf.download をシンボル単位で回しつつ、一定数ごとに UPSERT を区切ることで巨大トランザクション
-    # と長時間メモリ滞留を避ける（差分カーソルは全銘柄共通＝fetch_quotes 同型・ADR-018）。
+    # OHLCV 取得（fetch_us_quotes）で 1 回の yf.download に一括投入するシンボル数（1 リクエスト＝
+    # 1 バッチ＝1 UPSERT トランザクション・ADR-055 バルク化）。per-symbol 取得（約 3 時間）を
+    # 桁で短縮する。値を上げるほど HTTP 往復・スロットル待ちは減るが 1 リクエストが重くなりタイム
+    # アウト/レート制限を誘発しうるため、まず 50 で運用し実測で 100→200 と段階的に上げる（差分
+    # カーソルは全銘柄共通＝fetch_quotes 同型・ADR-018）。
     us_quotes_batch_size: int = 50
 
     # --- FxAdapter（FX レート・Phase 7(B-2)・ADR-010/057） ---
