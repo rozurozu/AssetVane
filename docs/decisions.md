@@ -200,7 +200,7 @@
 ## ADR-021: 開発・本番ともコンテナ（Docker Compose）で動かす
 
 - **状況**: 母艦はラズパイ（Linux）。backend（FastAPI/Python）と frontend（Next.js/Node）の 2 言語ランタイムが要る。ホスト直インストールだと「手元では動くがラズパイで動かない」環境差が起きやすい。
-- **決定**: 開発・本番とも **Docker Compose** で動かす。backend・frontend を各コンテナにし、**SQLite はファイルなので DB コンテナは作らず** named volume（`data/`）で永続化する。
+- **決定**: 開発・本番とも **Docker Compose** で動かす。backend・frontend を各コンテナにし、**SQLite はファイルなので DB コンテナは作らず**ボリュームで永続化する（dev=named volume `assetvane-db`／prod=bind mount `./data:/data`。当初この文面は「named volume（`data/`）」と曖昧で dev の実体は bind mount だったが、2026-06-22 の DB 破損を機に [ADR-060](#adr-060-dev-の-sqlite-は-named-volume-に載せるmacos-docker-desktop-の-bind-mount-では-walmmap-が壊れるためprod-は-bind-mount-維持) で dev/prod の置き場を確定した）。
 - **理由**:
   - Linux ネイティブの Docker はカーネル共有で実行時オーバーヘッドが実用上無視でき、**ラズパイでも性能は落ちない**（VM ではない）。
   - **dev/prod parity**。2 言語ランタイムの再現を Compose に固定でき、環境構築の差異を消せる。
@@ -896,3 +896,21 @@
   - **embedding を chat provider のエントリ参照で持つ** → 埋め込みキーが chat と違う場合に困り、provider 削除で embedding が壊れる。独立の単一行に倒した。
 - **段階**: **実装済み（2026-06-24・backend＋frontend）**。`0023_llm_reasoning_embedding`（`llm_face_config.reasoning_effort`・`embedding_config`）・`services/llm_config`（`ResolvedFace.reasoning_effort`・`resolve_embedding_config`）・`advisor/llm.py`/`codex_engine.py`/`engine.py`（reasoning 配線）・`adapters/embedding.py`（DB 解決・`embedding_model()`）・`routers/llm_config.py`（face reasoning・`/llm/embedding`・`/llm/codex/test`）・frontend（reasoning ドロップダウン・codex 状態カード・embedding カード）。env から `EMBEDDING_BASE_URL`/`API_KEY`/`MODEL`/`DIM` を撤去。pytest green。
 - **関連**: [ADR-058](#adr-058-llm-プロバイダ面別-providermodel-設定を-env-から-dbwebuisettings-へ移管する)（基盤＝本 ADR の前提）・[ADR-045](#adr-045-ニュース意味検索embedding-は段階導入vec0-は後回しまずは-blobsqlite-で素朴に)（embedding 意味検索）・[ADR-032](#adr-032-codex-接続は-mcpcodex-app-serverapicodex-を面別切替自動フォールバックなし)（codex 接続）・[ADR-006](#adr-006-重い計算は別pc-ラズパイは推論のみ)（未設定は静かに機能オフ）・[ADR-018](#adr-018-llm-障害時はフォールバックで縮退し夜間は通知して当日をスキップする)（未設定面）・[data-model.md](data-model.md)・[api.md](api.md)。
+
+## ADR-060: dev の SQLite は named volume に載せる（macOS Docker Desktop の bind mount では WAL/mmap が壊れるため）・prod は bind mount 維持
+
+- **状況/問題**: 2026-06-22、`data/assetvane.db` が**構造破損**した。`PRAGMA integrity_check` が「2nd reference to page（複数 b-tree がページを二重参照＝フリーリスト破損）」「Rowid out of order」を多数報告し、`us_daily_quotes` は `count(*)` すら `database disk image is malformed` で読めず、`us_valuation_snapshots` 実値 0 ＝ 米株スクリーナーが死んだ。原因の見立ては、6/15〜17 の米株全 10919 銘柄バックフィル（数時間の重い書き込み）が、**macOS Docker Desktop の bind mount（gRPC-FUSE/virtiofs）上の SQLite WAL/mmap** の相性問題でページ破損を誘発したこと（`batch.lock` 残留・DB mtime が 6/17 で停止していたのと整合）。`fcntl.flock` 方式の `batch.lock`（`batch/lock.py`・FD 寿命に紐付く）は犯人ではない。[ADR-002](#adr-002-データベースは-sqlitewal-モード) の WAL も [ADR-021](#adr-021-開発本番ともコンテナdocker-composeで動かす) の Compose 運用も前提のまま、**dev の DB 置き場だけが地雷**だった（[ADR-021](#adr-021-開発本番ともコンテナdocker-composeで動かす) の文面は「named volume（`data/`）」と曖昧で、実際の `compose.yaml` は bind mount `./data:/data` ＝ドリフトしていた）。
+- **決定**:
+  - **dev（`compose.yaml`）の DB を bind mount `./data:/data` → named volume `assetvane-db:/data` に変更する**。named volume は Docker VM 内の ext4（ネイティブ fs）に載るため FUSE 層を挟まず、SQLite の WAL/mmap が前提とするファイルロック・mmap セマンティクスが正しく満たされる。`docker compose down` では消えず、消すときは明示的に `docker compose down -v` か `docker volume rm`。
+  - **prod（`compose.prod.yaml`・ラズパイ）は bind mount `./data:/data` を維持する**。ネイティブ Linux で FUSE 問題が無く、かつ [ADR-017](#adr-017-sqlite-を定期バックアップする) のバックアップがホストから素ファイルとして `/data/backups` を読める必要があるため。
+  - **named volume はホストから素ファイルで見えない**ので、バックアップ/復元は Makefile の `make db-backup`（`VACUUM INTO` → `docker compose cp`）/`make db-restore` で行う（[ADR-017](#adr-017-sqlite-を定期バックアップする) の dev 版）。
+  - **「ホスト直 dev」フォールバック（`uv run uvicorn ...`）は compose とは別 DB（`./data/assetvane.db`）になる**ことを許容する（同じ DB を共有しない・dev での確認は原則 compose 側に寄せる）。
+- **理由**:
+  - bind mount は便利（ホストから素見えで開発しやすい）だが、macOS の gRPC-FUSE/virtiofs は SQLite の WAL/mmap セマンティクスを完全には満たさず、重い書き込みで**実際にページ破損が起きた**。dev の利便性より DB 健全性を優先する。
+  - prod は環境が違う（ネイティブ Linux・FUSE なし）ので同じ対処は不要で、むしろ [ADR-017](#adr-017-sqlite-を定期バックアップする) のバックアップ可視性のため bind mount が望ましい。**環境差に応じて dev/prod で割る**のが妥当。
+  - named volume の不可視性は Makefile のバックアップ/復元で吸収でき、運用上の不便は限定的。
+- **代替案**:
+  - **bind mount のまま WAL を切って `journal_mode=DELETE` にする** → 書き込み性能が落ち、[ADR-002](#adr-002-データベースは-sqlitewal-モード) の WAL 前提（読み書き同時・夜間バッチの連続書き込み）を崩す。却下。
+  - **dev も prod も named volume に統一する** → prod はネイティブ Linux で FUSE 問題が無く、named volume にするとホストからバックアップが見えにくくなり [ADR-017](#adr-017-sqlite-を定期バックアップする) の運用が複雑化する。dev/prod で割れるのを許容して却下。
+- **段階**: **実装済み（2026-06-22）**。`compose.yaml`（dev を named volume `assetvane-db` 化＋破損経緯コメント）・`compose.prod.yaml`（bind mount 維持）・`Makefile`（`db-backup`/`db-restore`）。破損 DB は host の `sqlite3 .recover` で復旧し `integrity_check=ok`（`lost_and_found` 無し＝孤児行ゼロ）・ユーザーデータと JP `daily_quotes` 193 万行は完全温存・失ったのは再取得可能な US 市場データのみ（`alembic_version=0021` 維持）。
+- **関連**: [ADR-002](#adr-002-データベースは-sqlitewal-モード)（SQLite WAL・破損を起こした前提）・[ADR-021](#adr-021-開発本番ともコンテナdocker-composeで動かす)（Compose 運用・本 ADR が dev の DB 置き場の曖昧記述を named volume に確定）・[ADR-017](#adr-017-sqlite-を定期バックアップする)（バックアップ・prod が bind mount を保つ理由＝可視性／dev は `make db-backup`）・[ADR-005](#adr-005-db-に触れるのは-fastapi-のみnext-は-rest-経由)（DB に触れるのは FastAPI だけ）・[ADR-006](#adr-006-機械学習の学習は別-pcラズパイは推論のみ)（環境差で割る思想）。
