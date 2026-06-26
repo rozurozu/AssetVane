@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from app.advisor.tools import handlers
 from app.advisor.tools.schemas import (
+    AdjustCardWeightArgs,
     FetchNewsArgs,
     GetDossierArgs,
     GetFinancialsArgs,
@@ -34,6 +35,7 @@ from app.advisor.tools.schemas import (
     InvestigateStockArgs,
     ListThemesArgs,
     OptimizePortfolioArgs,
+    ProposeCardArgs,
     ProposeTradeArgs,
     ScreenByThemeArgs,
     ScreenStocksArgs,
@@ -47,8 +49,9 @@ from app.advisor.tools.schemas import (
 # 現在の投入フェーズ（段2 の dispatch が openai_tools(phase) に渡す）。
 # Phase 4（Stock Dossier）＋ADR-034（一般ニュース）に加え、Phase 7（日米業種リードラグ・
 # SIG-FIN-036-13）まで実装済み。これを 7 にすることで以下が チャット・夜の分析AI に露出する:
-#   min_phase=4（9 本）: get_fund_holdings / get_dossier / investigate_stock / get_news_context /
-#                        propose_trade / fetch_news / get_general_news / search_news / search_cards
+#   min_phase=4（11 本）: get_fund_holdings / get_dossier / investigate_stock / get_news_context /
+#                        propose_trade / fetch_news / get_general_news / search_news /
+#                        search_cards / propose_card / adjust_card_weight
 #   min_phase=7（7 本）: get_lead_lag / get_us_valuation / screen_us_valuation / list_themes /
 #                        get_stock_themes / screen_by_theme / get_us_holdings
 CURRENT_PHASE: int = 7
@@ -304,6 +307,29 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(SearchCardsArgs),
         handler=handlers.handle_search_cards,
+        min_phase=4,
+    ),
+    "propose_card": ToolDef(
+        name="propose_card",
+        description=(
+            "会話から得た**非自明な知識**を知識カードとして起票する（承認制・ADR-062）。"
+            "市場文脈・手法の解釈・外部情報の要約など、後の分析に再利用したい知識を残すときに呼ぶ。"
+            "body（知識の中身）必須、title/when_to_apply/level/source は任意。起票は draft で、"
+            "人間が /cards で確認・active 化する（毎回は出さない・残す価値があるときだけ）。"
+        ),
+        parameters=_schema(ProposeCardArgs),
+        handler=handlers.handle_propose_card,
+        min_phase=4,
+    ),
+    "adjust_card_weight": ToolDef(
+        name="adjust_card_weight",
+        description=(
+            "既存の知識カードの重要度 weight を変える提案を起票する（承認制・ADR-062）。"
+            "古い/信頼度が下がったカードを下げる等。card_id は search_cards の id、weight は >0。"
+            "承認するまで反映しない。削除はせず weight を下げて生かす。"
+        ),
+        parameters=_schema(AdjustCardWeightArgs),
+        handler=handlers.handle_adjust_card_weight,
         min_phase=4,
     ),
     # --- Phase 7（日米業種リードラグ・SIG-FIN-036-13）---

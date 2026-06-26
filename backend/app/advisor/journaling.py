@@ -23,7 +23,12 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy import Connection
 
-from app.advisor.tools.schemas import ProposeTradeArgs, coerce_policy_change
+from app.advisor.tools.schemas import (
+    AdjustCardWeightArgs,
+    ProposeCardArgs,
+    ProposeTradeArgs,
+    coerce_policy_change,
+)
 from app.db import repo
 from app.services.policy import normalize_policy_row
 
@@ -230,3 +235,83 @@ def persist_trade_proposals_from_tool_runs(
         inserted.append(proposal_id)
 
     return inserted
+
+
+def _extract_args(tool_runs: list[dict[str, Any]], name: str) -> list[dict[str, Any]]:
+    """tool_runs から指定 Tool の args（dict）を全件抽出する（ADR-062 追補・複数可）。"""
+    return [
+        run["args"]
+        for run in tool_runs
+        if run.get("name") == name and isinstance(run.get("args"), dict)
+    ]
+
+
+def _card_title_or_fallback(title: str | None, body: str) -> str:
+    """title 空なら本文先頭で代替する（ADR-062 追補・router の _fallback_title と同型）。"""
+    stripped_title = (title or "").strip()
+    if stripped_title:
+        return stripped_title
+    stripped_body = (body or "").strip()
+    first = stripped_body.splitlines()[0] if stripped_body else ""
+    return first[:40] or "（無題）"
+
+
+def persist_card_ops_from_tool_runs(
+    conn: Connection,
+    *,
+    tool_runs: list[dict[str, Any]],
+    date: str,
+) -> dict[str, list[int]]:
+    """tool_runs から propose_card / adjust_card_weight を承認制で起票する（ADR-062 追補・W2）。
+
+    - propose_card → 知識カードを draft で起票（人間が /cards で active 化＝ADR-009）。埋め込みは
+      夜間 embed_cards が拾う（tx 内で await しない＝C-6）。
+    - adjust_card_weight → weight 変更を proposals(kind='card_weight') へ承認制で起票。
+      /proposals で承認すると resolve_proposal が body の card_id/weight を反映する。
+    commit はしない＝呼び出し側（router/nightly）が begin を所有し journal/proposal と束ねる（W2）。
+    戻り値: {"cards": [draft id...], "weight_proposals": [proposal id...]}。
+    """
+    card_ids: list[int] = []
+    for raw in _extract_args(tool_runs, "propose_card"):
+        try:
+            a = ProposeCardArgs.model_validate(raw)
+        except ValidationError:
+            logger.warning("propose_card: 引数が不正（%s）。起票せずスキップ", raw)
+            continue
+        if not a.body.strip():
+            continue
+        level = a.level if a.level in ("stock", "sector", "market", "general") else None
+        cid = repo.insert_knowledge_card_tx(
+            conn,
+            title=_card_title_or_fallback(a.title, a.body),
+            body=a.body,
+            when_to_apply=a.when_to_apply,
+            status="draft",
+            level=level,
+            source=a.source,
+        )
+        card_ids.append(cid)
+
+    weight_pids: list[int] = []
+    for raw in _extract_args(tool_runs, "adjust_card_weight"):
+        try:
+            a = AdjustCardWeightArgs.model_validate(raw)
+        except ValidationError:
+            logger.warning("adjust_card_weight: 引数が不正（%s）。起票せずスキップ", raw)
+            continue
+        if a.weight <= 0:
+            continue
+        if repo.get_knowledge_card(conn, a.card_id) is None:
+            logger.warning("adjust_card_weight: カード %s が無い。起票せずスキップ", a.card_id)
+            continue
+        pid = repo.insert_proposal(
+            conn,
+            created_date=date,
+            kind="card_weight",
+            body=json.dumps({"card_id": a.card_id, "weight": a.weight}, ensure_ascii=False),
+            rationale=a.reason,
+            status="pending",
+        )
+        weight_pids.append(pid)
+
+    return {"cards": card_ids, "weight_proposals": weight_pids}

@@ -25,6 +25,7 @@ from sqlalchemy import Connection
 from app.advisor.core_prompt import CORE
 from app.advisor.engine import resolve_face, run_turn
 from app.advisor.journaling import (
+    persist_card_ops_from_tool_runs,
     persist_journal_from_tool_runs,
     persist_trade_proposals_from_tool_runs,
 )
@@ -126,6 +127,8 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
     persist_trade_proposals_from_tool_runs(
         conn, tool_runs=tool_runs, date=today, journal_id=journal_id
     )
+    # 知識カードの起票/weight 変更を起票（ADR-062 追補・同一トランザクション）。
+    persist_card_ops_from_tool_runs(conn, tool_runs=tool_runs, date=today)
 
     # 縮退した晩（例外なし・observations 空＝実質何もしなかった）は journal を書かず理由を返す。
     # submit_journal 未呼び出しでも reply 非空なら到達しない（フォールバック健全＝ADR-018）。

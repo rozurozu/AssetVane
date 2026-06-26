@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -24,6 +25,8 @@ from app.advisor.tools.registry import CURRENT_PHASE, REGISTRY, openai_tools
 from app.db import repo
 from app.services.llm_config import FaceNotConfiguredError, ResolvedFace, resolve_face
 from app.services.policy import DEFAULT_POLICY, encode_policy_field, normalize_policy_row
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # (a) Tool dispatch ループ（spec §4.2）
@@ -234,6 +237,33 @@ def resolve_proposal(
                 source="chat",
                 journal_id=proposal.get("journal_id"),
             )
+
+    # approved かつ card_weight なら知識カードの weight を適用（ADR-062 追補・承認制の変更）。
+    if decision == "approved" and proposal.get("kind") == "card_weight":
+        _apply_card_weight(conn, proposal.get("body"))
+
+
+def _apply_card_weight(conn: Connection, body_raw: object) -> None:
+    """proposals.body（{card_id, weight}）から知識カードの weight を適用する（ADR-062 追補）。
+
+    壊れた body・不正な値・weight<=0 は適用せず skip（落とさない・ADR-018）。
+    """
+    try:
+        data = json.loads(body_raw) if isinstance(body_raw, str) else body_raw
+    except (TypeError, ValueError):
+        logger.warning("card_weight: body が JSON でない。適用せず skip")
+        return
+    if not isinstance(data, dict):
+        return
+    try:
+        card_id = int(data["card_id"])
+        weight = float(data["weight"])
+    except (KeyError, TypeError, ValueError):
+        logger.warning("card_weight: card_id/weight が不正。適用せず skip")
+        return
+    if weight <= 0:
+        return
+    repo.update_card_weight(conn, card_id, weight)
 
 
 def _parse_change(body_raw: object) -> dict[str, object] | None:

@@ -129,7 +129,8 @@ def list_cards_needing_embedding(
 # --- 書き込み ---------------------------------------------------------------
 
 
-def insert_knowledge_card(
+def insert_knowledge_card_tx(
+    conn: Connection,
     *,
     title: str,
     body: str,
@@ -144,32 +145,42 @@ def insert_knowledge_card(
     weight: float = 1.0,
     source: str | None = None,
 ) -> int:
-    """カードを 1 件挿入し新 id を返す（W1・自前 begin）。created_at/updated_at は now。
+    """カードを 1 件挿入し新 id を返す（W2・commit しない＝呼び出し側が begin を所有）。
+
+    チャット tool の persister（propose_card）が journal/proposal と同一トランザクションで束ねる
+    （nested begin を避ける）ために conn 受け取り版を持つ。created_at/updated_at は now。
+    """
+    now = datetime.now(UTC).isoformat()
+    result = conn.execute(
+        insert(knowledge_cards).values(
+            title=title,
+            body=body,
+            when_to_apply=when_to_apply,
+            status=status,
+            level=level,
+            sector17_code=sector17_code,
+            theme=theme,
+            linked_signal_type=linked_signal_type,
+            quant_note=quant_note,
+            always_inject=always_inject,
+            weight=weight,
+            source=source,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    pk = result.inserted_primary_key
+    return int(pk[0]) if pk else 0
+
+
+def insert_knowledge_card(**fields: Any) -> int:
+    """カードを 1 件挿入し新 id を返す（W1・自前 begin＝insert_knowledge_card_tx を包む）。
 
     挿入は冪等でない（POST ごとに 1 行）。埋め込みは別途（保存後に best-effort で本文ベースの合成
     テキストを埋め込む＝await を書き込みトランザクション外に置く・ADR-045/C-6 の規律）。
     """
-    now = datetime.now(UTC).isoformat()
-    stmt = insert(knowledge_cards).values(
-        title=title,
-        body=body,
-        when_to_apply=when_to_apply,
-        status=status,
-        level=level,
-        sector17_code=sector17_code,
-        theme=theme,
-        linked_signal_type=linked_signal_type,
-        quant_note=quant_note,
-        always_inject=always_inject,
-        weight=weight,
-        source=source,
-        created_at=now,
-        updated_at=now,
-    )
     with get_engine().begin() as conn:
-        result = conn.execute(stmt)
-    pk = result.inserted_primary_key
-    return int(pk[0]) if pk else 0
+        return insert_knowledge_card_tx(conn, **fields)
 
 
 def update_knowledge_card(card_id: int, values: dict[str, Any]) -> None:
@@ -264,7 +275,7 @@ def search_knowledge_cards(
 
 
 def set_card_weight(card_id: int, weight: float) -> int:
-    """カードの weight を更新し、更新行数を返す（W1・手動編集＋承認済みのチャット tool が使う）。
+    """カードの weight を更新し、更新行数を返す（W1・自前 begin＝テスト/単発用）。
 
     weight は重要度（>0・既定 1.0）。古い/信頼度が下がったカードを下げて生かす（ADR-062 追補）。
     """
@@ -275,6 +286,15 @@ def set_card_weight(card_id: int, weight: float) -> int:
             .values(weight=weight, updated_at=datetime.now(UTC).isoformat())
         )
     return result.rowcount
+
+
+def update_card_weight(conn: Connection, card_id: int, weight: float) -> None:
+    """カードの weight を更新（W2・commit しない＝resolve_proposal の承認適用が begin 所有）。"""
+    conn.execute(
+        update(knowledge_cards)
+        .where(knowledge_cards.c.id == card_id)
+        .values(weight=weight, updated_at=datetime.now(UTC).isoformat())
+    )
 
 
 def update_card_embedding(

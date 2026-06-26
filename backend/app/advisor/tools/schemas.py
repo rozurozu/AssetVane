@@ -255,6 +255,32 @@ class SearchCardsArgs(_ToolArgs):
     limit: int | None = None
 
 
+class ProposeCardArgs(_ToolArgs):
+    """propose_card の引数（ADR-062 追補・チャットからカードを承認制で起票）。
+
+    AI が会話から知識カードを起票する。body 必須、ほかは任意（title/when_to_apply/level/source）。
+    起票は draft で、人間が /cards で active 化する（本番助言に効く操作は人間が最終承認・ADR-009）。
+    """
+
+    body: str
+    title: str | None = None
+    when_to_apply: str | None = None
+    level: str | None = None
+    source: str | None = None
+
+
+class AdjustCardWeightArgs(_ToolArgs):
+    """adjust_card_weight の引数（ADR-062 追補・weight 変更を承認制で提案）。
+
+    既存カードの重要度 weight（>0）を変える提案を起票する（古い/信頼度低を下げる等）。card_id は
+    search_cards の結果の id。承認するまで反映しない（proposals 経由・後で直接化しやすい設計）。
+    """
+
+    card_id: int
+    weight: float
+    reason: str
+
+
 class GetGeneralNewsArgs(_ToolArgs):
     """get_general_news の引数（ADR-034・引数なし）。
 

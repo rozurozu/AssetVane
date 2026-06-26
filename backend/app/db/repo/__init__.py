@@ -58,6 +58,7 @@ from app.db.repo.knowledge_cards import (
     delete_knowledge_card,
     get_knowledge_card,
     insert_knowledge_card,
+    insert_knowledge_card_tx,
     list_active_knowledge_cards,
     list_cards_needing_embedding,
     list_knowledge_cards,
@@ -65,6 +66,7 @@ from app.db.repo.knowledge_cards import (
     set_card_weight,
     set_knowledge_card_status,
     update_card_embedding,
+    update_card_weight,
     update_knowledge_card,
 )
 from app.db.repo.lead_lag import (
@@ -359,9 +361,11 @@ __all__ = [
     "list_cards_needing_embedding",
     "search_knowledge_cards",
     "insert_knowledge_card",
+    "insert_knowledge_card_tx",
     "update_knowledge_card",
     "set_knowledge_card_status",
     "set_card_weight",
+    "update_card_weight",
     "delete_knowledge_card",
     "update_card_embedding",
 ]

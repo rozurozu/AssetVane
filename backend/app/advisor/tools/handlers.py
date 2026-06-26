@@ -25,6 +25,7 @@ from app.adapters.news import fetch_news
 from app.advisor.dossier import investigate_stock
 from app.advisor.journaling import resolve_trade_target
 from app.advisor.tools.schemas import (
+    AdjustCardWeightArgs,
     FetchNewsArgs,
     GetAssetOverviewArgs,
     GetDossierArgs,
@@ -42,6 +43,7 @@ from app.advisor.tools.schemas import (
     InvestigateStockArgs,
     ListThemesArgs,
     OptimizePortfolioArgs,
+    ProposeCardArgs,
     ProposeTradeArgs,
     ScreenByThemeArgs,
     ScreenStocksArgs,
@@ -917,6 +919,58 @@ async def handle_search_cards(args: dict[str, object]) -> dict[str, Any]:
     except Exception as exc:
         logger.exception("handle_search_cards 失敗")
         return {"error": str(exc)}
+
+
+async def handle_propose_card(args: dict[str, object]) -> dict[str, Any]:
+    """propose_card（ADR-062 追補・検証 only）。チャットから知識カードを承認制で起票する。
+
+    propose_trade と同じ契約＝実際の draft 起票は呼び出し側（router/nightly）が tool_runs から
+    persist_card_ops_from_tool_runs で行う。ここでは引数を検証し AI に手応えを返すだけ（ADR-009＝
+    起票は draft で人間が active 化）。例外は握って {"error"} に倒す（dispatch を落とさない）。
+    """
+    try:
+        parsed = ProposeCardArgs.model_validate(args)
+    except Exception as exc:
+        logger.warning("handle_propose_card: 引数が不正（%s）", args)
+        return {"error": str(exc)}
+    if not parsed.body.strip():
+        return {"error": "body が空です。知識の中身を入れてください。"}
+    return {
+        "ok": True,
+        "title": parsed.title or "（本文先頭で代替）",
+        "message": "知識カードを draft で起票する（/cards で確認・active 化は人間承認）。",
+    }
+
+
+async def handle_adjust_card_weight(args: dict[str, object]) -> dict[str, Any]:
+    """adjust_card_weight（ADR-062 追補・検証 only）。カードの重要度 weight 変更を承認制で提案する。
+
+    実際の提案起票は persist_card_ops_from_tool_runs（proposals kind=card_weight）。ここでは引数を
+    検証し、対象カードの存在を確認して手応えを返す（承認するまで反映しない＝ADR-009）。DB アクセスも
+    try で握って {"error"} に倒す（handlers 規約・C-5）。
+    """
+    try:
+        parsed = AdjustCardWeightArgs.model_validate(args)
+    except Exception as exc:
+        logger.warning("handle_adjust_card_weight: 引数が不正（%s）", args)
+        return {"error": str(exc)}
+    if parsed.weight <= 0:
+        return {"error": "weight は 0 より大きい必要があります。"}
+    try:
+        with get_engine().connect() as conn:
+            card = repo.get_knowledge_card(conn, parsed.card_id)
+    except Exception as exc:
+        logger.exception("handle_adjust_card_weight 失敗")
+        return {"error": str(exc)}
+    if card is None:
+        return {"error": f"カード id={parsed.card_id} が無い（search_cards で id を確認）。"}
+    return {
+        "ok": True,
+        "card_id": parsed.card_id,
+        "title": card["title"],
+        "weight": parsed.weight,
+        "message": "weight 変更を承認制で提案する（/proposals で承認すると反映）。",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ from app.advisor.codex_engine import CodexEngineError
 from app.advisor.core_prompt import CORE
 from app.advisor.engine import resolve_face, run_turn
 from app.advisor.journaling import (
+    persist_card_ops_from_tool_runs,
     persist_journal_from_tool_runs,
     persist_trade_proposals_from_tool_runs,
 )
@@ -125,7 +126,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
     journal_id: int | None = None
     has_submit = any(r.get("name") == "submit_journal" for r in tool_runs)
     has_trade = any(r.get("name") == "propose_trade" for r in tool_runs)
-    if has_submit or has_trade:
+    # ADR-062 追補: 知識カードの起票/weight 変更（承認制）。propose_card は draft 起票、
+    # adjust_card_weight は proposals(kind=card_weight) を起票（人間が /cards・/proposals で承認）。
+    has_card_op = any(r.get("name") in ("propose_card", "adjust_card_weight") for r in tool_runs)
+    if has_submit or has_trade or has_card_op:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         with get_engine().begin() as conn:
             if has_submit:
@@ -143,5 +147,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
             persist_trade_proposals_from_tool_runs(
                 conn, tool_runs=tool_runs, date=today, journal_id=journal_id
             )
+            # 知識カードの起票/weight 変更を起票（ADR-062 追補・同一トランザクション）。
+            persist_card_ops_from_tool_runs(conn, tool_runs=tool_runs, date=today)
 
     return ChatResponse(reply=reply, tool_runs=response_tool_runs, journal_id=journal_id)
