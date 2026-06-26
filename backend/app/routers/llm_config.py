@@ -201,7 +201,7 @@ def delete_provider(provider_id: int = Path(..., ge=1)) -> dict[str, bool]:
 
 @router.get("/llm/faces", response_model=list[FaceOut])
 def list_faces(conn: Connection = Depends(get_conn)) -> list[FaceOut]:
-    """4 面の現在割当を返す（未設定面も含め必ず 4 件・configured フラグ付き・ADR-058）。"""
+    """全面の現在割当を返す（未設定面も含め必ず全件・configured フラグ付き・ADR-058/062）。"""
     return [FaceOut(**row) for row in describe_faces(conn)]
 
 

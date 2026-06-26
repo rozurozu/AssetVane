@@ -572,7 +572,7 @@ LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settin
 | `default_model` | TEXT | 面の model が空のとき使う既定 model |
 | `created_at` / `updated_at` | TEXT | ISO8601 |
 
-**`llm_face_config`**（面→割当・4 行運用＝chat/nightly/dossier/tagger）
+**`llm_face_config`**（面→割当＝chat/nightly/dossier/tagger/triage〔`triage`＝知識カード審査・[ADR-062](decisions.md)〕。割り当てた面だけ行を持つ）
 
 | カラム | 型 | 説明 |
 |---|---|---|

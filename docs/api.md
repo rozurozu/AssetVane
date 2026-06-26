@@ -332,7 +332,7 @@ interface UsTransactionOut {
 
 ## 10. LLM 設定（プロバイダ複数登録・面別 provider/model・[ADR-058](decisions.md)）
 
-`/settings` から LLM の provider を複数登録し、面（chat/nightly/dossier/tagger）ごとに provider と model を割り当てる。`api_key` は GET では必ずマスク（末尾4桁）で返し、更新は **write-only**（空送信は据え置き）。codex は鍵なし組み込みで provider 一覧には出ず、面の割当で `provider_id=0` として選ぶ。
+`/settings` から LLM の provider を複数登録し、面（chat/nightly/dossier/tagger/triage）ごとに provider と model を割り当てる（`triage`＝知識カード審査・[ADR-062](decisions.md)）。`api_key` は GET では必ずマスク（末尾4桁）で返し、更新は **write-only**（空送信は据え置き）。codex は鍵なし組み込みで provider 一覧には出ず、面の割当で `provider_id=0` として選ぶ。
 
 | メソッド | パス | 説明 |
 |---|---|---|
@@ -341,7 +341,7 @@ interface UsTransactionOut {
 | PUT | `/llm/providers/{id}` | 部分更新（`api_key` 空送信は据え置き＝write-only） |
 | DELETE | `/llm/providers/{id}` | 削除（面が使用中なら 409） |
 | POST | `/llm/providers/{id}/test` | `/v1/models` 疎通テスト（`{ok, detail}`・失敗も 200） |
-| GET | `/llm/faces` | 4 面の割当（`{face, provider_id, provider_name, model, reasoning_effort, configured}`・必ず 4 件） |
+| GET | `/llm/faces` | 全面の割当（`{face, provider_id, provider_name, model, reasoning_effort, configured}`・全面を必ず返す＝chat/nightly/dossier/tagger/triage） |
 | PUT | `/llm/faces/{face}` | 割当更新（`{provider_id, model, reasoning_effort}`・`provider_id=0` で codex・`null` で未設定・未知 provider は 422） |
 | POST | `/llm/codex/test` | codex 使用可否を実ターン 1 発で確認（`{ok, detail}`・失敗も 200・ADR-059） |
 | GET | `/llm/embedding` | embedding 接続の現在値（`{base_url, api_key_masked, has_api_key, model, dim, configured}`・ADR-059） |

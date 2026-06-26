@@ -76,9 +76,9 @@ async def triage_card(
 ) -> TriageResult | None:
     """カード草案を LLM 単発で審査し TriageResult を返す（ADR-062・ADR-014）。
 
-    LLM 単発 `engine.generate_once`（Tool 不要・source="tagger" で provider 解決）。面未設定や
-    壊れた応答では None を返す（カードは draft のまま・人間判断に委ねる・ADR-018）。verdict が
-    値域外でも None。
+    LLM 単発 `engine.generate_once`（Tool 不要・source="triage" で独立面を解決・ADR-062）。
+    面未設定や壊れた応答では None を返す（カードは draft のまま・人間判断に委ねる・ADR-018）。
+    verdict が値域外でも None。
     """
     draft = {
         "title": title,
@@ -95,10 +95,10 @@ async def triage_card(
     from app.advisor.engine import generate_once
 
     try:
-        content = await generate_once(messages, source="tagger")
+        content = await generate_once(messages, source="triage")
     except FaceNotConfiguredError:
         logger.info(
-            "card_triage: tagger 面が未設定のため審査を skip（カードは draft のまま・ADR-058）"
+            "card_triage: triage 面が未設定のため審査を skip（カードは draft のまま・ADR-058/062）"
         )
         return None
     return _parse_triage_response(content)

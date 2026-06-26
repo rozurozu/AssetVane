@@ -35,6 +35,7 @@ const FACE_LABELS: Record<string, string> = {
   nightly: "夜間AI（軸1 分析）",
   dossier: "ドシエ要約",
   tagger: "タグ付け（テーマ/極性）",
+  triage: "カード審査（知識カードの振り分け）",
 };
 
 // reasoning_effort の選択肢（固定 enum・ADR-059）。"" = 既定（openai は送らない / codex は env）。

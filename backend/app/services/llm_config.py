@@ -3,7 +3,7 @@
 設計の真実: docs/decisions.md ADR-058（LLM provider/model を env→DB+WebUI に移管）・ADR-018
 （LLM 障害/未設定時のフォールバック）。
 
-面（chat/nightly/dossier/tagger）→ {provider, base_url, api_key, model} を DB から解決する単一点。
+面（chat/nightly/dossier/tagger/triage）→ {provider, base_url, api_key, model} を DB から解決する。
 repo（生クエリ）と engine/llm（呼び出し）の橋渡しで、未設定面の意味づけと例外を担う。codex は
 llm_providers に行を持たない（鍵なし組み込み）ため provider_id=0 をセンチネルとして解決する。
 """
@@ -18,8 +18,9 @@ from sqlalchemy import Connection
 from app.config import settings
 from app.db import repo
 
-# engine が source として渡す面（ADR-058 確定3）。tagger は theme_tagger/news_polarity が使う。
-FACES: tuple[str, ...] = ("chat", "nightly", "dossier", "tagger")
+# engine が source として渡す面（ADR-058 確定3）。tagger は theme_tagger/news_polarity、
+# triage は知識カードの AI 審査（card_triage・ADR-062）が使う（低頻度・結果が重いので独立面）。
+FACES: tuple[str, ...] = ("chat", "nightly", "dossier", "tagger", "triage")
 
 # codex の仮想 provider_id（鍵なし組み込み・llm_providers に行を持たない＝ADR-058 確定1）。
 CODEX_PROVIDER_ID = 0
@@ -29,7 +30,7 @@ class FaceNotConfiguredError(RuntimeError):
     """面に provider が未割当 / 鍵あり provider が宙づり / model 未指定（ADR-058・ADR-018）。
 
     engine が捕まえ、呼び出し元へ伝える: chat（router）は明示エラー、nightly/dossier は通知付き
-    skip、tagger は沈黙 skip（ADR-058 確定8）。
+    skip、tagger/triage は沈黙 skip（ADR-058 確定8・triage は ADR-062＝カードは draft 据え置き）。
     """
 
 
@@ -100,10 +101,10 @@ def resolve_face(conn: Connection, face: str) -> ResolvedFace:
 
 
 def describe_faces(conn: Connection) -> list[dict[str, Any]]:
-    """4 面の現在割当を表示用にまとめる（GET /llm/faces・ADR-058）。
+    """全面の現在割当を表示用にまとめる（GET /llm/faces・ADR-058）。
 
     provider_name は codex なら "codex"、鍵あり provider なら名前（宙づりは None）。configured は
-    resolve_face が通るか（=その面の LLM が動くか）。未設定面も行として 4 件必ず返す。
+    resolve_face が通るか（=その面の LLM が動くか）。未設定面も行として全件必ず返す。
     """
     provider_names = {p["id"]: p["name"] for p in repo.list_providers(conn)}
     rows = {r["face"]: r for r in repo.list_faces(conn)}
