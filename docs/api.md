@@ -383,4 +383,4 @@ interface UsTransactionOut {
 - **`CardOut`** = `{id, title, body, when_to_apply, status, level, sector17_code, theme, linked_signal_type, quant_note, always_inject(bool), source, embedded_at, created_at, updated_at}`（`embedding` BLOB は返さない）。
 - **`status`** = `draft`/`active`/`needs_quant`（計算未実装で実装待ち）/`to_core`（規律→CORE 誘導）/`rejected`（LLM 一般知識でカード不要）。
 - **triage**: verdict が `needs_quant`/`to_core`/`rejected` はその status を反映、`active` は draft 据え置き（人間承認待ち・`linked_signal_type` だけ反映）。面未設定/応答不正は `triage=null`・status 据え置き（[ADR-018](decisions.md)）。
-- **意味検索（RAG）retrieval は次フェーズ**（フェーズ1 は active 全注入。`embedding`/`when_to_apply` は素地として持つ・[ADR-045](decisions.md) 同型）。
+- **意味検索（RAG）retrieval 実装済み**（[ADR-045](decisions.md) 同型）。注入は **ambient**（always_inject / market / general / level なし）を常時＋**チャットは最新発話で意味検索 top-K 追加**、夜AI は ambient のみ。AI は **`search_cards` Tool**（min_phase=4・query/level/limit・[ADR-062](decisions.md)）で知識カードを能動的に意味検索できる。機能オフ（embedding 未設定）は全 active を注入する fallback で graceful。

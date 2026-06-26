@@ -32,7 +32,7 @@ from app.advisor.prompt_builder import Message, build_messages
 from app.advisor.tools import handlers
 from app.advisor.tools.registry import CURRENT_PHASE
 from app.db import repo
-from app.services.knowledge_cards import load_active_card_texts
+from app.services.knowledge_cards import load_card_texts_for_injection
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,8 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
         policy=policy,
         conversation=[Message(role="user", content=_NIGHTLY_INSTRUCTION)],
         screen_context=None,  # 軸1 は画面が無い（ADR-025）
-        knowledge_cards=load_active_card_texts(),
+        # 夜AIは ambient（市況/一般）のみ＋具体は search_cards Tool で深掘り（ADR-062）。
+        knowledge_cards=await load_card_texts_for_injection(None),
         recent_journal=recent,
     )
 

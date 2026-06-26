@@ -242,6 +242,19 @@ class SearchNewsArgs(_ToolArgs):
     limit: int | None = None
 
 
+class SearchCardsArgs(_ToolArgs):
+    """search_cards の引数（ADR-062・知識カード意味検索）。
+
+    AI アドバイザーの知識ベース（知識カード）を意味（embedding 余弦距離）で検索する。query は必須、
+    level（market/sector/stock/general）は任意の構造フィルタ、limit は件数上限（既定 5）。任意引数の
+    "None"/"null" は _ToolArgs が実 None に正規化する。
+    """
+
+    query: str
+    level: str | None = None
+    limit: int | None = None
+
+
 class GetGeneralNewsArgs(_ToolArgs):
     """get_general_news の引数（ADR-034・引数なし）。
 

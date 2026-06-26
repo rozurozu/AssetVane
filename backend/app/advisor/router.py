@@ -30,7 +30,7 @@ from app.advisor.tools.registry import CURRENT_PHASE
 from app.db import repo
 from app.db.engine import get_engine
 from app.services import policy as policy_service
-from app.services.knowledge_cards import load_active_card_texts
+from app.services.knowledge_cards import load_card_texts_for_injection
 from app.services.llm_config import FaceNotConfiguredError
 
 router = APIRouter(tags=["advisor"])
@@ -70,12 +70,14 @@ async def chat(req: ChatRequest) -> ChatResponse:
         policy = policy_service.get_policy(conn)
         recent = repo.get_recent_journal_summary(conn)
 
+    # 最新のユーザー発話を retrieval キーに知識カードを引く（ADR-062・ambient＋意味検索）。
+    query = next((m.content for m in reversed(req.messages) if m.role == "user"), None)
     messages = build_messages(
         core_prompt=CORE,
         policy=policy,
         conversation=req.messages,
         screen_context=req.context,
-        knowledge_cards=load_active_card_texts(),
+        knowledge_cards=await load_card_texts_for_injection(query),
         recent_journal=recent,
     )
 

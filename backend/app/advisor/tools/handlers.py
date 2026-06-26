@@ -47,6 +47,7 @@ from app.advisor.tools.schemas import (
     ScreenStocksArgs,
     ScreenUsValuationArgs,
     ScreenValuationArgs,
+    SearchCardsArgs,
     SearchNewsArgs,
     SubmitJournalArgs,
     coerce_policy_change,
@@ -60,6 +61,7 @@ from app.quant import (
 )
 from app.reference.gics_sectors import normalize_gics_sector
 from app.services.fund_holdings import value_fund_holdings
+from app.services.knowledge_cards import search_cards_for_tool
 from app.services.news import build_news_context, search_news_corpus
 from app.services.policy import get_policy
 from app.services.portfolio import (
@@ -897,6 +899,23 @@ async def handle_search_news(args: dict[str, object]) -> dict[str, Any]:
             )
     except Exception as exc:
         logger.exception("handle_search_news 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_search_cards(args: dict[str, object]) -> dict[str, Any]:
+    """search_cards（ADR-062）。知識カードを意味（embedding 余弦距離）で検索する。
+
+    今の話題に関係する非自明な知識（市場文脈・手法の解釈・登録した外部知識）を引く。組み立ては
+    services.knowledge_cards.search_cards_for_tool に委ね、本 handler は橋渡しのみ（ADR-010/014）。
+    機能オフ/sqlite-vec 未ロードは service が items 空＋reason で返す（落とさない・ADR-018）。
+    """
+    try:
+        a = SearchCardsArgs.model_validate(args)
+        return await search_cards_for_tool(
+            a.query, level=a.level, limit=a.limit if a.limit is not None else 5
+        )
+    except Exception as exc:
+        logger.exception("handle_search_cards 失敗")
         return {"error": str(exc)}
 
 

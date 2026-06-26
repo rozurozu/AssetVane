@@ -211,6 +211,42 @@ def delete_knowledge_card(card_id: int) -> int:
     return result.rowcount
 
 
+def search_knowledge_cards(
+    conn: Connection,
+    query_blob: bytes,
+    *,
+    level: str | None = None,
+    sector17_code: str | None = None,
+    theme: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """active カードを when_to_apply embedding の余弦距離で近い順に返す（ADR-062・search_news 型）。
+
+    vec_distance_cosine(embedding, :qvec) を距離昇順（近い順）。query_blob は pack_embedding 済みの
+    float32 LE BLOB。status='active' かつ embedding 非 NULL の行のみ。level/sector17_code/theme で
+    構造事前フィルタ。返す列は _CARD_COLS ＋ distance（embedding BLOB なし）。sqlite-vec 未ロード
+    だと SQL が失敗するが握らず投げる（呼び出し側 service が空＋理由に翻訳・ADR-018）。
+    """
+    conds = ["status = 'active'", "embedding IS NOT NULL"]
+    params: dict[str, Any] = {"qvec": query_blob, "lim": limit}
+    if level is not None:
+        conds.append("level = :level")
+        params["level"] = level
+    if sector17_code is not None:
+        conds.append("sector17_code = :sector17_code")
+        params["sector17_code"] = sector17_code
+    if theme is not None:
+        conds.append("theme = :theme")
+        params["theme"] = theme
+    where = " AND ".join(conds)
+    cols = ", ".join(_CARD_COLS)
+    stmt = text(
+        f"SELECT {cols}, vec_distance_cosine(embedding, :qvec) AS distance "  # noqa: S608 — 列名は定数
+        f"FROM knowledge_cards WHERE {where} ORDER BY distance ASC LIMIT :lim"
+    )
+    return [dict(r) for r in conn.execute(stmt, params).mappings().all()]
+
+
 def update_card_embedding(
     conn: Connection, card_id: int, embedding_blob: bytes, model: str
 ) -> None:

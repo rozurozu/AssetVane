@@ -39,6 +39,7 @@ from app.advisor.tools.schemas import (
     ScreenStocksArgs,
     ScreenUsValuationArgs,
     ScreenValuationArgs,
+    SearchCardsArgs,
     SearchNewsArgs,
     SubmitJournalArgs,
 )
@@ -46,8 +47,8 @@ from app.advisor.tools.schemas import (
 # 現在の投入フェーズ（段2 の dispatch が openai_tools(phase) に渡す）。
 # Phase 4（Stock Dossier）＋ADR-034（一般ニュース）に加え、Phase 7（日米業種リードラグ・
 # SIG-FIN-036-13）まで実装済み。これを 7 にすることで以下が チャット・夜の分析AI に露出する:
-#   min_phase=4（8 本）: get_fund_holdings / get_dossier / investigate_stock / get_news_context /
-#                        propose_trade / fetch_news / get_general_news / search_news
+#   min_phase=4（9 本）: get_fund_holdings / get_dossier / investigate_stock / get_news_context /
+#                        propose_trade / fetch_news / get_general_news / search_news / search_cards
 #   min_phase=7（7 本）: get_lead_lag / get_us_valuation / screen_us_valuation / list_themes /
 #                        get_stock_themes / screen_by_theme / get_us_holdings
 CURRENT_PHASE: int = 7
@@ -289,6 +290,20 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(SearchNewsArgs),
         handler=handlers.handle_search_news,
+        min_phase=4,
+    ),
+    "search_cards": ToolDef(
+        name="search_cards",
+        description=(
+            "AI アドバイザーの知識ベース（知識カード）を**意味で検索**する"
+            "（embedding 余弦距離・ADR-062）。"
+            "市場文脈・手法の解釈・登録した外部知識（YouTuber 要約等）から、今の話題に関係する"
+            "**非自明な知識**を引く。銘柄やテーマを論じる前に、関連カードがあるか確認するのに使う。"
+            "level（market/sector/stock/general）で絞れる。常時注入される ambient カード以外の"
+            "具体（銘柄/セクター）知識を掘るときに有効。"
+        ),
+        parameters=_schema(SearchCardsArgs),
+        handler=handlers.handle_search_cards,
         min_phase=4,
     ),
     # --- Phase 7（日米業種リードラグ・SIG-FIN-036-13）---

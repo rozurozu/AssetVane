@@ -85,6 +85,8 @@ def test_registry_handlers_are_registered() -> None:
         "propose_trade",
         # ADR-045: ニュース意味検索（min_phase=4）。
         "search_news",
+        # ADR-062: 知識カード意味検索（min_phase=4）。
+        "search_cards",
         # Phase 7: 日米業種リードラグ（min_phase=7）。
         "get_lead_lag",
         # Phase 7(B-1): 米国株バリュエーション（min_phase=7・ADR-039/048/055）。
