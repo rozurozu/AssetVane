@@ -23,6 +23,7 @@ from app.adapters.embedding import embed_texts, embedding_enabled, embedding_mod
 from app.batch.runner import JobResult
 from app.db import repo
 from app.db.engine import get_engine
+from app.services.knowledge_cards import build_card_retrieval_text
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,8 @@ def run() -> JobResult:
                 break
 
             try:
-                vectors = asyncio.run(embed_texts([r["when_to_apply"] for r in rows]))
+                texts = [build_card_retrieval_text(r) for r in rows]
+                vectors = asyncio.run(embed_texts(texts))
             except Exception:  # noqa: BLE001 — 1 バッチの埋め込み失敗は握り打ち切り（翌晩再試行・ADR-018）
                 logger.warning("embed_cards: 1 バッチの埋め込みに失敗（継続する・ADR-062）")
                 failed_batches += 1
@@ -81,18 +83,25 @@ def run() -> JobResult:
     return JobResult(name="embed_cards", ok=failed_batches == 0, rows=embedded, detail=detail)
 
 
-def embed_card_best_effort(card_id: int, when_to_apply: str | None) -> None:
-    """カード保存直後の即時埋め込み（best-effort・失敗は握る・ADR-045 の即時側）。
+def embed_card_best_effort(card_id: int) -> None:
+    """カード保存直後の即時埋め込み（best-effort・失敗は握る・ADR-062 追補）。
 
-    when_to_apply が空 or embedding 機能オフなら何もしない。失敗しても呼び出し側（router）の保存
-    自体は成功済みなので握りつぶす（取りこぼしは夜間 run() が拾う）。await は DB 書き込み tx の外で
-    駆動する（C-6 の規律）。
+    embedding 機能オフ・本文ベース合成テキストが空なら何もしない。失敗しても呼び出し側（router）の
+    保存自体は成功済みなので握りつぶす（取りこぼしは夜間 run() が拾う）。await は DB 書き込み tx の
+    外で駆動する（C-6 の規律）。
     """
-    if not when_to_apply or not embedding_enabled():
+    if not embedding_enabled():
+        return
+    with get_engine().connect() as conn:
+        card = repo.get_knowledge_card(conn, card_id)
+    if card is None:
+        return
+    source_text = build_card_retrieval_text(card)
+    if not source_text:
         return
     model = embedding_model()
     try:
-        vectors = asyncio.run(embed_texts([when_to_apply]))
+        vectors = asyncio.run(embed_texts([source_text]))
         if not vectors:
             return
         with get_engine().begin() as conn:

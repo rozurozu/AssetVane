@@ -374,13 +374,14 @@ interface UsTransactionOut {
 |---|---|---|
 | GET | `/cards?status=` | カード一覧（`status` で絞り込み可・新しい順）。`CardOut[]` |
 | GET | `/cards/{id}` | 1 件取得（404 あり）。`CardOut` |
-| POST | `/cards` | 作成（`CardCreateIn`）→ `CardOut`（201・status=`draft`・保存後 best-effort で `when_to_apply` を即時埋め込み） |
-| PUT | `/cards/{id}` | 部分更新（`CardUpdateIn`・`when_to_apply` 変更で再埋め込み）→ `CardOut` |
+| POST | `/cards/assist` | 本文だけ → AI が title/when_to_apply/level を生成＋審査（保存しない・[ADR-062](decisions.md) 追補）。`CardAssistIn={body, title?}` → `CardAssistOut={title, when_to_apply, level, verdict?, reason, quant_note, linked_signal_type}`（`verdict=null`＝面未設定/応答不正） |
+| POST | `/cards` | 作成（`CardCreateIn`・**title 任意**＝空なら本文先頭で代替）→ `CardOut`（201・status=`draft`・保存後 best-effort で本文ベース合成テキストを即時埋め込み） |
+| PUT | `/cards/{id}` | 部分更新（`CardUpdateIn`・`weight` 等。埋め込み元〔title/when_to_apply/body〕変更で再埋め込み）→ `CardOut` |
 | DELETE | `/cards/{id}` | 削除（204） |
 | POST | `/cards/{id}/triage` | AI 審査して `status` を振り分ける → `{triage: TriageOut|null, card: CardOut}` |
 | POST | `/cards/{id}/activate` | 人間承認で active 化 → `CardOut` |
 
-- **`CardOut`** = `{id, title, body, when_to_apply, status, level, sector17_code, theme, linked_signal_type, quant_note, always_inject(bool), source, embedded_at, created_at, updated_at}`（`embedding` BLOB は返さない）。
+- **`CardOut`** = `{id, title, body, when_to_apply, status, level, sector17_code, theme, linked_signal_type, quant_note, always_inject(bool), weight(float・既定1.0), source, embedded_at, created_at, updated_at}`（`embedding` BLOB は返さない）。`weight` は retrieval ランク/注入順を `distance/weight` で重み付け（古い/信頼度低を下げて生かす・[ADR-062](decisions.md) 追補）。
 - **`status`** = `draft`/`active`/`needs_quant`（計算未実装で実装待ち）/`to_core`（規律→CORE 誘導）/`rejected`（LLM 一般知識でカード不要）。
 - **triage**: verdict が `needs_quant`/`to_core`/`rejected` はその status を反映、`active` は draft 据え置き（人間承認待ち・`linked_signal_type` だけ反映）。面未設定/応答不正は `triage=null`・status 据え置き（[ADR-018](decisions.md)）。
-- **意味検索（RAG）retrieval 実装済み**（[ADR-045](decisions.md) 同型）。注入は **ambient**（always_inject / market / general / level なし）を常時＋**チャットは最新発話で意味検索 top-K 追加**、夜AI は ambient のみ。AI は **`search_cards` Tool**（min_phase=4・query/level/limit・[ADR-062](decisions.md)）で知識カードを能動的に意味検索できる。機能オフ（embedding 未設定）は全 active を注入する fallback で graceful。
+- **意味検索（RAG）retrieval 実装済み**（[ADR-045](decisions.md) 同型・純 retrieval）。注入は **`always_inject` のカードだけ常時**＋**チャットは最新発話で意味検索 top-K 追加**、夜AI は always_inject のみ。`level` は検索の事前フィルタタグ（注入ポリシーは決めない）。AI は **`search_cards` Tool**（min_phase=4・query/level/limit・[ADR-062](decisions.md)）で知識カードを能動的に意味検索できる。機能オフ（embedding 未設定）は全 active を注入する fallback で graceful。埋め込み元は title+when_to_apply+body の合成テキスト（when_to_apply 任意）。

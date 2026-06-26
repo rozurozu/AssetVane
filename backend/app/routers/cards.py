@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Connection
 
 from app.db import repo
@@ -43,6 +43,8 @@ class CardOut(BaseModel):
     linked_signal_type: str | None = None
     quant_note: str | None = None
     always_inject: bool = False
+    # 重要度（retrieval ランク・注入順を distance/weight で重み付け・ADR-062 追補）
+    weight: float = 1.0
     source: str | None = None
     embedded_at: str | None = None  # 埋め込み済みかの UI ヒント（None=未埋め込み）
     created_at: str | None = None
@@ -50,8 +52,8 @@ class CardOut(BaseModel):
 
 
 class CardCreateIn(BaseModel):
-    title: str
     body: str
+    title: str = ""  # 任意（空なら本文先頭で代替・AI 補助で埋めるのが基本・ADR-062 追補）
     when_to_apply: str | None = None
     level: CardLevel | None = None
     sector17_code: str | None = None
@@ -70,6 +72,26 @@ class CardUpdateIn(BaseModel):
     linked_signal_type: str | None = None
     quant_note: str | None = None
     always_inject: bool | None = None
+    weight: float | None = Field(default=None, gt=0)  # 重要度（>0・ADR-062 追補）
+
+
+class CardAssistIn(BaseModel):
+    """POST /cards/assist の入力（本文だけ → AI が整える・ADR-062 追補）。"""
+
+    body: str
+    title: str = ""
+
+
+class CardAssistOut(BaseModel):
+    """AI 補助の提案（保存前にフォームを埋める材料）。verdict=None は面未設定/応答不正。"""
+
+    title: str
+    when_to_apply: str | None = None
+    level: str | None = None
+    verdict: str | None = None
+    reason: str = ""
+    quant_note: str | None = None
+    linked_signal_type: str | None = None
 
 
 class TriageOut(BaseModel):
@@ -102,6 +124,13 @@ def _get_or_404(conn: Connection, card_id: int) -> dict[str, object]:
     return row
 
 
+def _fallback_title(body: str) -> str:
+    """title 空時の代替（本文先頭行を 40 字で・空なら『（無題）』・ADR-062 追補）。"""
+    stripped = (body or "").strip()
+    first = stripped.splitlines()[0] if stripped else ""
+    return first[:40] or "（無題）"
+
+
 @router.get("/cards", response_model=list[CardOut])
 def list_cards(
     status: CardStatus | None = None,
@@ -117,15 +146,41 @@ def get_card(card_id: int, conn: Connection = Depends(get_conn)) -> CardOut:
     return _card_out(_get_or_404(conn, card_id))
 
 
+@router.post("/cards/assist", response_model=CardAssistOut)
+async def assist_card_endpoint(body: CardAssistIn) -> CardAssistOut:
+    """本文から AI が title/when_to_apply/level を生成＋審査する（下書き補助・ADR-062 追補）。
+
+    フォームを埋める材料を返すだけ（保存はしない）。面未設定/応答不正なら verdict=None で、title は
+    入力 or 本文先頭で代替（ユーザーがそのまま保存できる・ADR-018）。
+    """
+    from app.advisor.card_triage import assist_card
+
+    result = await assist_card(
+        body=body.body, title=body.title, existing_signal_types=_IMPLEMENTED_SIGNAL_TYPES
+    )
+    if result is None:
+        return CardAssistOut(title=body.title.strip() or _fallback_title(body.body))
+    return CardAssistOut(
+        title=result.title or _fallback_title(body.body),
+        when_to_apply=result.when_to_apply,
+        level=result.level,
+        verdict=result.verdict,
+        reason=result.reason,
+        quant_note=result.quant_note,
+        linked_signal_type=result.linked_signal_type,
+    )
+
+
 @router.post("/cards", response_model=CardOut, status_code=201)
 def create_card(body: CardCreateIn) -> CardOut:
-    """カードを draft で作成し、when_to_apply を best-effort で即時埋め込む（ADR-062）。
+    """カードを draft で作成し、本文ベースの合成テキストを best-effort で即時埋め込む（ADR-062）。
 
-    AI 審査は別口（POST /cards/{id}/triage）。作成は速く返し、埋め込み失敗は握る（夜間 embed_cards
-    が拾う）。active 化は人間が承認する（POST /cards/{id}/activate）。
+    title 空なら本文先頭で代替（AI 補助 /cards/assist でフォームを埋めるのが基本）。AI 審査は別口
+    （POST /cards/{id}/triage）。埋め込み失敗は握る（夜間で拾う）。active 化は人間承認。
     """
+    title = body.title.strip() or _fallback_title(body.body)
     card_id = repo.insert_knowledge_card(
-        title=body.title,
+        title=title,
         body=body.body,
         when_to_apply=body.when_to_apply,
         status="draft",
@@ -137,24 +192,28 @@ def create_card(body: CardCreateIn) -> CardOut:
     # 保存後に await を tx 外で駆動して即時埋め込み（C-6 の規律・best-effort）。
     from app.batch.jobs.embed_cards import embed_card_best_effort
 
-    embed_card_best_effort(card_id, body.when_to_apply)
+    embed_card_best_effort(card_id)
     with get_engine().connect() as conn:
         return _card_out(_get_or_404(conn, card_id))
 
 
+# 埋め込み元（合成テキスト）を構成するフィールド。更新で変われば再埋め込みする（ADR-062 追補）。
+_EMBED_SOURCE_FIELDS = ("title", "when_to_apply", "body")
+
+
 @router.put("/cards/{card_id}", response_model=CardOut)
 def update_card(card_id: int, body: CardUpdateIn) -> CardOut:
-    """カードを部分更新する（when_to_apply 変更時は再埋め込み・ADR-062）。"""
+    """カードを部分更新する（埋め込み元が変われば再埋め込み・ADR-062 追補）。"""
     with get_engine().connect() as conn:
         _get_or_404(conn, card_id)
     values = body.model_dump(exclude_unset=True)
     if "always_inject" in values:
         values["always_inject"] = 1 if values["always_inject"] else 0
     repo.update_knowledge_card(card_id, values)
-    if "when_to_apply" in values:  # 更新で embedding を無効化済み → 即時で焼き直す（best-effort）
+    if any(f in values for f in _EMBED_SOURCE_FIELDS):  # repo が embedding を無効化済み → 焼き直す
         from app.batch.jobs.embed_cards import embed_card_best_effort
 
-        embed_card_best_effort(card_id, values.get("when_to_apply"))
+        embed_card_best_effort(card_id)
     with get_engine().connect() as conn:
         return _card_out(_get_or_404(conn, card_id))
 

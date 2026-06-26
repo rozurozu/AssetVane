@@ -32,12 +32,16 @@ _CARD_COLS = (
     "linked_signal_type",
     "quant_note",
     "always_inject",
+    "weight",
     "source",
     "embed_model",
     "embedded_at",
     "created_at",
     "updated_at",
 )
+
+# 埋め込み元のテキストを構成する列（これらが変わると embedding 無効化＝再埋め込み・ADR-062）。
+_EMBED_SOURCE_COLS = ("title", "when_to_apply", "body")
 
 # 編集で書き換えてよい列（status はトリアージ/承認の専用関数で変える＝ここには含めない）。
 _EDITABLE_COLS = frozenset(
@@ -51,6 +55,7 @@ _EDITABLE_COLS = frozenset(
         "linked_signal_type",
         "quant_note",
         "always_inject",
+        "weight",
         "source",
     }
 )
@@ -95,14 +100,21 @@ def list_active_knowledge_cards(conn: Connection) -> list[dict[str, Any]]:
 def list_cards_needing_embedding(
     conn: Connection, *, current_model: str, limit: int
 ) -> list[dict[str, Any]]:
-    """when_to_apply があり、埋め込み未生成 or モデル不一致のカードを limit 件返す（ADR-045 同型）。
+    """埋め込み未生成 or モデル不一致のカードを limit 件返す（ADR-062 追補・本文ベース埋め込み）。
 
-    embed_cards 夜間ジョブが when_to_apply を埋め込む（id 昇順で安定・id と when_to_apply を返す）。
+    埋め込み元は title+when_to_apply+body の合成テキストなので、必ずある body を条件にする
+    （when_to_apply 必須は撤廃＝本文だけのカードも検索に乗る）。embed_cards ジョブが id・title・
+    when_to_apply・body を受け取り合成テキストを埋め込む（id 昇順で安定）。
     """
     stmt = (
-        select(knowledge_cards.c.id, knowledge_cards.c.when_to_apply)
-        .where(knowledge_cards.c.when_to_apply.isnot(None))
-        .where(knowledge_cards.c.when_to_apply != "")
+        select(
+            knowledge_cards.c.id,
+            knowledge_cards.c.title,
+            knowledge_cards.c.when_to_apply,
+            knowledge_cards.c.body,
+        )
+        .where(knowledge_cards.c.body.isnot(None))
+        .where(knowledge_cards.c.body != "")
         .where(
             (knowledge_cards.c.embedding.is_(None))
             | (knowledge_cards.c.embed_model.is_(None))
@@ -129,12 +141,13 @@ def insert_knowledge_card(
     linked_signal_type: str | None = None,
     quant_note: str | None = None,
     always_inject: int = 0,
+    weight: float = 1.0,
     source: str | None = None,
 ) -> int:
     """カードを 1 件挿入し新 id を返す（W1・自前 begin）。created_at/updated_at は now。
 
-    挿入は冪等でない（POST ごとに 1 行）。埋め込みは別途（保存後に best-effort で when_to_apply を
-    埋め込む＝await を書き込みトランザクション外に置く・ADR-045/C-6 の規律）。
+    挿入は冪等でない（POST ごとに 1 行）。埋め込みは別途（保存後に best-effort で本文ベースの合成
+    テキストを埋め込む＝await を書き込みトランザクション外に置く・ADR-045/C-6 の規律）。
     """
     now = datetime.now(UTC).isoformat()
     stmt = insert(knowledge_cards).values(
@@ -148,6 +161,7 @@ def insert_knowledge_card(
         linked_signal_type=linked_signal_type,
         quant_note=quant_note,
         always_inject=always_inject,
+        weight=weight,
         source=source,
         created_at=now,
         updated_at=now,
@@ -161,14 +175,14 @@ def insert_knowledge_card(
 def update_knowledge_card(card_id: int, values: dict[str, Any]) -> None:
     """編集可能な列だけを更新する（W1・自前 begin）。updated_at は now に更新。
 
-    when_to_apply を変えたときは embedding を無効化（NULL）して、夜間 embed_cards が再埋め込みする
-    （retrieval キーが古いベクトルのまま残らないようにする・ADR-045）。values の未知列は無視する。
+    埋め込み元（title/when_to_apply/body）を変えたら embedding を NULL 化して、夜間 embed_cards が
+    再埋め込みする（古いベクトルが残らないようにする・ADR-062 追補）。values の未知列は無視する。
     """
     fields = {k: v for k, v in values.items() if k in _EDITABLE_COLS}
     if not fields:
         return
     fields["updated_at"] = datetime.now(UTC).isoformat()
-    if "when_to_apply" in fields:
+    if any(col in fields for col in _EMBED_SOURCE_COLS):
         fields["embedding"] = None
         fields["embed_model"] = None
         fields["embedded_at"] = None
@@ -220,12 +234,13 @@ def search_knowledge_cards(
     theme: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    """active カードを when_to_apply embedding の余弦距離で近い順に返す（ADR-062・search_news 型）。
+    """active カードを本文ベース embedding の余弦距離で近い順に返す（ADR-062・weight 重み付け）。
 
-    vec_distance_cosine(embedding, :qvec) を距離昇順（近い順）。query_blob は pack_embedding 済みの
-    float32 LE BLOB。status='active' かつ embedding 非 NULL の行のみ。level/sector17_code/theme で
-    構造事前フィルタ。返す列は _CARD_COLS ＋ distance（embedding BLOB なし）。sqlite-vec 未ロード
-    だと SQL が失敗するが握らず投げる（呼び出し側 service が空＋理由に翻訳・ADR-018）。
+    vec_distance_cosine(embedding, :qvec) を **distance/weight 昇順**で並べる（weight が大きいほど
+    上位＝重要度を効かせる）。query_blob は pack_embedding 済みの BLOB。status='active' かつ
+    embedding 非 NULL の行のみ。level/sector17_code/theme で構造事前フィルタ。返す列は _CARD_COLS ＋
+    distance。weight は server_default 1.0 で NULL/0 にならない（router で >0 検証）。
+    sqlite-vec 未ロードだと SQL 失敗するが握らず投げる（service が空に翻訳・ADR-018）。
     """
     conds = ["status = 'active'", "embedding IS NOT NULL"]
     params: dict[str, Any] = {"qvec": query_blob, "lim": limit}
@@ -242,9 +257,24 @@ def search_knowledge_cards(
     cols = ", ".join(_CARD_COLS)
     stmt = text(
         f"SELECT {cols}, vec_distance_cosine(embedding, :qvec) AS distance "  # noqa: S608 — 列名は定数
-        f"FROM knowledge_cards WHERE {where} ORDER BY distance ASC LIMIT :lim"
+        f"FROM knowledge_cards WHERE {where} "
+        "ORDER BY vec_distance_cosine(embedding, :qvec) / weight ASC LIMIT :lim"
     )
     return [dict(r) for r in conn.execute(stmt, params).mappings().all()]
+
+
+def set_card_weight(card_id: int, weight: float) -> int:
+    """カードの weight を更新し、更新行数を返す（W1・手動編集＋承認済みのチャット tool が使う）。
+
+    weight は重要度（>0・既定 1.0）。古い/信頼度が下がったカードを下げて生かす（ADR-062 追補）。
+    """
+    with get_engine().begin() as conn:
+        result = conn.execute(
+            update(knowledge_cards)
+            .where(knowledge_cards.c.id == card_id)
+            .values(weight=weight, updated_at=datetime.now(UTC).isoformat())
+        )
+    return result.rowcount
 
 
 def update_card_embedding(

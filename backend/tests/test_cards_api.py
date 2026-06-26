@@ -121,3 +121,55 @@ def test_triage_none_keeps_status(client: TestClient, monkeypatch) -> None:  # t
     body = client.post(f"/cards/{cid}/triage").json()
     assert body["triage"] is None
     assert body["card"]["status"] == "draft"
+
+
+def test_create_without_title_falls_back(client: TestClient) -> None:
+    """title なし（本文だけ）で作成でき、title は本文先頭で代替される（ADR-062 追補）。"""
+    res = client.post("/cards", json={"body": "本文だけで作るカード"})
+    assert res.status_code == 201
+    assert res.json()["title"]  # 空でない（本文先頭で代替）
+
+
+def test_update_weight(client: TestClient) -> None:
+    """PUT で weight を更新できる（重要度・ADR-062 追補）。"""
+    cid = client.post("/cards", json={"title": "t", "body": "b"}).json()["id"]
+    res = client.put(f"/cards/{cid}", json={"weight": 2.0})
+    assert res.status_code == 200
+    assert res.json()["weight"] == 2.0
+
+
+def test_assist_generates_fields(client: TestClient, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """/cards/assist が AI 生成の title/when_to_apply/level/verdict を返す（ADR-062 追補）。"""
+    from app.advisor.card_triage import AssistResult
+
+    async def fake(**_kwargs: object) -> AssistResult:
+        return AssistResult(
+            title="生成タイトル",
+            when_to_apply="この状況で効く",
+            level="market",
+            verdict="active",
+            reason="既存値で成立",
+            quant_note=None,
+            linked_signal_type="momentum",
+        )
+
+    monkeypatch.setattr("app.advisor.card_triage.assist_card", fake)
+    res = client.post("/cards/assist", json={"body": "本文"})
+    assert res.status_code == 200
+    d = res.json()
+    assert d["title"] == "生成タイトル"
+    assert d["verdict"] == "active"
+    assert d["level"] == "market"
+
+
+def test_assist_none_falls_back(client: TestClient, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """AI 面未設定/応答不正（None）なら verdict=None・title は本文先頭で代替。"""
+
+    async def fake(**_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("app.advisor.card_triage.assist_card", fake)
+    res = client.post("/cards/assist", json={"body": "先頭行\n2 行目"})
+    d = res.json()
+    assert d["verdict"] is None
+    assert d["title"]  # 本文先頭で代替

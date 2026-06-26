@@ -787,6 +787,9 @@ knowledge_cards = Table(
     Column(
         "always_inject", Integer, nullable=False, server_default="0"
     ),  # 1=常時注入の例外保険（0/1）
+    # 重要度（ADR-062・0026）。retrieval/注入順を distance/weight で重み付け（重いほど上位）。
+    # 古い/信頼度が下がったカードは weight を下げて生かす（created_at の鮮度と併せ AI が解釈）。
+    Column("weight", Float, nullable=False, server_default="1.0"),
     Column("source", String),  # URL/引用/由来（YouTuber 動画 URL 等）
     # ADR-045 同型の埋め込み 3 列（when_to_apply のベクトル・未埋め込み/機能オフは NULL）。
     Column("embedding", LargeBinary),  # float32 LE BLOB

@@ -76,21 +76,21 @@ def test_injection_fallback_when_embedding_off() -> None:
 
 
 @pytest.mark.usefixtures("temp_db")
-def test_injection_nightly_ambient_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """embedding オン・query None（夜AI）は ambient（market）のみ・stock は除外する。"""
-    _add("m1", level="market", embedding=[1.0, 0.0])
-    _add("s1", level="stock", embedding=[1.0, 0.0])
+def test_injection_nightly_always_inject_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embedding オン・query None（夜AI）は always_inject のみ（純 retrieval・ADR-062）。"""
+    _add("a1", always_inject=1, embedding=[1.0, 0.0])
+    _add("n1", embedding=[1.0, 0.0])  # always_inject なし → 夜AI には出ない
     monkeypatch.setattr(svc, "embedding_enabled", lambda: True)
     texts = asyncio.run(svc.load_card_texts_for_injection(None))
     assert len(texts) == 1
-    assert "m1" in texts[0]
+    assert "a1" in texts[0]
 
 
 @pytest.mark.usefixtures("temp_db")
-def test_injection_chat_adds_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
-    """embedding オン・query あり（チャット）は ambient＋retrieval で stock も入る。"""
-    _add("m1", level="market", embedding=[1.0, 0.0])
-    _add("s_hit", level="stock", embedding=[1.0, 0.0])
+def test_injection_chat_always_plus_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """チャットは always_inject（クエリと無関係でも常時）＋意味検索 top-K（ADR-062 追補）。"""
+    _add("a1", always_inject=1, embedding=[0.0, 1.0])  # query と遠いが always なので入る
+    _add("hit", embedding=[1.0, 0.0])  # retrieval で当たる
 
     async def fake_embed(_texts: list[str]) -> list[list[float]]:
         return [[1.0, 0.0]]
@@ -99,8 +99,22 @@ def test_injection_chat_adds_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(svc, "embed_texts", fake_embed)
     texts = asyncio.run(svc.load_card_texts_for_injection("query"))
     joined = "\n".join(texts)
-    assert "m1" in joined  # ambient
-    assert "s_hit" in joined  # retrieval で stock も入る
+    assert "a1" in joined  # always_inject（クエリと遠くても常時）
+    assert "hit" in joined  # retrieval
+
+
+@pytest.mark.usefixtures("temp_db")
+def test_search_weight_boosts_ranking() -> None:
+    """同距離でも weight が高いカードが上位に来る（distance/weight・ADR-062 追補）。"""
+    # query と非同一にして distance>0 にする（同一だと 0/weight=0 で weight が効かない）。
+    a = _add("a", embedding=[1.0, 1.0])
+    b = _add("b", embedding=[1.0, 1.0])  # 同じ embedding → 同 distance（>0）
+    repo.set_card_weight(b, 5.0)
+    qblob = repo.pack_embedding([1.0, 0.0])
+    with get_engine().connect() as conn:
+        rows = repo.search_knowledge_cards(conn, qblob, limit=10)
+    assert [r["id"] for r in rows][0] == b  # 同距離でも weight 高い b が先頭
+    assert a in {r["id"] for r in rows}
 
 
 @pytest.mark.usefixtures("temp_db")

@@ -26,9 +26,9 @@ def test_run_skips_when_embedding_disabled() -> None:
 
 @pytest.mark.usefixtures("temp_db")
 def test_best_effort_noop_when_disabled() -> None:
-    """機能オフのとき即時埋め込みは no-op（embed_model は付かない）。"""
+    """機能オフのとき即時埋め込みは no-op（embed_model は付かない・ADR-062 追補）。"""
     cid = repo.insert_knowledge_card(title="t", body="b", when_to_apply="cond")
-    embed_cards.embed_card_best_effort(cid, "cond")  # 機能オフなら静かに何もしない
+    embed_cards.embed_card_best_effort(cid)  # 機能オフなら静かに何もしない
     with get_engine().connect() as conn:
         row = repo.get_knowledge_card(conn, cid)
     assert row is not None
@@ -36,11 +36,6 @@ def test_best_effort_noop_when_disabled() -> None:
 
 
 @pytest.mark.usefixtures("temp_db")
-def test_best_effort_noop_for_empty_when_to_apply() -> None:
-    """when_to_apply が空なら即時埋め込みは何もしない。"""
-    cid = repo.insert_knowledge_card(title="t", body="b", when_to_apply=None)
-    embed_cards.embed_card_best_effort(cid, None)
-    with get_engine().connect() as conn:
-        row = repo.get_knowledge_card(conn, cid)
-    assert row is not None
-    assert row["embed_model"] is None
+def test_best_effort_noop_for_missing_card() -> None:
+    """存在しない card_id でも静かに no-op（例外を投げない）。"""
+    embed_cards.embed_card_best_effort(99999)  # get が None → 何もしない

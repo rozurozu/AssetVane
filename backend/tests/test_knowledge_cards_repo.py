@@ -82,9 +82,9 @@ def test_delete() -> None:
 
 @pytest.mark.usefixtures("temp_db")
 def test_list_cards_needing_embedding() -> None:
-    """when_to_apply ありかつ未埋め込みのみ返す（空 when_to_apply・埋め込み済みは除外）。"""
+    """body があり未埋め込み/モデル不一致のみ返す（when_to_apply 空でも対象・ADR-062 追補）。"""
     need = repo.insert_knowledge_card(title="need", body="b", when_to_apply="cond")
-    repo.insert_knowledge_card(title="no-wta", body="b", when_to_apply=None)
+    nowta = repo.insert_knowledge_card(title="nowta", body="b", when_to_apply=None)
     done = repo.insert_knowledge_card(title="done", body="b", when_to_apply="cond2")
     with get_engine().begin() as conn:
         repo.update_card_embedding(conn, done, b"\x00\x00\x00\x00", "m")
@@ -92,5 +92,6 @@ def test_list_cards_needing_embedding() -> None:
         rows = repo.list_cards_needing_embedding(conn, current_model="m", limit=10)
     ids = {r["id"] for r in rows}
     assert need in ids
+    assert nowta in ids  # when_to_apply なしも body で対象（本文ベース埋め込み）
     assert done not in ids  # 同一モデルで埋め込み済みは除外
-    assert all(r["when_to_apply"] for r in rows)  # when_to_apply なしは除外
+    assert all(r["body"] for r in rows)  # body は必ずある（埋め込み元の合成テキスト）

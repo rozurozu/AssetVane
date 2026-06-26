@@ -62,6 +62,7 @@ from app.db.repo.knowledge_cards import (
     list_cards_needing_embedding,
     list_knowledge_cards,
     search_knowledge_cards,
+    set_card_weight,
     set_knowledge_card_status,
     update_card_embedding,
     update_knowledge_card,
@@ -360,6 +361,7 @@ __all__ = [
     "insert_knowledge_card",
     "update_knowledge_card",
     "set_knowledge_card_status",
+    "set_card_weight",
     "delete_knowledge_card",
     "update_card_embedding",
 ]
