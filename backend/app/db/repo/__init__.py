@@ -54,6 +54,17 @@ from app.db.repo.jquants_config import (
     get_jquants_config,
     upsert_jquants_config,
 )
+from app.db.repo.knowledge_cards import (
+    delete_knowledge_card,
+    get_knowledge_card,
+    insert_knowledge_card,
+    list_active_knowledge_cards,
+    list_cards_needing_embedding,
+    list_knowledge_cards,
+    set_knowledge_card_status,
+    update_card_embedding,
+    update_knowledge_card,
+)
 from app.db.repo.lead_lag import (
     get_daily_ohlc_by_codes,
     get_index_closes_by_symbols,
@@ -340,4 +351,13 @@ __all__ = [
     "upsert_embedding_config",
     "get_jquants_config",
     "upsert_jquants_config",
+    "list_knowledge_cards",
+    "get_knowledge_card",
+    "list_active_knowledge_cards",
+    "list_cards_needing_embedding",
+    "insert_knowledge_card",
+    "update_knowledge_card",
+    "set_knowledge_card_status",
+    "delete_knowledge_card",
+    "update_card_embedding",
 ]

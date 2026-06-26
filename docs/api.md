@@ -365,3 +365,22 @@ interface UsTransactionOut {
 
 - **`plan`** はスロットル間隔（取得速度）を決める（`adapters/jquants.py` の `_PLAN_INTERVALS`・[ADR-008](decisions.md)）。`GET /lead-lag` の `meta.plan`・`meta.is_delayed` もこの値から導く（`free` は遅延扱い）。
 - 未設定（`configured=false`）では取得バッチは `JQuantsError` で落ち runner が Discord 通知する（[ADR-018](decisions.md)）。初回は `/settings` で登録するまで動かない。
+
+## 12. 知識カード（[ADR-062](decisions.md)）
+
+`/cards` 管理画面から AI アドバイザーの知識カードを追加・編集・削除し、AI 審査（triage）で `status` を振り分け、人間が active 化する（active 化＝本番助言に効く＝人間が最終承認・[ADR-009](decisions.md)）。注入対象は `status='active'`。規律は CORE・一般教科書知識は LLM に任せ、ここには「非自明な知識（市場文脈・外部メモ・手法の解釈）」だけ置く。
+
+| メソッド | パス | 説明 |
+|---|---|---|
+| GET | `/cards?status=` | カード一覧（`status` で絞り込み可・新しい順）。`CardOut[]` |
+| GET | `/cards/{id}` | 1 件取得（404 あり）。`CardOut` |
+| POST | `/cards` | 作成（`CardCreateIn`）→ `CardOut`（201・status=`draft`・保存後 best-effort で `when_to_apply` を即時埋め込み） |
+| PUT | `/cards/{id}` | 部分更新（`CardUpdateIn`・`when_to_apply` 変更で再埋め込み）→ `CardOut` |
+| DELETE | `/cards/{id}` | 削除（204） |
+| POST | `/cards/{id}/triage` | AI 審査して `status` を振り分ける → `{triage: TriageOut|null, card: CardOut}` |
+| POST | `/cards/{id}/activate` | 人間承認で active 化 → `CardOut` |
+
+- **`CardOut`** = `{id, title, body, when_to_apply, status, level, sector17_code, theme, linked_signal_type, quant_note, always_inject(bool), source, embedded_at, created_at, updated_at}`（`embedding` BLOB は返さない）。
+- **`status`** = `draft`/`active`/`needs_quant`（計算未実装で実装待ち）/`to_core`（規律→CORE 誘導）/`rejected`（LLM 一般知識でカード不要）。
+- **triage**: verdict が `needs_quant`/`to_core`/`rejected` はその status を反映、`active` は draft 据え置き（人間承認待ち・`linked_signal_type` だけ反映）。面未設定/応答不正は `triage=null`・status 据え置き（[ADR-018](decisions.md)）。
+- **意味検索（RAG）retrieval は次フェーズ**（フェーズ1 は active 全注入。`embedding`/`when_to_apply` は素地として持つ・[ADR-045](decisions.md) 同型）。

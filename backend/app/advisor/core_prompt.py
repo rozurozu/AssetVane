@@ -5,9 +5,12 @@
 
 CORE は同居する core_prompt.md（リポジトリ管理・意図的なコミットでしか変わらない）。プロセス
 起動時に 1 度だけ読み、router（軸2 チャット）と nightly（軸1 夜AI）の双方がここから import する
-（method_cards.py と同じ「静的参照データのロード」流儀）。以前は router の private `_CORE` を
-nightly が import していた＝HTTP ルータへの逆流だったため、中立な本モジュールへ寄せた
-（tasks/review-2026-06-12.md §3）。
+（静的参照データのロード流儀）。以前は router の private `_CORE` を nightly が import していた＝
+HTTP ルータへの逆流だったため、中立な本モジュールへ寄せた（tasks/review-2026-06-12.md §3）。
+
+可変の知識（市場文脈・外部メモ・手法の解釈）は CORE ではなく DB の knowledge_cards に持ち、軸1/軸2
+の各ターンで services/knowledge_cards が active 行を読んで注入する（ADR-062）。
+旧・手法カード（advisor/cards/*.md・全カード常時注入）は ADR-062 で廃止した。
 """
 
 from __future__ import annotations

@@ -25,12 +25,12 @@ from app.advisor.journaling import (
     persist_trade_proposals_from_tool_runs,
 )
 from app.advisor.llm import CostGuardError
-from app.advisor.method_cards import METHOD_CARDS
 from app.advisor.prompt_builder import Message, ScreenContext, build_messages
 from app.advisor.tools.registry import CURRENT_PHASE
 from app.db import repo
 from app.db.engine import get_engine
 from app.services import policy as policy_service
+from app.services.knowledge_cards import load_active_card_texts
 from app.services.llm_config import FaceNotConfiguredError
 
 router = APIRouter(tags=["advisor"])
@@ -75,7 +75,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         policy=policy,
         conversation=req.messages,
         screen_context=req.context,
-        method_cards=METHOD_CARDS,
+        knowledge_cards=load_active_card_texts(),
         recent_journal=recent,
     )
 

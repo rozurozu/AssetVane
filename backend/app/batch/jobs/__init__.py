@@ -16,6 +16,7 @@ from app.batch.jobs import (
     calc_signals,
     calc_us_valuation,
     calc_valuation,
+    embed_cards,
     embed_news,
     embed_themes,
     fetch_edinet_descriptions,
@@ -109,6 +110,9 @@ NIGHTLY_JOBS = [
     # ADR-050: tag_us_themes/tag_jp_themes が当夜増やしたテーマ語彙を埋め込み near_duplicate_of を
     # 判定する（embed_news の直後＝embedding 系をまとめて回す・語彙 reconcile の第二段）。
     embed_themes.run,
+    # ADR-062: 知識カードの when_to_apply を埋め込む（embedding 系をまとめて回す）。
+    # UI 追加時の即時埋め込み（best-effort）の取りこぼしを夜間で拾う（フェーズ2 retrieval の素地）。
+    embed_cards.run,
     # ADR-028: warn 超過時、その月最初の夜に 1 通だけ警告（通知系を digest と並べる）。
     notify_cost_warn.run,
     notify_digest.run,  # Phase 6: ⑦⑧＋夜AI 提案を 1 通の Discord digest に束ねる（phase6-spec §3）

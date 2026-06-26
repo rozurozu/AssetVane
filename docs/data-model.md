@@ -530,23 +530,30 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 
 ---
 
-### `method_cards` — 手法カタログ／参照知識（将来予約・初期は不要）
+### `knowledge_cards` — 知識カード（[ADR-062](decisions.md)・0025_knowledge_cards）
 
-「①コード実装された手法への索引（②カタログ）」と「③計算を持たない参照知識」を保持する知識ベース（[advisor.md §5](advisor.md)）。**計算そのものは持たない**——計算は必ずコード（Tool / `signals`）側にある（[ADR-016](decisions.md)）。
+AI アドバイザーの第 3 の知識源（CORE/POLICY に続く・[ADR-015](decisions.md) 拡張）。旧・手法カード（`advisor/cards/*.md`・全カード常時注入）と将来予約 `method_cards` を実体化＋改名（"method" の 3 分裂を解消）。**計算そのものは持たない**——計算は必ずコード（`quant/*.py` / Tool / `signals`）側にある（[ADR-016](decisions.md)）。`linked_signal_type` で手法↔計算の索引役を畳む（別カタログ表は作らない）。
 
-**初期はこのテーブルを作らない**。②カタログはコードのレジストリ（全手法をプロンプトに列挙）、③参照知識はリポジトリの markdown で十分。手法・知識が増えて RAG（`sqlite-vec` の意味検索）が必要になった段階でこの形に移す。ここでは将来のスキーマを予約として残す。
+知識（市場文脈・外部メモ・手法の解釈）を UI で追加・編集し、AI 審査（`advisor/card_triage`）が `status` を振り分け、人間が active 化する（[ADR-009](decisions.md)）。注入対象は `status='active'`（フェーズ1 は全注入＝`services/knowledge_cards.load_active_card_texts`）。`embedding` は `when_to_apply` の意味検索キー（[ADR-045](decisions.md) 同型・float32 LE BLOB を `vec_distance_cosine` が次元非依存スキャン・フェーズ2 retrieval で使う）。**規律は CORE へ、一般教科書知識は LLM へ**振り分ける（ADR-062）。
 
 | 列 | 型 | 説明 |
 |---|---|---|
 | `id` | INTEGER PK | |
-| `title` | TEXT | 例「日米業種リードラグ (SIG-FIN-036)」|
-| `source` | TEXT | URL・引用・PDF パス |
-| `summary` | TEXT | 手法の要約 |
-| `when_to_apply` | TEXT | 適用条件（注入判定・検索キー）|
-| `key_points` | TEXT | 重要パラメータ（例 λ=0.9, K=3）|
-| `linked_signal_type` | TEXT | 実装済みなら対応シグナル（例 `lead_lag`、未実装は null）|
-| `embedding` | BLOB | sqlite-vec 用ベクトル（初期は null）|
-| `updated_at` | TEXT | 更新日時 |
+| `title` | TEXT | 例「東証の低 PBR 是正要請」|
+| `body` | TEXT | 注入される知識本文（要約・散文）|
+| `when_to_apply` | TEXT | 適用条件＝retrieval キー（embedding 対象）|
+| `status` | TEXT | `draft`/`active`/`needs_quant`/`to_core`/`rejected`（AI 審査が初期値・active 化は人間承認）|
+| `level` | TEXT | 構造タグ `stock`/`sector`/`market`/`general`（事前フィルタ・[ADR-044](decisions.md) 同体系）|
+| `sector17_code` | TEXT | 業種事前フィルタ（J-Quants S17・任意・[ADR-053](decisions.md)）|
+| `theme` | TEXT | テーマ事前フィルタ（任意）|
+| `linked_signal_type` | TEXT | 紐づく signal_type（未実装は null＝手法↔計算の索引）|
+| `quant_note` | TEXT | `needs_quant` のとき「必要な計算」のメモ |
+| `always_inject` | INTEGER | 1=常時注入の例外保険（0/1）|
+| `source` | TEXT | URL・引用・由来（YouTuber 動画 URL 等）|
+| `embedding` | BLOB | `when_to_apply` の float32 LE ベクトル（未埋め込み/機能オフは null）|
+| `embed_model` | TEXT | 埋め込みモデル名（不一致行を再埋め込み対象にするキー）|
+| `embedded_at` | TEXT | 埋め込み時刻 ISO8601 UTC |
+| `created_at` / `updated_at` | TEXT | ISO8601 |
 
 ---
 

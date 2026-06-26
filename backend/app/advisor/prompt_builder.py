@@ -103,7 +103,7 @@ def build_messages(
     policy: dict[str, object] | None,
     conversation: list[Message],
     screen_context: ScreenContext | None = None,
-    method_cards: list[str] | None = None,
+    knowledge_cards: list[str] | None = None,
     recent_journal: str | None = None,
     facts: None = None,  # noqa: ARG001 — 事実は Tool ループで動的に入る（ADR-014）。静的には積まない
 ) -> list[dict[str, object]]:
@@ -112,7 +112,7 @@ def build_messages(
     組み立て順序（system → 会話）:
     1. system: [CORE]         ← core_prompt.md（不変・リポジトリ管理）
     2. system: [POLICY]       ← compile_policy(policy)（DB からコンパイル）
-    3. system: [手法カード]    ← method_cards があれば（初期は None・ADR-016）
+    3. system: [知識カード]    ← knowledge_cards があれば（DB の active 行・ADR-062）
     4. system: [文脈]         ← recent_journal があれば「直近の投資日記: …」
     5. system: [画面コンテキスト] ← 軸2 のみ。compile_screen_context() の 1 行（ADR-025）
     6. conversation           ← user/assistant の列を {role, content} dict に変換
@@ -129,13 +129,13 @@ def build_messages(
     policy_text = compile_policy(policy)
     messages.append({"role": "system", "content": policy_text})
 
-    # 3. 手法カード（任意・初期は省略可・ADR-016）
-    if method_cards:
-        cards_text = "\n\n".join(method_cards)
+    # 3. 知識カード（DB の active 行・任意・ADR-062。旧・手法カード常時注入を置換）
+    if knowledge_cards:
+        cards_text = "\n\n".join(knowledge_cards)
         messages.append(
             {
                 "role": "system",
-                "content": f"## 手法カード（参照知識）\n\n{cards_text}",
+                "content": f"## 知識カード（参照知識）\n\n{cards_text}",
             }
         )
 

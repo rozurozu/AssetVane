@@ -107,3 +107,13 @@ export async function del<T>(path: string): Promise<T> {
   if (!r.ok) throw await toApiError(r);
   return r.json() as Promise<T>;
 }
+
+// 204 No Content を返す DELETE 用（body を読まない・読むと空ボディで JSON parse が落ちる）。
+// 既存の多くの DELETE は {ok:true} JSON を返すが、一部（/cards/{id}＝ADR-062）は 204 で本文なし。
+export async function delNoContent(path: string): Promise<void> {
+  const r = await fetchOrUnreachable(path, {
+    method: "DELETE",
+    headers: { Accept: "application/json" },
+  });
+  if (!r.ok) throw await toApiError(r);
+}

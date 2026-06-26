@@ -118,7 +118,7 @@ class TestBuildMessagesOrder:
             policy=POLICY_DICT,
             conversation=CONVERSATION,
             screen_context=ctx,
-            method_cards=["手法カード: モメンタム"],
+            knowledge_cards=["手法カード: モメンタム"],
             recent_journal="昨日の日記テキスト",
         )
         roles = [m["role"] for m in msgs]
@@ -260,7 +260,7 @@ def test_build_messages_policy_none_does_not_raise() -> None:
 
 
 # ---------------------------------------------------------------------------
-# build_messages — method_cards / recent_journal が省略可能
+# build_messages — knowledge_cards / recent_journal が省略可能
 # ---------------------------------------------------------------------------
 
 
@@ -268,9 +268,9 @@ def test_build_messages_policy_none_does_not_raise() -> None:
     "kwargs",
     [
         {},
-        {"method_cards": None},
+        {"knowledge_cards": None},
         {"recent_journal": None},
-        {"method_cards": None, "recent_journal": None},
+        {"knowledge_cards": None, "recent_journal": None},
     ],
 )
 def test_build_messages_optional_fields_do_not_raise(kwargs: dict) -> None:  # type: ignore[type-arg]
@@ -284,13 +284,13 @@ def test_build_messages_optional_fields_do_not_raise(kwargs: dict) -> None:  # t
     assert len(msgs) >= 2  # CORE + POLICY は必ず入る
 
 
-def test_build_messages_method_cards_adds_system_message() -> None:
-    """method_cards を渡すと手法カード system メッセージが追加される。"""
+def test_build_messages_knowledge_cards_adds_system_message() -> None:
+    """knowledge_cards を渡すと手法カード system メッセージが追加される。"""
     msgs = build_messages(
         core_prompt=CORE,
         policy=POLICY_DICT,
         conversation=CONVERSATION,
-        method_cards=["モメンタム手法", "RSI 手法"],
+        knowledge_cards=["モメンタム手法", "RSI 手法"],
     )
     card_msgs = [m for m in msgs if m["role"] == "system" and "モメンタム手法" in str(m["content"])]
     assert len(card_msgs) == 1

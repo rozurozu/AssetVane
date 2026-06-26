@@ -42,6 +42,8 @@ export const nav: NavSection[] = [
       // Advisor は専用ページを作らずチャット起動トリガ（onClick で open・OPEN-I・spec §9.6）。
       { label: "Advisor", icon: "🧠", action: "advisor" },
       { label: "Policy", icon: "🧭", href: "/policy" },
+      // 知識カード管理（ADR-062）。非自明な投資知識を置き、AI 審査→人間承認で本番助言に効かせる。
+      { label: "知識カード", icon: "🗂", href: "/cards" },
       { label: "Journal", icon: "📓", href: "/journal" },
       { label: "Proposals", icon: "✓", href: "/proposals" },
     ],

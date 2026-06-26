@@ -757,3 +757,42 @@ jquants_config = Table(
     Column("plan", String, nullable=False, server_default="free"),  # free/light/standard/premium
     Column("updated_at", String),  # ISO8601
 )
+
+# ===== ADR-062: 知識カード基盤（knowledge_cards・0025_knowledge_cards） =====
+# AI アドバイザーの「③知識軸」を CORE（規律・不変・リポジトリ）/ POLICY（方針・可変・DB）に続く
+# 第 3 の知識源として DB 化する。旧・手法カード（cards/*.md・全カード常時注入＝ADR-016/048）を廃し、
+# 増える知識（市場文脈・外部メモ・手法の解釈）を 1 表に集約して UI 管理・RAG 取得する。
+# data-model.md の将来予約 method_cards を実体化＋改名（"method" の 3 分裂＝手法/カード/カタログを
+# 解消）。計算そのものは持たない（計算は必ずコード＝quant・ADR-014/016）。linked_signal_type で
+# 「手法↔計算」の索引役を畳み、別カタログ表は作らない。embedding は when_to_apply の意味検索キー
+# （ADR-045 同型・float32 LE BLOB を vec_distance_cosine が次元非依存にスキャン）。
+knowledge_cards = Table(
+    "knowledge_cards",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("title", String, nullable=False),  # 例「東証の低 PBR 是正」
+    Column("body", String, nullable=False),  # 注入される知識本文（要約・散文）
+    Column("when_to_apply", String),  # 適用条件＝retrieval キー（embedding 対象・ADR-045 同型）
+    # ライフサイクル（ADR-062・AI 審査が初期値を付け、active 化は人間が最終承認＝ADR-009）:
+    # 'draft'（入力直後）/ 'active'（注入対象）/ 'needs_quant'（計算未実装で実装待ち）/
+    # 'to_core'（規律→CORE 誘導）/ 'rejected'（LLM 一般知識でカード不要）。
+    Column("status", String, nullable=False, server_default="draft"),
+    Column(
+        "level", String
+    ),  # 構造タグ 'stock'/'sector'/'market'/'general'（事前フィルタ・ADR-044 同体系）
+    Column("sector17_code", String),  # 業種事前フィルタ（J-Quants S17・任意・ADR-053）
+    Column("theme", String),  # テーマ事前フィルタ（任意）
+    Column("linked_signal_type", String),  # 紐づく signal_type（未実装は NULL＝手法↔計算の索引）
+    Column("quant_note", String),  # needs_quant のとき「必要な計算」のメモ
+    Column(
+        "always_inject", Integer, nullable=False, server_default="0"
+    ),  # 1=常時注入の例外保険（0/1）
+    Column("source", String),  # URL/引用/由来（YouTuber 動画 URL 等）
+    # ADR-045 同型の埋め込み 3 列（when_to_apply のベクトル・未埋め込み/機能オフは NULL）。
+    Column("embedding", LargeBinary),  # float32 LE BLOB
+    Column("embed_model", String),  # 埋め込みモデル名（不一致行を再埋め込み対象にするキー）
+    Column("embedded_at", String),  # 埋め込み時刻 ISO8601 UTC
+    Column("created_at", String),  # ISO8601
+    Column("updated_at", String),  # ISO8601
+    Index("ix_knowledge_cards_status", "status"),  # active 行の取り出しを速くする
+)
