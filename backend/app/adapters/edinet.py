@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 # 有価証券報告書の docTypeCode（EDINET コードリスト・事業の内容を含む年次開示）。
 DOC_TYPE_ANNUAL_SECURITIES_REPORT = "120"
 
+# 訂正有価証券報告書の docTypeCode（B-2）。本文は取らず一覧の出現を earnings quality の
+# シグナルとして記録する（fetch_edinet_descriptions が 130 を拾い edinet_restatements へ）。
+DOC_TYPE_AMENDED_ANNUAL_SECURITIES_REPORT = "130"
+
 # 事業の内容（XBRL/CSV の要素ID）。CSV（type=5）の「要素ID」列がこの値の行に本文が入る。
 _BUSINESS_ELEMENT_ID = "jpcrp_cor:DescriptionOfBusinessTextBlock"
 

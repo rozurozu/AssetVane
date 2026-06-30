@@ -11,6 +11,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.db.engine import get_engine
 from app.db.schema import (
     company_descriptions,
+    edinet_restatements,
     fetch_meta,
     stock_themes,
     stocks,
@@ -119,6 +120,41 @@ def get_company_description(conn: Connection, market: str, code: str) -> dict[st
     )
     row = conn.execute(stmt).mappings().first()
     return dict(row) if row else None
+
+
+# ===== 訂正有報フラグ（B-2・edinet_restatements・docTypeCode=130） =====
+
+
+def record_edinet_restatement(row: dict[str, Any]) -> int:
+    """訂正有報（docTypeCode=130）の出現を doc_id 冪等で記録する（B-2・append-only）。
+
+    EDINET 提出日クロールが 1 日分の一覧から拾った訂正書類の「事実」だけを焼く（本文は取らない）。
+    冪等キーは doc_id（同じ書類は再クロールで重複しない＝on_conflict_do_nothing）。訂正は不変な
+    過去事実なので既存行は更新しない。created_at 未指定なら UTC now を補完する。返り値は挿入行数
+    （1=新規／0=既知の再記録）。get_valuation が get_latest_restatement_date 経由で中継する。
+    """
+    values = dict(row)
+    values.setdefault("created_at", datetime.now(UTC).isoformat())
+    stmt = (
+        sqlite_insert(edinet_restatements)
+        .values(values)
+        .on_conflict_do_nothing(index_elements=["doc_id"])
+    )
+    with get_engine().begin() as conn:
+        result = conn.execute(stmt)
+    return result.rowcount or 0
+
+
+def get_latest_restatement_date(conn: Connection, code: str) -> str | None:
+    """指定銘柄の最新の訂正有報・提出日を返す（無ければ None・B-2）。
+
+    recency（「直近か」）の判定は数値でなく解釈なので LLM に委ねる（事実=最新日付のみ返す＝
+    ADR-014）。get_valuation が last_restatement_at として中継する。
+    """
+    stmt = select(func.max(edinet_restatements.c.disclosed_date)).where(
+        edinet_restatements.c.code == code
+    )
+    return conn.execute(stmt).scalar_one_or_none()
 
 
 def insert_themes_if_absent(names: list[str], first_seen_at: str) -> int:

@@ -339,6 +339,9 @@ async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
         code = GetValuationArgs.model_validate(args).code
         with get_engine().connect() as conn:
             row = repo.get_valuation_snapshot(conn, code)
+            # 訂正有報の最新提出日（earnings quality・B-2）。recency の解釈は LLM に委ねる
+            # （事実=日付のみ／無ければ None＝ADR-014）。valuation 未焼成でも独立に付ける。
+            last_restatement_at = repo.get_latest_restatement_date(conn, code)
         if row is None:
             return {
                 "code": code,
@@ -346,6 +349,7 @@ async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
                 "currency": "JPY",
                 "found": False,
                 "is_delayed": _IS_DELAYED,
+                "last_restatement_at": last_restatement_at,
             }
         return {
             "code": code,
@@ -369,6 +373,7 @@ async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
             "op_growth_yoy": row.get("op_growth_yoy"),
             "profit_growth_yoy": row.get("profit_growth_yoy"),
             "eps_growth_yoy": row.get("eps_growth_yoy"),
+            "last_restatement_at": last_restatement_at,
         }
     except Exception as exc:
         logger.exception("handle_get_valuation 失敗")

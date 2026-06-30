@@ -530,6 +530,24 @@ LLM アダプタの呼び出しラッパが per-call で積む。**当月累計 
 
 ---
 
+### `edinet_restatements` — 訂正有報の出現台帳（[ADR-063](decisions.md)・0027_edinet_restatements）
+
+EDINET 提出日クロール（`fetch_edinet_descriptions`）が「捨てていた」**訂正有価証券報告書（docTypeCode=`'130'`）**の出現を、本文を取らず一覧の事実だけ記録する **append-only** 台帳（業績の質シグナル family・B-2）。訂正の有無は会計・開示品質のシグナルで、`get_valuation` が `last_restatement_at`（最新訂正の提出日）として中継する。recency（「直近か」）は数値でなく解釈なので **LLM に委ねる**（事実=日付のみ持つ＝[ADR-014](decisions.md)）。
+
+| 列 | 型 | 説明 |
+|---|---|---|
+| `doc_id` | TEXT PK | EDINET 書類管理番号（**冪等キー**＝再クロールで重複しない・`on_conflict_do_nothing`）|
+| `code` | TEXT | JP 5桁（secCode・cross-FK なし）|
+| `disclosed_date` | TEXT | 訂正の提出日 `'YYYY-MM-DD'`（クロール日＝提出日）|
+| `filer_name` | TEXT | 提出者名（provenance・任意）|
+| `doc_type_code` | TEXT | `'130'`（訂正有報・将来の派生コードにも備え保持）|
+| `created_at` | TEXT | この行を記録した時刻 ISO8601 |
+
+- 記録は**本文を取らず一覧の事実だけ**（要約 cap と独立＝LLM を撃たない）。訂正は不変な過去事実なので既存行は更新しない（`repo.record_edinet_restatement`）。
+- 読み取りは `repo.get_latest_restatement_date(conn, code)`（最新 `disclosed_date` を返す・無ければ None）。
+
+---
+
 ### `knowledge_cards` — 知識カード（[ADR-062](decisions.md)・0025_knowledge_cards）
 
 AI アドバイザーの第 3 の知識源（CORE/POLICY に続く・[ADR-015](decisions.md) 拡張）。旧・手法カード（`advisor/cards/*.md`・全カード常時注入）と将来予約 `method_cards` を実体化＋改名（"method" の 3 分裂を解消）。**計算そのものは持たない**——計算は必ずコード（`quant/*.py` / Tool / `signals`）側にある（[ADR-016](decisions.md)）。`linked_signal_type` で手法↔計算の索引役を畳む（別カタログ表は作らない）。

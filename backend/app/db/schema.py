@@ -687,6 +687,24 @@ company_descriptions = Table(
     UniqueConstraint("market", "code", name="uq_company_descriptions_market_code"),
 )
 
+# ===== 訂正有報フラグ（B-2・docTypeCode=130・0027_edinet_restatements） =====
+# EDINET 提出日クロール（fetch_edinet_descriptions）が「捨てていた」訂正有価証券報告書
+# （docTypeCode='130'）の出現を、本文を取らず一覧の事実だけ記録する append-only 台帳。
+# 訂正の有無は会計・開示の品質シグナル（earnings quality）で、get_valuation が
+# last_restatement_at（最新訂正の提出日）として中継する。recency（「直近か」）は数値でなく
+# 解釈なので LLM に委ねる（事実=日付のみ持つ・ADR-014）。冪等キーは doc_id（再クロール安全）。
+edinet_restatements = Table(
+    "edinet_restatements",
+    metadata,
+    Column("doc_id", String, primary_key=True),  # EDINET 書類管理番号（冪等キー）
+    Column("code", String, nullable=False),  # JP 5桁（secCode・cross-FK なし）
+    Column("disclosed_date", String, nullable=False),  # 訂正の提出日 'YYYY-MM-DD'（クロール日）
+    Column("filer_name", String),  # 提出者名（provenance・任意）
+    Column("doc_type_code", String),  # '130'（訂正有報・将来の派生コードにも備え保持）
+    Column("created_at", String),  # この行を記録した時刻 ISO8601
+    Index("ix_edinet_restatements_code", "code"),
+)
+
 # ===== ADR-058: LLM プロバイダ複数登録・面別 provider/model 設定（0022_llm_providers） =====
 #
 # LLM 接続の正本を env（起動時固定）から DB へ移し、/settings の WebUI から複数 provider を

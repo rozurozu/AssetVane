@@ -72,6 +72,11 @@ def _desc(code: str) -> dict[str, Any] | None:
         return repo.get_company_description(conn, "JP", code)
 
 
+def _latest_restatement(code: str) -> str | None:
+    with get_engine().connect() as conn:
+        return repo.get_latest_restatement_date(conn, code)
+
+
 def test_crawl_takes_only_120_in_universe(temp_db) -> None:
     """docTypeCode=120 かつユニバース内だけ取り込み、カーソルを完了日へ前進する。"""
     _seed_universe("72030", "67580")
@@ -192,3 +197,50 @@ def test_crawl_is_idempotent_on_rerun(temp_db) -> None:
     assert second["n_summarized"] == 0
     assert second["n_skip_existing"] == 1
     assert adapter.fetched == []
+
+
+def test_crawl_records_130_restatement(temp_db) -> None:
+    """docTypeCode=130（訂正有報）は本文を取らず出現だけ記録し、120 と独立に拾う（B-2）。"""
+    _seed_universe("72030", "67580")
+    adapter = _FakeEdinet(
+        docs_by_date={
+            "2025-06-25": [
+                _doc("S1", "72030"),  # 120: 通常の取込
+                _doc("R1", "67580", doc_type="130"),  # 130: 訂正 → 記録のみ
+                _doc("R2", "99990", doc_type="130"),  # ユニバース外 → skip
+            ]
+        },
+        text_by_doc={"S1": "産業用ロボットを製造する"},
+    )
+    result = job.crawl(
+        start_date=date(2025, 6, 25),
+        end_date=date(2025, 6, 25),
+        cap=None,
+        adapter=adapter,
+        summarize_fn=_fake_summarize,
+        log=lambda _m: None,
+    )
+    assert result["n_restatements"] == 1
+    assert result["n_summarized"] == 1
+    assert adapter.fetched == ["S1"]  # 訂正は本文を取らない（一覧の事実だけ）
+    assert _latest_restatement("67580") == "2025-06-25"  # 提出日＝クロール日
+    assert _latest_restatement("99990") is None  # ユニバース外は記録しない
+    assert _latest_restatement("72030") is None  # 120 のみの銘柄は訂正なし
+
+
+def test_crawl_restatement_is_idempotent(temp_db) -> None:
+    """同じ訂正書類（doc_id）を 2 回クロールしても二重記録しない（doc_id 冪等・B-2）。"""
+    _seed_universe("67580")
+    adapter = _FakeEdinet({"2025-06-25": [_doc("R1", "67580", doc_type="130")]}, {})
+    common = {
+        "start_date": date(2025, 6, 25),
+        "end_date": date(2025, 6, 25),
+        "adapter": adapter,
+        "summarize_fn": _fake_summarize,
+        "log": lambda _m: None,
+    }
+    first = job.crawl(cap=None, **common)
+    second = job.crawl(cap=None, **common)
+    assert first["n_restatements"] == 1
+    assert second["n_restatements"] == 0  # 2 回目は doc_id 冪等で新規ゼロ
+    assert _latest_restatement("67580") == "2025-06-25"

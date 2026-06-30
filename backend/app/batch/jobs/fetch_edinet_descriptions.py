@@ -35,6 +35,7 @@ from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.adapters.edinet import (
+    DOC_TYPE_AMENDED_ANNUAL_SECURITIES_REPORT,
     DOC_TYPE_ANNUAL_SECURITIES_REPORT,
     EdinetAdapter,
     EdinetAdapterError,
@@ -107,6 +108,7 @@ def crawl(
     n_skip_dossier = 0
     n_skip_existing = 0
     n_no_business = 0
+    n_restatements = 0
     dates_done = 0
     failures: list[str] = []
     cap_reached = False
@@ -122,6 +124,32 @@ def crawl(
             failures.append(f"{iso} 一覧取得: {exc}")
             emit(f"✖ {iso}: 書類一覧の取得に失敗（カーソル据え置きで停止）: {exc}")
             break
+
+        # 訂正有報（docTypeCode=130）の出現を記録（B-2・本文は取らず一覧の事実だけ・冪等）。
+        # 要約 cap とは独立（LLM を撃たないので天井に数えない）。再クロールは doc_id 冪等で安全。
+        for doc in docs:
+            if (
+                doc.get("doc_type_code") != DOC_TYPE_AMENDED_ANNUAL_SECURITIES_REPORT
+                or doc.get("sec_code") not in universe
+                or not doc.get("doc_id")
+            ):
+                continue
+            try:
+                if repo.record_edinet_restatement(
+                    {
+                        "doc_id": doc["doc_id"],
+                        "code": doc["sec_code"],
+                        "disclosed_date": iso,  # 訂正の提出日＝このクロール日
+                        "filer_name": doc.get("filer_name"),
+                        "doc_type_code": doc.get("doc_type_code"),
+                    }
+                ):
+                    n_restatements += 1
+            except Exception as exc:  # noqa: BLE001 — 書類境界で握り後続を止めない（ADR-018）
+                logger.exception(
+                    "fetch_edinet_descriptions: 訂正 %s の記録に失敗", doc.get("doc_id")
+                )
+                failures.append(f"訂正 {doc.get('sec_code')}({iso}): {exc}")
 
         targets = [
             doc
@@ -195,6 +223,7 @@ def crawl(
         "n_skip_dossier": n_skip_dossier,
         "n_skip_existing": n_skip_existing,
         "n_no_business": n_no_business,
+        "n_restatements": n_restatements,
         "dates_done": dates_done,
         "failures": failures,
         "cap_reached": cap_reached,
@@ -256,7 +285,8 @@ def run() -> JobResult:
         f"提出日 {start}〜{today} を {result['dates_done']} 日クロール"
         f"・要約 {result['n_summarized']} 件（天井 {cap}{hit}）"
         f"・skip dossier {result['n_skip_dossier']}/既存 {result['n_skip_existing']}"
-        f"・事業の内容なし {result['n_no_business']}・失敗 {len(failures)}"
+        f"・事業の内容なし {result['n_no_business']}・訂正 {result['n_restatements']} 件"
+        f"・失敗 {len(failures)}"
     )
     if failures:
         detail += " / 失敗詳細: " + "; ".join(failures[:5])

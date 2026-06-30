@@ -99,6 +99,29 @@ def test_get_valuation_not_found(temp_db) -> None:
     assert out["currency"] == "JPY"
 
 
+def test_get_valuation_relays_last_restatement_at(temp_db) -> None:
+    """訂正有報があれば last_restatement_at（事実=最新提出日）を中継し、無ければ None（B-2）。"""
+    _seed(temp_db)
+    # 訂正なし → None（事実=日付のみ・recency 判定は LLM・ADR-014）
+    out = _run(handlers.handle_get_valuation({"code": "72030"}))
+    assert out["found"] is True
+    assert out["last_restatement_at"] is None
+    # 訂正を記録 → 最新提出日を中継し、verdict は持たない
+    repo.record_edinet_restatement(
+        {"doc_id": "X1", "code": "72030", "disclosed_date": "2026-05-20"}
+    )
+    out2 = _run(handlers.handle_get_valuation({"code": "72030"}))
+    assert out2["last_restatement_at"] == "2026-05-20"
+    assert _VERDICT_KEYS.isdisjoint(out2.keys())
+    # valuation 未焼成（found=False）でも訂正は独立に中継する
+    repo.record_edinet_restatement(
+        {"doc_id": "X2", "code": "99999", "disclosed_date": "2026-04-01"}
+    )
+    out3 = _run(handlers.handle_get_valuation({"code": "99999"}))
+    assert out3["found"] is False
+    assert out3["last_restatement_at"] == "2026-04-01"
+
+
 def test_screen_valuation_filters_and_labels_market(temp_db) -> None:
     _seed(temp_db)
     # per はおよそ 6.95 倍 → per_max=15 で 1 件ヒット
