@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, and_, func, select
+from sqlalchemy import Connection, and_, func, select, update
 
 from app.db.engine import get_engine
 from app.db.repo._common import _upsert
@@ -239,6 +239,10 @@ def _valuation_inner_subquery():
             v.c.profit_forecast_achievement,
             v.c.op_forecast_revision,
             v.c.profit_forecast_revision,
+            v.c.receivables_turnover_days,
+            v.c.inventory_turnover_days,
+            v.c.receivables_growth_yoy,
+            v.c.inventory_growth_yoy,
             per_sector_pctile,
             market_cap_rank,
         )
@@ -423,3 +427,42 @@ def list_holding_codes(conn: Connection, portfolio_id: int) -> list[str]:
         .all()
     )
     return list(rows)
+
+
+def list_all_holding_codes(conn: Connection) -> list[str]:
+    """全ポートフォリオの保有 code を重複なく返す（#2 売掛/在庫の質の対象解決・ADR-064）。
+
+    portfolio_id を跨いで distinct。watchlist と合わせて edinetdb.jp 取得対象を絞る（
+    レート予算節約）。
+    """
+    rows = (
+        conn.execute(select(holdings.c.code).distinct().order_by(holdings.c.code)).scalars().all()
+    )
+    return list(rows)
+
+
+# 売掛/在庫の質の更新対象列（ADR-064 #2）。calc_valuation が焼いた既存行を後段ジョブが UPDATE する。
+_RECV_INV_COLUMNS = (
+    "receivables_turnover_days",
+    "inventory_turnover_days",
+    "receivables_growth_yoy",
+    "inventory_growth_yoy",
+)
+
+
+def update_valuation_receivables_inventory(
+    conn: Connection, code: str, quality: dict[str, Any]
+) -> int:
+    """valuation_snapshots の既存 1 行に売掛/在庫の質列だけ UPDATE する（W2・ADR-064 #2）。
+
+    calc_valuation が as_of_date/価格込みで焼いた行が前提（
+    NIGHTLY 順で calc_valuation の後に回す）。
+    存在しない code（価格なし＝行なし）は UPDATE 0 件で安全に no-op。quality は _RECV_INV_COLUMNS の
+    キーのみ採用（fin_disclosed_date/updated_at は calc_valuation の値を尊重して触らない）。返り値は
+    更新行数（0 or 1）。呼び出し側（夜間ジョブ）が begin() 境界を所有する。
+    """
+    values = {k: quality.get(k) for k in _RECV_INV_COLUMNS}
+    res = conn.execute(
+        update(valuation_snapshots).where(valuation_snapshots.c.code == code).values(**values)
+    )
+    return res.rowcount or 0

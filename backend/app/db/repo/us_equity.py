@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Connection, and_, delete, func, select
+from sqlalchemy import Connection, and_, delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.engine import get_engine
@@ -15,6 +15,35 @@ from app.db.schema import (
     us_stocks,
     us_valuation_snapshots,
 )
+
+# 売掛/在庫の質の更新対象列（ADR-064 #2・JP valuation_snapshots と対称）。
+_US_RECV_INV_COLUMNS = (
+    "receivables_turnover_days",
+    "inventory_turnover_days",
+    "receivables_growth_yoy",
+    "inventory_growth_yoy",
+)
+
+
+def update_us_valuation_receivables_inventory(
+    conn: Connection, symbol: str, quality: dict[str, Any]
+) -> int:
+    """us_valuation_snapshots の既存 1 行に売掛/在庫の質列だけ UPDATE する（W2・ADR-064 #2）。
+
+    calc_us_valuation が焼いた行が前提（NIGHTLY 順で後段）。
+    存在しない symbol は UPDATE 0 件で no-op。
+    quality は _US_RECV_INV_COLUMNS のキーのみ採用（
+    JP の update_valuation_receivables_inventory と対称）。
+    呼び出し側（夜間ジョブ）が begin() 境界を所有する。
+    """
+    values = {k: quality.get(k) for k in _US_RECV_INV_COLUMNS}
+    res = conn.execute(
+        update(us_valuation_snapshots)
+        .where(us_valuation_snapshots.c.symbol == symbol)
+        .values(**values)
+    )
+    return res.rowcount or 0
+
 
 # ===== Phase 7(B-1): 米国株（提示専用・ADR-031/039・us_stocks マスタ） =====
 # 日本株 stocks の upsert_stocks / list_stocks / get_stock をミラーした米株版（既存無改変）。
@@ -255,6 +284,10 @@ def _us_valuation_inner_subquery():
             v.c.op_growth_yoy,
             v.c.profit_growth_yoy,
             v.c.eps_growth_yoy,
+            v.c.receivables_turnover_days,
+            v.c.inventory_turnover_days,
+            v.c.receivables_growth_yoy,
+            v.c.inventory_growth_yoy,
             gics_sector_pctile,
             market_cap_rank,
         )

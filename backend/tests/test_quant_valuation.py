@@ -12,11 +12,13 @@ from app.quant.valuation import (
     forecast_guidance,
     forecast_revision,
     growth_yoy,
+    inventory_turnover_days,
     market_cap,
     net_margin,
     operating_margin,
     pbr,
     per,
+    receivables_turnover_days,
     roe,
 )
 
@@ -222,3 +224,30 @@ def test_forecast_guidance_empty_rows() -> None:
         "op_forecast_revision": None,
         "profit_forecast_revision": None,
     }
+
+
+# --- 売掛/在庫の質シグナル（ADR-064 #2） ---
+
+
+def test_receivables_turnover_days_basic_and_guards() -> None:
+    # 受取債権 100・売上 365 → 100/365×365 = 100 日
+    assert abs(receivables_turnover_days(100.0, 365.0) - 100.0) < 1e-9
+    # 売上 0 以下は None（捏造しない）
+    assert receivables_turnover_days(100.0, 0.0) is None
+    assert receivables_turnover_days(100.0, -10.0) is None
+    # 受取債権 None・売上 None は None
+    assert receivables_turnover_days(None, 365.0) is None
+    assert receivables_turnover_days(100.0, None) is None
+    # 受取債権 0 は事実（0 日）
+    assert receivables_turnover_days(0.0, 365.0) == 0.0
+
+
+def test_inventory_turnover_days_basic_and_guards() -> None:
+    # 在庫 200・売上原価 365 → 200 日
+    assert abs(inventory_turnover_days(200.0, 365.0) - 200.0) < 1e-9
+    # 分母（売上原価）0 以下は None
+    assert inventory_turnover_days(200.0, 0.0) is None
+    assert inventory_turnover_days(200.0, -5.0) is None
+    # 在庫 None・分母 None は None
+    assert inventory_turnover_days(None, 365.0) is None
+    assert inventory_turnover_days(200.0, None) is None

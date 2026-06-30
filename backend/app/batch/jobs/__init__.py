@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from app.batch.jobs import (
     calc_lead_lag,
+    calc_receivables_inventory,
     calc_signals,
+    calc_us_receivables_inventory,
     calc_us_valuation,
     calc_valuation,
     embed_cards,
@@ -48,6 +50,10 @@ NIGHTLY_JOBS = [
     fetch_index.run,
     fetch_financials.run,
     calc_valuation.run,  # ADR-031: 財務取得後に全銘柄のバリュエーションを焼く（screen の土台）
+    # ADR-064 #2: 売掛/在庫の質を watchlist/holdings に焼く。calc_valuation が as_of_date 込みで
+    # 行を作った直後に置き、その既存行へ edinetdb.jp 由来の DSO/DIO・受取債権/在庫 YoY を UPDATE
+    # する（行が無ければ no-op）。cadence＋月予算ガードで edinetdb の無料枠（日100/月600）を守る。
+    calc_receivables_inventory.run,
     calc_signals.run,
     # Phase 7: 日米業種リードラグを焼く。calc_signals の後・run_advisor の前に置き、夜の分析AI が
     # 当日の lead_lag を読めるようにする（SIG-FIN-036-13・US/JP 業種 ETF が揃ってから算出）。
@@ -79,6 +85,10 @@ NIGHTLY_JOBS = [
     fetch_us_quotes.run,
     fetch_us_fundamentals.run,
     calc_us_valuation.run,
+    # ADR-064 #2: 保有米株の売掛/在庫の質を焼く。calc_us_valuation が行を作った直後に置き、その
+    # 既存行へ yfinance balance_sheet 由来の DSO/DIO・受取債権/在庫 YoY を UPDATE（JP 対称・
+    # 行が無ければ no-op）。対象は us_holdings 限定＋cadence で取得を抑える。
+    calc_us_receivables_inventory.run,
     # ADR-050 段階A: US テーマの grounded タグ付け。fetch_us_fundamentals が company_descriptions
     # を更新した直後・run_advisor の前に置き、夜の分析AI が当夜のタグを Tool で読めるようにする。
     tag_us_themes.run,

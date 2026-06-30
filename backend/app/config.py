@@ -205,6 +205,15 @@ class Settings(BaseSettings):
     # 固定 N=3 を廃し、暴走防止の上限として残す（投資 dossier 巡回ジョブが消費する）。
     dossier_nightly_max: int = 3  # 夜あたり巡回上限の天井（暴走防止）
 
+    # --- EDINET DB（edinetdb.jp）#2 売掛/在庫の質の取得 cadence（ADR-064） ---
+    # 接続値（api_key/plan）は DB（edinetdb_config）・ここは取得頻度の制御のみ（レート予算節約）。
+    # 各銘柄の #2 を何日あけて再取得するか（財務は四半期更新ゆえ週次で十分）。
+    # fetch_meta で per-code 追跡。
+    edinetdb_refresh_interval_days: int = 7
+    # 月の残予算がこの数を下回ったら当夜の #2 取得を打ち切る予備（
+    # x-ratelimit-monthly-remaining 監視）。
+    edinetdb_monthly_reserve: int = 50
+
     @property
     def index_symbol_list(self) -> list[str]:
         """カンマ区切りの指数シンボルをリストにする（phase2-spec.md §3.1）。"""

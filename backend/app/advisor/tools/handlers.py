@@ -381,6 +381,13 @@ async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
             "profit_forecast_achievement": row.get("profit_forecast_achievement"),
             "op_forecast_revision": row.get("op_forecast_revision"),
             "profit_forecast_revision": row.get("profit_forecast_revision"),
+            # 売掛/在庫の質シグナル（ADR-064 #2・edinetdb.jp 源）。DSO/DIO は水準、YoY は伸び。
+            # 「受取債権/在庫が売上(revenue_growth_yoy)より速く伸びていないか＝押し込み/滞留の疑い」
+            # の解釈は LLM が行う（事実のみ・None あり＝未取得/算出不能・ADR-014）。
+            "receivables_turnover_days": row.get("receivables_turnover_days"),
+            "inventory_turnover_days": row.get("inventory_turnover_days"),
+            "receivables_growth_yoy": row.get("receivables_growth_yoy"),
+            "inventory_growth_yoy": row.get("inventory_growth_yoy"),
             "last_restatement_at": last_restatement_at,
         }
     except Exception as exc:
@@ -464,6 +471,11 @@ async def handle_get_us_valuation(args: dict[str, object]) -> dict[str, Any]:
             "op_growth_yoy": row.get("op_growth_yoy"),
             "profit_growth_yoy": row.get("profit_growth_yoy"),
             "eps_growth_yoy": row.get("eps_growth_yoy"),
+            # 売掛/在庫の質シグナル（ADR-064 #2・yfinance balance_sheet 源・JP 対称）。
+            "receivables_turnover_days": row.get("receivables_turnover_days"),
+            "inventory_turnover_days": row.get("inventory_turnover_days"),
+            "receivables_growth_yoy": row.get("receivables_growth_yoy"),
+            "inventory_growth_yoy": row.get("inventory_growth_yoy"),
         }
     except Exception as exc:
         logger.exception("handle_get_us_valuation 失敗")

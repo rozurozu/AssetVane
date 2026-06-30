@@ -37,6 +37,9 @@ stocks = Table(
     Column("sector17_code", String),
     Column("market_code", String),
     Column("is_etf", Integer),  # ETF/REIT 判別フラグ（0/1）
+    # EDINET DB（edinetdb.jp）の銘柄キー（例 'E03006'）。#2 売掛/在庫の質の財務取得に使う
+    # （ADR-064・夜間に sec_code↔edinet_code を /companies 一覧から解決して焼く）。未解決は None。
+    Column("edinet_code", String),  # 第三者サービス edinetdb.jp の銘柄コード（ADR-064）
     Column("updated_at", String),  # 取得日時（ISO8601 文字列）
 )
 
@@ -397,6 +400,14 @@ valuation_snapshots = Table(
     Column("profit_forecast_achievement", Float),  # 純利益 達成率
     Column("op_forecast_revision", Float),  # 営業利益予想 直近修正（+=上方）
     Column("profit_forecast_revision", Float),  # 純利益予想 直近修正
+    # 売掛/在庫の質シグナル（ADR-064 #2）。JP は edinetdb.jp の構造化財務（trade_receivables/
+    # inventories/revenue/gross_profit）から夜間に焼く事実。回転日数は水準、YoY は伸び。
+    # 「対売上の乖離（受取債権/在庫が売上より速く伸びていないか）」の解釈は revenue_growth_yoy と
+    # 突き合わせて LLM が行う（捏造しない・分母0以下は None・ADR-014）。
+    Column("receivables_turnover_days", Float),  # DSO=受取債権/売上×365（売掛金回転日数）
+    Column("inventory_turnover_days", Float),  # DIO=在庫/売上原価×365（在庫回転日数）
+    Column("receivables_growth_yoy", Float),  # 受取債権 YoY（同源 trade_receivables の前年比）
+    Column("inventory_growth_yoy", Float),  # 棚卸資産 YoY（同源 inventories の前年比）
     Column("fin_disclosed_date", String),  # 採用した財務の開示日（監査・どの決算を使ったか）
     Column("updated_at", String),  # ISO8601（この行を焼いた時刻）
 )
@@ -586,6 +597,12 @@ us_valuation_snapshots = Table(
     Column("op_growth_yoy", Float),  # 営業利益 YoY 成長率
     Column("profit_growth_yoy", Float),  # 純利益 YoY 成長率
     Column("eps_growth_yoy", Float),  # EPS YoY 成長率
+    # 売掛/在庫の質シグナル（ADR-064 #2・US 側）。yfinance balance_sheet（Receivables/Inventory）＋
+    # income_stmt（Total Revenue/Cost Of Revenue）から焼く。JP の valuation_snapshots と対称。
+    Column("receivables_turnover_days", Float),  # DSO=受取債権/売上×365
+    Column("inventory_turnover_days", Float),  # DIO=在庫/売上原価×365
+    Column("receivables_growth_yoy", Float),  # 受取債権 YoY
+    Column("inventory_growth_yoy", Float),  # 棚卸資産 YoY
     Column("fin_disclosed_date", String),  # 採用した財務の基準日（監査）
     Column("updated_at", String),  # ISO8601（この行を焼いた時刻）
 )
@@ -786,6 +803,21 @@ jquants_config = Table(
     Column("id", Integer, primary_key=True),  # 1 行運用（id 固定）
     Column("api_key", String, nullable=False, server_default=""),  # 平文・GET でマスク
     Column("plan", String, nullable=False, server_default="free"),  # free/light/standard/premium
+    Column("updated_at", String),  # ISO8601
+)
+
+# EDINET DB（edinetdb.jp・第三者サービス）接続設定（ADR-064・0030_edinetdb_config）。
+# 公式 EDINET（api.edinet-fsa.go.jp・ADR-056・env の edinet_api_key）とは別系統。#2 売掛/在庫の質の
+# 構造化財務取得に使う。api_key/plan を env でなく DB+WebUI（/settings）
+# で管理する＝jquants_config と
+# 同型（ADR-061）。plan は free/pro（当面 free・pro 検討）。実レート予算は adapter が
+# x-ratelimit-* ヘッダで把握する（plan 定数は throttle 間隔・夜間ソフト上限の目安・services 側）。
+edinetdb_config = Table(
+    "edinetdb_config",
+    metadata,
+    Column("id", Integer, primary_key=True),  # 1 行運用（id 固定）
+    Column("api_key", String, nullable=False, server_default=""),  # 平文・GET でマスク
+    Column("plan", String, nullable=False, server_default="free"),  # free/pro
     Column("updated_at", String),  # ISO8601
 )
 

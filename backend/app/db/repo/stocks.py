@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, func, select
+from sqlalchemy import Connection, func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.engine import get_engine
@@ -39,6 +39,45 @@ def list_stocks(conn: Connection, q: str | None = None) -> list[dict[str, Any]]:
 def get_stock(conn: Connection, code: str) -> dict[str, Any] | None:
     row = conn.execute(select(stocks).where(stocks.c.code == code)).mappings().first()
     return dict(row) if row else None
+
+
+def get_stock_edinet_codes(conn: Connection, codes: list[str]) -> dict[str, str | None]:
+    """指定銘柄コードの edinet_code を {code: edinet_code|None} で返す（#2 の対象解決・ADR-064）。
+
+    存在しない code は dict に含めない（呼び出し側が watchlist/holdings の実在コードを渡す前提）。
+    None は「未解決（夜間に解決対象）」を表す。
+    """
+    if not codes:
+        return {}
+    rows = conn.execute(
+        select(stocks.c.code, stocks.c.edinet_code).where(stocks.c.code.in_(codes))
+    ).all()
+    return {r.code: r.edinet_code for r in rows}
+
+
+def set_stock_edinet_code(conn: Connection, code: str, edinet_code: str | None) -> None:
+    """stocks.edinet_code を 1 件更新する（#2 の財務取得キー解決・
+    W2＝conn 受け commit しない・ADR-064）。
+
+    edinetdb.jp /companies から解決した sec_code↔edinet_code を焼く。呼び出し側（夜間ジョブ）が
+    begin() 境界を所有する（jquants_config の upsert と同じ W2 規律）。
+    """
+    conn.execute(update(stocks).where(stocks.c.code == code).values(edinet_code=edinet_code))
+
+
+def bulk_set_stock_edinet_codes(conn: Connection, mapping: dict[str, str]) -> int:
+    """sec_code→edinet_code の対応を stocks.edinet_code に一括反映する（full-list sweep・W2・
+    ADR-064）。
+
+    mapping のうち stocks に実在する code だけ更新される（存在しない sec_code は黙って無視）。
+    edinetdb.jp /companies 全件から作った対応表を焼く想定（月数回のスイープ・レート予算節約）。
+    更新できた件数を返す。
+    """
+    n = 0
+    for code, ecode in mapping.items():
+        res = conn.execute(update(stocks).where(stocks.c.code == code).values(edinet_code=ecode))
+        n += res.rowcount or 0
+    return n
 
 
 def get_quotes(

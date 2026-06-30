@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
@@ -131,6 +131,15 @@ class UsEquitySource(ABC):
                 logger.info("fetch_quotes_bulk(default): %s をスキップ: %s", s, exc)
         return out
 
+    def fetch_balance_sheet(self, symbol: str) -> list[dict[str, Any]]:
+        """年次の貸借対照表＋損益を #2 売掛/在庫の質用に正規化して返す（ADR-064 #2）。
+
+        各行 = {fiscal_year, disclosed_date, receivables, inventory, revenue, gross_profit,
+        cost_of_sales}（JP edinetdb の正規化と同形＝services.edinetdb_quality が共用）。基底は未対応
+        （UsEquityNotSupported）＝対応ソース（Yahoo）がオーバーライドする。
+        """
+        raise UsEquityNotSupported(f"{getattr(self, 'name', '?')} は balance_sheet 未対応")
+
 
 # ---------------------------------------------------------------------------
 # Yahoo Finance ソース（yfinance）
@@ -144,6 +153,9 @@ YahooQuotesFetchFn = Callable[[str, str | None, str | None], "pd.DataFrame | Non
 YahooBulkQuotesFetchFn = Callable[[list[str], str | None, str | None], "pd.DataFrame | None"]
 # yfinance.Ticker(symbol).info の型（ticker → dict）。テストで fake を注入する口。
 YahooInfoFetchFn = Callable[[str], dict[str, Any]]
+# yfinance の財務諸表取得の型（ticker → (balance_sheet, income_stmt) の DataFrame ペア）。
+# テストで fake を注入する口（#2 売掛/在庫の質・ADR-064）。
+YahooFinancialsFetchFn = Callable[[str], "tuple[pd.DataFrame | None, pd.DataFrame | None]"]
 
 
 def _default_yahoo_quotes_fetch(
@@ -212,6 +224,37 @@ def _default_yahoo_info_fetch(source_symbol: str) -> dict[str, Any]:
     return dict(info) if info else {}
 
 
+def _default_yahoo_financials_fetch(
+    source_symbol: str,
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    """yfinance の年次 balance_sheet / income_stmt を取る既定 fetch（#2・ADR-010/064）。
+
+    重い（1 銘柄ごとに HTTP）ので watchlist/holdings の低頻度巡回でのみ使う。yfinance の import は
+    ここに閉じ込め、テストは YahooFinancialsFetchFn を注入してネットに出ない。
+    """
+    import yfinance as yf  # 遅延 import
+
+    t = yf.Ticker(source_symbol)
+    # yfinance の stub は Series 可能性を含むが実行時は DataFrame。契約の型へ cast（ADR-010）。
+    return (
+        cast("pd.DataFrame | None", t.balance_sheet),
+        cast("pd.DataFrame | None", t.income_stmt),
+    )
+
+
+def _df_get(df: pd.DataFrame | None, labels: list[str], col: Any) -> float | None:
+    """DataFrame（index=項目名・columns=決算日）から候補ラベルのいずれかの値を取る（欠損 None）。"""
+    if df is None or getattr(df, "empty", True):
+        return None
+    for label in labels:
+        if label in df.index:
+            try:
+                return _to_float(df.loc[label, col])
+            except (KeyError, TypeError, ValueError):
+                continue
+    return None
+
+
 class YahooUsEquitySource(UsEquitySource):
     """Yahoo Finance（yfinance）ソース＝米株 OHLCV と `.info` を取る（ADR-010/039）。
 
@@ -228,10 +271,12 @@ class YahooUsEquitySource(UsEquitySource):
         fetch_quotes: YahooQuotesFetchFn | None = None,
         fetch_info: YahooInfoFetchFn | None = None,
         fetch_quotes_bulk: YahooBulkQuotesFetchFn | None = None,
+        fetch_financials: YahooFinancialsFetchFn | None = None,
     ) -> None:
         self._fetch_quotes = fetch_quotes or _default_yahoo_quotes_fetch
         self._fetch_info = fetch_info or _default_yahoo_info_fetch
         self._bulk_fetch_quotes = fetch_quotes_bulk or _default_yahoo_bulk_quotes_fetch
+        self._fetch_financials = fetch_financials or _default_yahoo_financials_fetch
         self._throttle = Throttle(
             settings.us_equity_min_interval_seconds or _YAHOO_MIN_INTERVAL_SECONDS
         )
@@ -407,6 +452,47 @@ class YahooUsEquitySource(UsEquitySource):
             )
         return snapshot
 
+    def fetch_balance_sheet(self, symbol: str) -> list[dict[str, Any]]:
+        """年次 balance_sheet＋income_stmt を #2 売掛/在庫の質用に正規化して返す（ADR-064 #2）。
+
+        各行 = {fiscal_year, disclosed_date, receivables, inventory, revenue, gross_profit,
+        cost_of_sales}（JP edinetdb と同形＝services.edinetdb_quality が共用）。決算日（DataFrame の
+        列）ごとに 1 行。yfinance のフィールド名は候補キーで吸収し、欠損は None（捏造しない・
+        ADR-014）。
+        財務が空（bot 検知/未提供）なら UsEquityAdapterError（ファサードが次ソースへ）。
+        """
+        self._throttle.wait()
+        try:
+            bs, income = self._fetch_financials(symbol)
+        except Exception as exc:  # noqa: BLE001 — 用途別の独自例外へ翻訳して次ソースへ回す
+            raise UsEquityAdapterError(
+                f"Yahoo（yfinance）symbol={symbol} の財務諸表取得に失敗しました: {exc}"
+            ) from exc
+
+        if bs is None or getattr(bs, "empty", True):
+            raise UsEquityAdapterError(
+                f"Yahoo（yfinance）symbol={symbol} の balance_sheet が空でした"
+                "（bot 検知/未提供の疑い・ADR-018）。"
+            )
+
+        rows: list[dict[str, Any]] = []
+        for col in bs.columns:
+            fy = getattr(col, "year", None)
+            rows.append(
+                {
+                    "fiscal_year": int(fy) if fy is not None else None,
+                    "disclosed_date": _norm_yahoo_date(col),
+                    "receivables": _df_get(bs, ["Receivables", "Accounts Receivable"], col),
+                    "inventory": _df_get(bs, ["Inventory"], col),
+                    "revenue": _df_get(income, ["Total Revenue", "Operating Revenue"], col),
+                    "gross_profit": _df_get(income, ["Gross Profit"], col),
+                    "cost_of_sales": _df_get(
+                        income, ["Cost Of Revenue", "Reconciled Cost Of Revenue"], col
+                    ),
+                }
+            )
+        return rows
+
 
 # ソース名 → クラスのレジストリ（settings.us_equity_source を解決）。今は yahoo のみ。
 _REGISTRY: dict[str, type[UsEquitySource]] = {
@@ -573,6 +659,10 @@ class UsEquityAdapter:
     def fetch_fundamentals(self, symbol: str) -> dict[str, Any]:
         """優先順にソースを試し最初に成功した `.info` を返す（関心=fundamentals・ADR-010）。"""
         return self._run_chain("fundamentals", symbol, lambda src: src.fetch_fundamentals(symbol))
+
+    def fetch_balance_sheet(self, symbol: str) -> list[dict[str, Any]]:
+        """優先順にソースを試し最初に成功した年次 BS+PL（#2 用）を返す（ADR-010/064）。"""
+        return self._run_chain("balance_sheet", symbol, lambda src: src.fetch_balance_sheet(symbol))
 
     def _run_chain(self, concern: str, symbol: str, call: Callable[[UsEquitySource], Any]) -> Any:
         """関心ごとのフォールバック連鎖（UsEquityNotSupported は握って次・全滅で raise）。"""

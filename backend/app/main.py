@@ -28,6 +28,7 @@ from app.routers.batch import router as batch_router
 from app.routers.cards import router as cards_router
 from app.routers.diagnostics import router as diagnostics_router
 from app.routers.dossier import router as dossier_router
+from app.routers.edinetdb_config import router as edinetdb_config_router
 from app.routers.funds import router as funds_router
 from app.routers.general_news import router as general_news_router
 from app.routers.jquants_config import router as jquants_config_router
@@ -145,6 +146,7 @@ app.include_router(lead_lag_router)
 app.include_router(llm_config_router)
 # J-Quants 接続設定（api_key/plan を DB+WebUI で管理・ADR-061）。GET/PUT /jquants/config。
 app.include_router(jquants_config_router)
+app.include_router(edinetdb_config_router)
 # 知識カード（ADR-062）。GET/POST/PUT/DELETE /cards・triage・activate（routers/cards.py）。
 app.include_router(cards_router)
 

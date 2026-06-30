@@ -1,5 +1,6 @@
 "use client";
 
+import { EdinetdbSettings } from "@/components/settings/EdinetdbSettings";
 import { JquantsSettings } from "@/components/settings/JquantsSettings";
 import { LlmSettings } from "@/components/settings/LlmSettings";
 import { Card } from "@/components/ui/Card";
@@ -203,6 +204,9 @@ export default function SettingsPage() {
 
         {/* J-Quants 接続設定（api_key/plan を DB+WebUI で管理＋疎通テスト・ADR-061） */}
         <JquantsSettings />
+
+        {/* EDINET DB（edinetdb.jp）接続設定（#2 売掛/在庫の質の財務源・公式 EDINET とは別系統・ADR-064） */}
+        <EdinetdbSettings />
 
         {/* 夜間バッチ手動起動（差分/全銘柄フル）＋進捗＋停止（ADR-036） */}
         <Card title="夜間バッチ">

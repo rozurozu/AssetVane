@@ -18,7 +18,9 @@ from dataclasses import dataclass
 
 from sqlalchemy import Connection
 
+from app.adapters.edinetdb import EdinetDbAdapterError
 from app.adapters.jquants import JQuantsError
+from app.services.edinetdb_config import build_edinetdb_adapter, resolve_edinetdb_config
 from app.services.jquants_config import build_jquants_adapter, resolve_jquants_config
 
 logger = logging.getLogger(__name__)
@@ -68,4 +70,54 @@ def check_jquants(conn: Connection) -> JquantsCheckResult:
     name = rows[0].get("company_name") or "?"
     return JquantsCheckResult(
         configured=True, ok=True, detail=f"認証OK・7203={name}（{len(rows)} 件取得）"
+    )
+
+
+@dataclass(frozen=True)
+class EdinetDbCheckResult:
+    """EDINET DB（edinetdb.jp）疎通テストの結果（CLI/REST/WebUI 共通の戻り値・ADR-064）。
+
+    configured: API キーが設定されているか（False なら呼ばずに未設定で返す）。
+    ok:         認証が通り会社一覧が取れたか（configured=False のときは常に False）。
+    detail:     人間向けメッセージ（成功＝総社数＋レート残量／失敗＝エラー要旨）。
+    """
+
+    configured: bool
+    ok: bool
+    detail: str
+
+
+def check_edinetdb(conn: Connection) -> EdinetDbCheckResult:
+    """edinetdb.jp に認証ピングを 1 発投げて生死＋レート残量を返す（接続値は DB 解決・ADR-064）。
+
+    キー未設定（edinetdb_config 未登録）なら configured=False で即返す。
+    `list_companies(per_page=1)` を
+    叩き、EdinetDbAdapterError も予期せぬ例外も握って ok=False＋要旨に畳む（ADR-018）。
+    成功時は総社数と
+    月の残予算を detail に載せる（無料枠は月 600・WebUI で残量を見せる）。
+    """
+    if resolve_edinetdb_config(conn) is None:
+        logger.warning("EDINET DB 未設定のため疎通テストをスキップ")
+        return EdinetDbCheckResult(
+            configured=False, ok=False, detail="EDINET DB（edinetdb.jp）API キーが未設定です"
+        )
+
+    try:
+        adapter = build_edinetdb_adapter(conn)
+        payload = adapter.list_companies(per_page=1)
+    except EdinetDbAdapterError as exc:
+        return EdinetDbCheckResult(configured=True, ok=False, detail=str(exc)[:200])
+    except Exception as exc:  # noqa: BLE001 — 疎通確認は例外を握って結果に畳む（ADR-018）
+        logger.exception("EDINET DB 疎通テストで予期せぬ失敗")
+        return EdinetDbCheckResult(
+            configured=True, ok=False, detail=f"{type(exc).__name__}: {exc}"[:200]
+        )
+
+    total = (payload.get("meta") or {}).get("pagination", {}).get("total")
+    budget = adapter.last_budget
+    mo_rem = budget.get("monthly_remaining")
+    mo_lim = budget.get("monthly_limit")
+    budget_note = f"・月残 {mo_rem}/{mo_lim}" if mo_rem is not None else ""
+    return EdinetDbCheckResult(
+        configured=True, ok=True, detail=f"認証OK・収載 {total} 社{budget_note}"
     )

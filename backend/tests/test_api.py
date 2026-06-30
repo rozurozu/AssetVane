@@ -193,7 +193,7 @@ def test_batch_run_conflict_409(client, monkeypatch) -> None:
 
 
 def test_batch_run_swallows_background_start_conflict(client, monkeypatch) -> None:
-    """受付通過後〜BackgroundTask 起動の競合は握り 500 にしない（_guard_concurrent_start・ADR-011/036）。
+    """受付通過後〜BackgroundTask 起動の競合は握り 500 にしない（_guard_concurrent_start）。
 
     受付の「取得即解放」チェックと BackgroundTask 実走の間に別バッチ（cron 等）が割り込むと
     run_nightly が BatchAlreadyRunning を送出するが、ガードが握るので受付の 202 が保たれ未捕捉

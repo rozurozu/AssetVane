@@ -99,6 +99,27 @@ def test_get_valuation_not_found(temp_db) -> None:
     assert out["currency"] == "JPY"
 
 
+def test_get_valuation_relays_receivables_inventory_quality(temp_db) -> None:
+    """#2 売掛/在庫の質（DSO/DIO・YoY）が calc_receivables_inventory の UPDATE 後に中継される。"""
+    _seed(temp_db)
+    with get_engine().begin() as conn:
+        repo.update_valuation_receivables_inventory(
+            conn,
+            "72030",
+            {
+                "receivables_turnover_days": 49.77,
+                "inventory_turnover_days": 123.25,
+                "receivables_growth_yoy": 0.5,
+                "inventory_growth_yoy": 0.3,
+            },
+        )
+    out = _run(handlers.handle_get_valuation({"code": "72030"}))
+    assert abs(out["receivables_growth_yoy"] - 0.5) < 1e-9
+    assert abs(out["inventory_growth_yoy"] - 0.3) < 1e-9
+    assert abs(out["receivables_turnover_days"] - 49.77) < 1e-9
+    assert _VERDICT_KEYS.isdisjoint(out.keys())  # verdict は持たない（解釈は LLM）
+
+
 def test_get_valuation_relays_forecast_guidance(temp_db) -> None:
     """会社予想 beat/miss・上方/下方修正を中継し、verdict は持たない（ADR-063 #4）。"""
     repo.upsert_stocks(

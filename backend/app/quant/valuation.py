@@ -182,6 +182,35 @@ def forecast_guidance(rows: list[dict[str, Any]]) -> dict[str, float | None]:
     return out
 
 
+# --- 売掛/在庫の質シグナル（ADR-064 #2） ---
+
+_DAYS_IN_YEAR = 365.0
+
+
+def receivables_turnover_days(receivables: float | None, revenue: float | None) -> float | None:
+    """売掛金回転日数 DSO = 受取債権 / 売上 × 365（売上に対する受取債権の滞留水準）。
+
+    売上が None・0 以下なら None（成長率と同方針）。受取債権が None も None。値は「何日分の売上が
+    受取債権として未回収か」。水準の良し悪し（押し込み/回収悪化の疑い）は同業種比較で LLM が解釈
+    （ADR-014）。負の受取債権は通常ないが、来たら事実として返す（捏造しない）。
+    """
+    if receivables is None or revenue is None or revenue <= 0:
+        return None
+    return receivables / revenue * _DAYS_IN_YEAR
+
+
+def inventory_turnover_days(inventory: float | None, cogs: float | None) -> float | None:
+    """在庫回転日数 DIO = 棚卸資産 / 売上原価 × 365（原価に対する在庫の滞留水準）。
+
+    分母（売上原価）が None・0 以下なら None。在庫が None も None。売上原価が取れない決算では
+    services 層が revenue を代理分母に渡すことがある（その旨は呼び出し側のフォールバック・本関数は
+    渡された分母で計算するだけ）。水準の良し悪し（滞留/陳腐化の疑い）は LLM が解釈（ADR-014）。
+    """
+    if inventory is None or cogs is None or cogs <= 0:
+        return None
+    return inventory / cogs * _DAYS_IN_YEAR
+
+
 def compute_valuation(
     close: float | None,
     eps: float | None,

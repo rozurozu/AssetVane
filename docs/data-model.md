@@ -67,6 +67,7 @@ J-Quants V2 `/v2/equities/master` 由来。
 | `sector17_code` | TEXT | S17 業種コード（J-Quants S17＝"1".."17"・ETF/REIT は "99"・[ADR-053](decisions.md)）|
 | `market_code` | TEXT | 市場区分 |
 | `is_etf` | INTEGER | ETF/REIT 判別フラグ |
+| `edinet_code` | TEXT | edinetdb.jp の銘柄キー（例 `E03006`）。#2 売掛/在庫の質の財務取得用に夜間解決（[ADR-064](decisions.md)・0030・未解決は NULL）|
 | `updated_at` | TEXT | 取得日時 |
 
 ### `daily_quotes` — 日足四本値
@@ -266,6 +267,8 @@ UNIQUE `(portfolio_id, isin)`。
 | `revenue_growth_yoy`/`op_growth_yoy`/`profit_growth_yoy`/`eps_growth_yoy` | REAL | YoY 成長率（売上・営業益・純益・EPS。[ADR-048](decisions.md)・0012）|
 | `op_forecast_achievement`/`profit_forecast_achievement` | REAL | 会社予想 達成率（最新完了FY 実績÷その期最終予想＝beat/miss。営業益・純益。[ADR-063](decisions.md) #4・0029）|
 | `op_forecast_revision`/`profit_forecast_revision` | REAL | 会社予想 直近修正（進行中FY 予想の最新÷前−1＝＋上方/−下方。[ADR-063](decisions.md) #4・0029）|
+| `receivables_turnover_days`/`inventory_turnover_days` | REAL | 売掛/在庫の質＝DSO（受取債権/売上×365）・DIO（在庫/売上原価×365）。JP 源は edinetdb.jp（[ADR-064](decisions.md) #2・0031）|
+| `receivables_growth_yoy`/`inventory_growth_yoy` | REAL | 受取債権・棚卸資産 YoY（対売上の乖離＝押し込み/滞留の疑いは `revenue_growth_yoy` と突合して LLM が解釈。[ADR-064](decisions.md) #2・0031）|
 | `fin_disclosed_date` | TEXT | 採用財務の開示日（監査） |
 | `updated_at` | TEXT | この行を焼いた時刻 ISO8601 |
 
@@ -320,6 +323,8 @@ UNIQUE `(portfolio_id, isin)`。
 | `close`/`eps`/`bps`/`dividend_per_share`/`shares_net` | REAL | 採用した素データ（根拠）|
 | `per`/`pbr`/`market_cap`/`dividend_yield`/`roe`/`operating_margin`/`net_margin` | REAL | 派生比率（PER=close/eps・ROE=eps/bps・利回り・各 margin 等・0..1 基準）|
 | `revenue_growth_yoy`/`op_growth_yoy`/`profit_growth_yoy`/`eps_growth_yoy` | REAL | YoY 成長率。**`op_growth_yoy`/`eps_growth_yoy` は `.info` に素が無く None**（捏造しない）|
+| `receivables_turnover_days`/`inventory_turnover_days` | REAL | 売掛/在庫の質＝DSO/DIO。源は yfinance `balance_sheet`＋`income_stmt`（[ADR-064](decisions.md) #2・0031・JP と対称）|
+| `receivables_growth_yoy`/`inventory_growth_yoy` | REAL | 受取債権・棚卸資産 YoY（対売上乖離は LLM が解釈。[ADR-064](decisions.md) #2・0031）|
 | `fin_disclosed_date` | TEXT | 採用財務の基準日（監査）|
 | `updated_at` | TEXT | この行を焼いた時刻 ISO8601 |
 
@@ -633,6 +638,19 @@ LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settin
 | `updated_at` | TEXT | ISO8601 |
 
 > `JQUANTS_API_KEY`/`JQUANTS_PLAN` は env から撤去し DB へ移管（[ADR-061](decisions.md)）。`/settings` の「J-Quants 設定」カードで編集（api_key は write-only＝空送信は据え置き）。スロットル間隔（秒）は `adapters/jquants.py` の `_PLAN_INTERVALS` がプラン名から決める（[ADR-008](decisions.md)・秒数は DB に持たない）。未登録（鍵空）なら取得バッチは `JQuantsError` で落ち通知される（[ADR-018](decisions.md)）。
+
+### EDINET DB 接続設定 — `edinetdb_config`（[ADR-064](decisions.md)・`0030_edinetdb_config`）
+
+**`edinetdb_config`**（第三者サービス edinetdb.jp 接続・単一行運用＝`jquants_config` 同型）。公式 EDINET（`api.edinet-fsa.go.jp`・env の `edinet_api_key`・テーマタグ段階C／#7）とは**別系統**で、#2 売掛/在庫の質の構造化財務取得に使う。
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `id` | INTEGER PK | 1 行運用（id 固定） |
+| `api_key` | TEXT | edinetdb.jp の `X-API-Key`。平文（GET ではマスク）。空可（未設定） |
+| `plan` | TEXT | 契約プラン名 `free`/`pro`（既定 `free`） |
+| `updated_at` | TEXT | ISO8601 |
+
+> `/settings` の「EDINET DB 設定」カードで編集（api_key は write-only）。plan 別のレート目安（free=日100/月600）は `services/edinetdb_config.py` の `_PLAN_LIMITS` が持つが、**実予算の enforce はレスポンスの `x-ratelimit-*-remaining` ヘッダ**で行う（[ADR-064](decisions.md)）。未登録（鍵空）なら #2 取得は静かに skip。
 
 ---
 
