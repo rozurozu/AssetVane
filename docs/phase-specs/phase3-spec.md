@@ -543,11 +543,13 @@ update_proposal_status(conn, id, status, outcome=None, resolved_at=…) -> None
 
 ### 9.1 常駐フローティングチャット（`frontend/src/components/advisor/AdvisorChat.tsx`・変更）
 - **root layout 配置のまま**（ADR-024・ページ遷移で会話保持）。既存はドラッグ・最小化あり。
+- **会話状態は Context（`AdvisorChatProvider`）へ持ち上げ済み**（ADR-065）。フローティングと専用ページ `/advisor` が同一会話を見る。本体は `ChatConversation` に抽出して共用。
 - **画面コンテキスト送信**（ADR-025）: 現状ハードコードの「見ているページ: Dashboard」を `usePathname()` ＋ route→page マップ（app 付録 B）で実値化し、`ChatRequest.context` に載せる。`/stocks/[code]` → `{type:"stock", code}` 等。**数値は載せない**。
 - **tool_runs 可視化**（screens.md §4）: `ChatResponse.tool_runs` を assistant バブル上部にチップ表示（「⚙ get_signals 実行」）。結果値は出さない。
 - **会話の永続**: `localStorage`（U-6/ADR-029・同一ブラウザで永続・サーバはステートレス維持）。DB 永続は持たない。**チャットに「この会話を要約して journal に残す」アクション**を置き、AI が重要決定を検知したら自発提案もする（承認後に `advisor_journal`（`source='chat'`）へ・ADR-029）。
 - **ドラッグ/リサイズ/最小化**: リサイズ未実装 → **自前 pointer ハンドル**（依存を増やさない・OPEN-H 確定）。
-- nav「Advisor」は専用ページを作らず**チャット起動トリガ**（onClick で open・OPEN-I 確定）。
+- ~~nav「Advisor」は専用ページを作らず**チャット起動トリガ**（onClick で open・OPEN-I 確定）。~~ → **OPEN-I は ADR-065 で撤回**。nav「Advisor」は専用大画面ページ `/advisor` へ**遷移**する（会話は Context 共有・フローティングは Policy 等から開ける）。
+- **カード起票フィードバック**（ADR-065）: `ChatResponse.card_ids` を読み、`propose_card` で下書きを起票したターンに「🗂 知識ノートを下書き起票したのだ → 知識カードで確認・承認（/cards）」をインライン表示する（`journal_id` の表示と同型）。
 
 ### 9.2 policy 編集UI（`frontend/src/app/policy/page.tsx`・`components/policy/PolicyEditor.tsx`・新規）
 - 構造化コア（チップ/グリッド・編集可）＋ rationale（テキストエリア）。保存は `putPolicy`。「チャットで調整」導線も併置。`target_cash_ratio` 等は **0..1 を ×100 して % 表示**、保存時 ÷100。

@@ -107,6 +107,7 @@ export type ChatResponse = {
   reply: string;
   tool_runs: ToolRun[];
   journal_id?: number | null; // journal に残せたら id（ADR-029・残せなければ null）
+  card_ids?: number[]; // propose_card が起票した知識ノート draft の id（ADR-065・無ければ空/省略）
 };
 
 // --- Phase 3 API 関数（phase3-spec.md §9.5・既存 fetch ヘルパと同じ流儀）---

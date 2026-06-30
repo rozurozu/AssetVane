@@ -56,11 +56,15 @@ class ChatResponse(BaseModel):
 
     journal_id: チャットで submit_journal を呼んで投資日記に記録できたときの id（ADR-029）。
     呼ばれなかった・observations 空でスキップしたときは None。frontend の「日記に残した」表示用。
+    card_ids: チャットで propose_card を呼んで起票した知識ノート draft の id（ADR-062 追補/065）。
+    壁打ち→合意→起票のフィードバックを frontend がインライン表示する（journal_id と同型）。
+    起票が無ければ空。active 化は人間が /cards で行う（承認制・ADR-009）。
     """
 
     reply: str
     tool_runs: list[ToolRun] = []
     journal_id: int | None = None
+    card_ids: list[int] = []
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -124,6 +128,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     # 不変条件を保つ）。通常ターン（どちらも無し）では書き込み接続を開かない。橋渡しは nightly と
     # 共通の journaling サービスに一本化（W2＝begin() で journal＋proposal を atomic に束ねる）。
     journal_id: int | None = None
+    card_ids: list[int] = []
     has_submit = any(r.get("name") == "submit_journal" for r in tool_runs)
     has_trade = any(r.get("name") == "propose_trade" for r in tool_runs)
     # ADR-062 追補: 知識カードの起票/weight 変更（承認制）。propose_card は draft 起票、
@@ -148,6 +153,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 conn, tool_runs=tool_runs, date=today, journal_id=journal_id
             )
             # 知識カードの起票/weight 変更を起票（ADR-062 追補・同一トランザクション）。
-            persist_card_ops_from_tool_runs(conn, tool_runs=tool_runs, date=today)
+            # 起票した draft id を card_ids として frontend に返す（インライン表示・ADR-065）。
+            card_ops = persist_card_ops_from_tool_runs(conn, tool_runs=tool_runs, date=today)
+            card_ids = card_ops["cards"]
 
-    return ChatResponse(reply=reply, tool_runs=response_tool_runs, journal_id=journal_id)
+    return ChatResponse(
+        reply=reply, tool_runs=response_tool_runs, journal_id=journal_id, card_ids=card_ids
+    )

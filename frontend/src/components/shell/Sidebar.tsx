@@ -1,7 +1,6 @@
 "use client";
 
 import appIcon from "@/app/icon.png";
-import { openAdvisorChat } from "@/lib/advisor-bus";
 import { nav } from "@/lib/nav";
 import Image from "next/image";
 import Link from "next/link";
@@ -9,7 +8,7 @@ import { usePathname } from "next/navigation";
 
 // サイドバー 220px / surface-1。アクティブは lift（surface-2）＋左に青の inset bar で示す
 // （青の面塗りはしない＝DESIGN.md）。ナビ項目は Phase 進行で増える（screens.md §2）。
-// href があるものは Link で遷移、action があるものはトリガ（Advisor=チャット起動・OPEN-I）、
+// href があるものは Link で遷移（Advisor も /advisor へ遷移＝ADR-065）、
 // 無いもの（未投入 Phase）は非活性ボタンのまま。
 const ACTIVE = "bg-surface-2 font-semibold text-ink shadow-[inset_2px_0_0_var(--color-accent)]";
 const IDLE = "text-ink-muted hover:bg-surface-2 hover:text-ink";
@@ -52,7 +51,6 @@ export function Sidebar() {
             {section.items.map((item) => {
               const href = "href" in item ? item.href : undefined;
               const phase = "phase" in item ? item.phase : undefined;
-              const action = "action" in item ? item.action : undefined;
               if (href) {
                 return (
                   <Link
@@ -62,19 +60,6 @@ export function Sidebar() {
                   >
                     <NavRowContent icon={item.icon} label={item.label} phase={phase} />
                   </Link>
-                );
-              }
-              // action="advisor" は常駐チャットを開くだけ（専用ページを作らない・OPEN-I）。
-              if (action === "advisor") {
-                return (
-                  <button
-                    type="button"
-                    key={item.label}
-                    onClick={() => openAdvisorChat()}
-                    className={`${ROW} ${IDLE}`}
-                  >
-                    <NavRowContent icon={item.icon} label={item.label} phase={phase} />
-                  </button>
                 );
               }
               return (

@@ -3,18 +3,21 @@
 担保: persist_card_ops_from_tool_runs が propose_card→draft カード起票（title 空は本文先頭で代替）・
 adjust_card_weight→proposals(kind=card_weight) 起票（承認制・存在しないカードは skip）。
 resolve_proposal(approved) が card_weight を反映・rejected では変えない。handler は read-only 検証で
-{ok}/{error} を返す。一時 SQLite・LLM/ネット非依存。
+{ok}/{error} を返す。/chat 応答が起票 draft の id を card_ids で可視化する（ADR-065）。
+一時 SQLite・LLM/ネット非依存。
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 import pytest
 
 from app.advisor import service
 from app.advisor.journaling import persist_card_ops_from_tool_runs
+from app.advisor.llm import LLMResponse, ToolCall
 from app.advisor.tools import handlers
 from app.db import repo
 from app.db.engine import get_engine
@@ -142,3 +145,62 @@ def test_handle_adjust_card_weight_validates() -> None:
         handlers.handle_adjust_card_weight({"card_id": cid, "weight": -1.0, "reason": "r"})
     )
     assert "error" in bad
+
+
+# --- /chat：propose_card が起票した draft を card_ids で可視化する（ADR-065）---
+
+
+def _mock_complete(monkeypatch: pytest.MonkeyPatch, responses: list[LLMResponse]) -> None:
+    async def _fake_complete(messages: Any, **_: Any) -> LLMResponse:
+        return responses.pop(0)
+
+    monkeypatch.setattr(service, "complete", _fake_complete)
+
+
+def test_chat_propose_card_surfaces_card_ids(client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """propose_card を呼ぶと /chat 応答 card_ids に起票 draft の id が載る（ADR-065）。
+
+    壁打ち→合意→起票のフィードバックを frontend がインライン表示する契約（journal_id と同型）。
+    """
+    _mock_complete(
+        monkeypatch,
+        [
+            LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="propose_card",
+                        arguments={"body": "日銀の政策修正は内需株に効きやすい", "level": "market"},
+                    )
+                ],
+            ),
+            LLMResponse(content="知識ノートの下書きを起票したのだ", tool_calls=[]),
+        ],
+    )
+
+    res = client.post(
+        "/chat",
+        json={"messages": [{"role": "user", "content": "この見方をノートにして"}]},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert len(body["card_ids"]) == 1
+    # 起票された id は実在の draft カードを指す（人間が /cards で active 化＝ADR-009）。
+    with get_engine().connect() as conn:
+        card = repo.get_knowledge_card(conn, body["card_ids"][0])
+    assert card is not None
+    assert card["status"] == "draft"
+
+
+def test_chat_no_card_op_returns_empty_card_ids(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """カード操作の無い通常ターンでは card_ids は空（書き込み接続も開かない）。"""
+    _mock_complete(monkeypatch, [LLMResponse(content="ふつうの応答なのだ", tool_calls=[])])
+    res = client.post(
+        "/chat",
+        json={"messages": [{"role": "user", "content": "こんにちは"}]},
+    )
+    assert res.status_code == 200
+    assert res.json()["card_ids"] == []

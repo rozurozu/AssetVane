@@ -3,16 +3,15 @@
 // proposals / policy / journal は各 API（Phase 3）、watchlist は /watchlist（Phase 4）に配線済み。
 // 設計: docs/api.md / docs/screens.md §3。
 
-// href があるものは遷移可能（Next Link）。action があるものはトリガ（Advisor=チャット起動）。無いものは未投入 Phase（非活性）。
+// href があるものは遷移可能（Next Link）。無いものは未投入 Phase（非活性）。
 // アクティブ表示は Sidebar が usePathname() で判定する（ハードコードしない）。
-// 任意フィールド（href/action/phase）を型に明示し、全項目が同型になるようにする
+// 任意フィールド（href/phase）を型に明示し、全項目が同型になるようにする
 // （未投入 Phase のラベル＝phase を持つ項目が無くなっても Sidebar 側の型が unknown に落ちないように）。
 type NavItem = {
   label: string;
   icon: string;
   href?: string;
-  action?: string;
-  phase?: string; // 未投入 Phase の注記（例 "P5"）。href/action が無い非活性項目に付ける
+  phase?: string; // 未投入 Phase の注記（例 "P5"）。href が無い非活性項目に付ける
 };
 type NavSection = { group: string | null; items: NavItem[] };
 
@@ -39,8 +38,9 @@ export const nav: NavSection[] = [
   {
     group: "Advisor",
     items: [
-      // Advisor は専用ページを作らずチャット起動トリガ（onClick で open・OPEN-I・spec §9.6）。
-      { label: "Advisor", icon: "🧠", action: "advisor" },
+      // Advisor は専用大画面ページ /advisor へ遷移（ADR-065・OPEN-I「専用ページ無し」を撤回）。
+      // 会話はフローティングと共有（AdvisorChatProvider）。フローティングは Policy 等から開ける。
+      { label: "Advisor", icon: "🧠", href: "/advisor" },
       { label: "Policy", icon: "🧭", href: "/policy" },
       // 知識カード管理（ADR-062）。非自明な投資知識を置き、AI 審査→人間承認で本番助言に効かせる。
       { label: "知識カード", icon: "🗂", href: "/cards" },

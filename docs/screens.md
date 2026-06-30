@@ -18,7 +18,7 @@ AssetVane の画面構成（情報設計）、ナビゲーション、Dashboard 
 | 5 | **Portfolio** | 保有・相関ヒートマップ・最適比率・バックテスト・資産推移 | `/holdings` `/portfolio/{id}/metrics` `/portfolio/{id}/optimize` `/asset-overview` | 2 |
 | 6 | **入力（Portfolio 内タブ）** | 取引（買い/売り）記録・現金・投信入力。**独立ページではなく Portfolio の「入力」タブ**（OPEN-D・§2）。`/portfolio?tab=input` で直接着地 | `/transactions` `/cash` `/external-assets` | 2 |
 | 6b | **履歴（Portfolio 内タブ）** | 取引一覧（新しい順・会社名付き）・行のインライン編集・削除。**Portfolio の「履歴」タブ**（`/portfolio?tab=history`）。新規追加は #6「入力」タブのまま（追加フォームの二重化を避ける）。取引を直すと holdings は自動再導出（[ADR-019](decisions.md)）| `/transactions`（GET/PUT/DELETE）| 2 |
-| 7 | **Advisor（チャット）** | 軸2。方針を対話調整・銘柄/比率提案。**実体は全ページ常駐のフローティング**（§4） | `/chat` | 3 |
+| 7 | **Advisor（チャット）** | 軸2。方針を対話調整・銘柄/比率提案・知識ノート起票。**全ページ常駐フローティング＋専用大画面 `/advisor`**（会話は Context 共有・§4・ADR-065） | `/chat` | 3 |
 | 8 | **Policy（投資方針）** | 現在の方針を表示・編集（構造化コア＋rationale） | `/policy` | 3 |
 | 9 | **Journal（投資日記）** | 夜の分析AI の日記＋方針スナップショット履歴 | `/journal` | 3 |
 | 10 | **Proposals（提案）** | pending/approved/rejected の消し込み・振り返り | `/proposals` `/proposals/{id}/approve` `/reject` | 3 |
@@ -68,14 +68,15 @@ AssetVane の画面構成（情報設計）、ナビゲーション、Dashboard 
 
 ---
 
-## 4. 常駐 Advisor チャット（フローティング）
+## 4. 常駐 Advisor チャット（フローティング）＋専用ページ /advisor
 
-相談チャットAI（軸2）は、専用ページではなく**全ページ共通のフローティング UI**として常駐する（[ADR-024](decisions.md)）。
+相談チャットAI（軸2）は**全ページ共通のフローティング UI** として常駐し（[ADR-024](decisions.md)）、加えて**専用大画面ページ `/advisor`** を持つ（[ADR-065](decisions.md)・nav「Advisor」の遷移先）。**会話状態は Context（`AdvisorChatProvider`・root layout 直下）で共有**し、フローティングと `/advisor` は**同一の会話**を見る。`/advisor` 表示中はフローティング窓を隠す（二重表示の回避）。本体は `ChatConversation` に抽出して両方で共用する。
 
-- **全ページ常駐**: 右下のフローティングボタンから開閉。**Next.js の root layout に置き、ページ遷移しても会話が消えない**（ルート変更でアンマウントしない）。
-- **操作**: ヘッダーを掴んで**ドラッグ移動**、角ハンドルで**リサイズ**、**最小化**、閉じる。実装は `react-rnd` 等で足りる。
-- **状態保持**: 会話と窓の位置/サイズはクライアントで保持（`localStorage` 等）。会話履歴の永続実体（保存先）は実装時に決める。
+- **全ページ常駐**: 右下のフローティングボタンから開閉。**root layout に置き、ページ遷移しても会話が消えない**（ルート変更でアンマウントしない）。`/advisor` ↔ 他ページを行き来しても会話は継続。
+- **操作（フローティング）**: ヘッダーを掴んで**ドラッグ移動**、角ハンドルで**リサイズ**、**最小化**、閉じる（自前 pointer ハンドル・OPEN-H）。
+- **状態保持**: 会話はクライアントで保持（`localStorage`・[ADR-029](decisions.md)）、窓の位置/サイズは別キーで保持。
 - **Tool 実行の可視化**: 「⚙ get_signals 実行」のように、AI が呼んだ Tool を UI に出す。「AI は計算せず Tool の事実で答える」（[ADR-014](decisions.md)）が見えるようにする。
+- **知識ノートの起票フィードバック**（[ADR-065](decisions.md)）: `propose_card` で知識カードを下書き起票したターンに、`ChatResponse.card_ids` を読んで「🗂 下書き起票 → 知識カードで確認・承認（`/cards`）」をインライン表示する（承認＝active 化は人間が `/cards` で行う＝[ADR-009](decisions.md)）。
 - **画面を見ながら相談**: ユーザーは Dashboard の数字や調査結果を見ながら質問できる。指示語の解決は §5。
 
 ---
