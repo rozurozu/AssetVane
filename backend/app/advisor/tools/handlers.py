@@ -329,11 +329,13 @@ async def handle_get_financials(args: dict[str, object]) -> dict[str, Any]:
 
 
 async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
-    """get_valuation（ADR-048）。指定銘柄のバリュエーション事実＋業種内ランクを返す。
+    """get_valuation（ADR-048・ADR-063 #4）。指定銘柄のバリュエーション＋業績の質の事実を返す。
 
-    数値は夜間 calc_valuation が焼いた事実のみ。verdict（割安/割高の判定）は返さず、解釈は
-    LLM が手法カード（docs/methods/valuation.md）の作法で行う（ADR-014）。市場は契約として
-    明示する（今は JP 固定・米株は Phase 7(B)＝ADR-039）。未焼成/未上場は found=False で返す。
+    数値は夜間 calc_valuation が焼いた事実のみ。PER/PBR/ROE/利益率/YoY 成長率に加え、会社予想の
+    達成率（op/profit_forecast_achievement＝beat/miss）と上方/下方修正（*_forecast_revision）、
+    訂正有報の最新提出日（last_restatement_at）を中継する。verdict（割安/割高・良し悪し）は返さず、
+    解釈は LLM が行う（ADR-014）。市場は契約として明示（今は JP 固定・米株は ADR-039）。
+    未焼成/未上場は found=False で返す（予想・訂正は valuation 未焼成でも独立に付く）。
     """
     try:
         code = GetValuationArgs.model_validate(args).code
@@ -373,6 +375,12 @@ async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
             "op_growth_yoy": row.get("op_growth_yoy"),
             "profit_growth_yoy": row.get("profit_growth_yoy"),
             "eps_growth_yoy": row.get("eps_growth_yoy"),
+            # 会社予想（ガイダンス）の質シグナル（ADR-063 #4）。達成率=実績/予想（beat/miss）、
+            # 修正=進行中FY予想の直近 上方/下方修正。事実のみで verdict は持たない（解釈は LLM）。
+            "op_forecast_achievement": row.get("op_forecast_achievement"),
+            "profit_forecast_achievement": row.get("profit_forecast_achievement"),
+            "op_forecast_revision": row.get("op_forecast_revision"),
+            "profit_forecast_revision": row.get("profit_forecast_revision"),
             "last_restatement_at": last_restatement_at,
         }
     except Exception as exc:

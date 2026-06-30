@@ -99,6 +99,79 @@ def test_get_valuation_not_found(temp_db) -> None:
     assert out["currency"] == "JPY"
 
 
+def test_get_valuation_relays_forecast_guidance(temp_db) -> None:
+    """会社予想 beat/miss・上方/下方修正を中継し、verdict は持たない（ADR-063 #4）。"""
+    repo.upsert_stocks(
+        [
+            {
+                "code": "72030",
+                "company_name": "会社72030",
+                "sector33_code": "3700",
+                "sector17_code": "6",
+                "market_code": "0111",
+                "is_etf": 0,
+                "updated_at": "2026-06-04T00:00:00+00:00",
+            }
+        ]
+    )
+    repo.upsert_daily_quotes(
+        [
+            {
+                "code": "72030",
+                "date": "2026-06-03",
+                "open": 2500.0,
+                "high": 2500.0,
+                "low": 2500.0,
+                "close": 2500.0,
+                "volume": 1.0,
+                "adj_close": 2500.0,
+            }
+        ]
+    )
+
+    def _fin(date: str, period: str, **kw) -> dict:
+        base = {
+            "code": "72030",
+            "disclosed_date": date,
+            "fiscal_period": period,
+            "net_sales": None,
+            "operating_profit": None,
+            "profit": None,
+            "eps": None,
+            "bps": None,
+            "dividend_per_share": None,
+            "shares_outstanding": None,
+            "treasury_shares": None,
+            "forecast_net_sales": None,
+            "forecast_operating_profit": None,
+            "forecast_profit": None,
+            "forecast_eps": None,
+        }
+        base.update(kw)
+        return base
+
+    repo.upsert_financials(
+        [
+            _fin("2025-02-05", "3Q", forecast_operating_profit=4.70e12),  # 最終予想
+            _fin("2025-05-08", "FY", operating_profit=4.80e12, eps=359.56, bps=2753.09),
+            _fin("2025-08-07", "1Q", forecast_operating_profit=3.20e12),
+            _fin("2026-02-06", "3Q", forecast_operating_profit=3.80e12),  # 直近修正
+        ]
+    )
+    with get_engine().connect() as conn:
+        snaps = valsvc.build_valuation_snapshots(conn)
+    repo.upsert_valuation_snapshots(snaps)
+
+    out = _run(handlers.handle_get_valuation({"code": "72030"}))
+    assert out["found"] is True
+    assert abs(out["op_forecast_achievement"] - 4.80e12 / 4.70e12) < 1e-9  # beat
+    assert abs(out["op_forecast_revision"] - (3.80e12 / 3.20e12 - 1)) < 1e-9  # 上方修正
+    # 予想を出さない純利益は None で中継（捏造しない）
+    assert out["profit_forecast_achievement"] is None
+    # verdict（判定）は持たない（ADR-014）
+    assert _VERDICT_KEYS.isdisjoint(out.keys())
+
+
 def test_get_valuation_relays_last_restatement_at(temp_db) -> None:
     """訂正有報があれば last_restatement_at（事実=最新提出日）を中継し、無ければ None（B-2）。"""
     _seed(temp_db)

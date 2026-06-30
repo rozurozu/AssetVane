@@ -86,6 +86,102 @@ def growth_yoy(curr: float | None, prev: float | None) -> float | None:
     return curr / prev - 1.0
 
 
+# --- 会社予想（ガイダンス）の質シグナル（ADR-063 #4） ---
+
+
+def forecast_achievement(actual: float | None, forecast: float | None) -> float | None:
+    """会社予想に対する達成率 = 実績 / 予想（1.0=予想線・>1 で beat・<1 で miss）。
+
+    予想が None・0 以下なら None（赤字予想は比で符号が壊れ解釈不能ゆえ計算しない＝growth_yoy
+    と同方針）。実績がマイナス（予想黒字なのに赤字転落）は負の達成率として事実なので返す（ROE と
+    同じ規律）。良し悪し（beat/miss の評価）は LLM が解釈する（ADR-014）。
+    """
+    if actual is None or forecast is None or forecast <= 0:
+        return None
+    return actual / forecast
+
+
+def forecast_revision(curr: float | None, prev: float | None) -> float | None:
+    """会社予想の修正率 = 新予想 / 旧予想 − 1（+ で上方修正・− で下方修正）。
+
+    旧予想が None・0 以下なら None（growth_yoy 同方針）。突合する curr/prev は同一会計年度内の
+    連続開示の予想（採用は services 層）。上方/下方の善し悪しは LLM が解釈する（ADR-014）。
+    """
+    if curr is None or prev is None or prev <= 0:
+        return None
+    return curr / prev - 1.0
+
+
+def _is_fy_period(period: str | None) -> bool:
+    """会計期間種別が通期(FY)か（'FY' / 'FY2025' 等・実機は 'FY'）。"""
+    return (period or "").upper().startswith("FY")
+
+
+def forecast_guidance(rows: list[dict[str, Any]]) -> dict[str, float | None]:
+    """銘柄の財務開示列（実績＋会社予想）から beat/miss と上方/下方修正を組む純関数（ADR-063 #4）。
+
+    DB 非依存（既に取得済みの素の dict 列を受けるだけ・採用は services 層が rows を渡す）。各 row は
+    disclosed_date / fiscal_period / operating_profit / profit / forecast_operating_profit /
+    forecast_profit を持つ前提（欠損は None）。実機の形（実機確認 2026-06-30）:
+      - 当期FY予想 forecast_* は各四半期(1Q/2Q/3Q)開示に standing で載り、FY実績行では空(None)。
+      - FY実績行（fiscal_period が FY）に当期の実績 operating_profit/profit が載る。
+    これを使い 2 つの事実を出す（評価は LLM・ADR-014）:
+      - achievement（beat/miss・後ろ向き）= 最新完了FY 実績 ÷ その期の最終 standing 予想
+        （= FY実績行の開示直前にあった予想）。
+      - revision（上方/下方修正・前向き）= 進行中FY（最新FY開示より後）の予想の直近 2 開示の差。
+    予想を出さない会社（forecast_* 全 None）や素が足りない場合は各値 None（捏造しない）。
+    """
+    out: dict[str, float | None] = {
+        "op_forecast_achievement": None,
+        "profit_forecast_achievement": None,
+        "op_forecast_revision": None,
+        "profit_forecast_revision": None,
+    }
+    if not rows:
+        return out
+
+    def _date(r: dict[str, Any]) -> str:
+        return str(r.get("disclosed_date") or "")
+
+    srt = sorted(rows, key=_date)
+    fy_rows = [r for r in srt if _is_fy_period(r.get("fiscal_period"))]
+    latest_fy = fy_rows[-1] if fy_rows else None
+    fy_date = _date(latest_fy) if latest_fy is not None else ""  # 比較は常に str 同士
+
+    # (実績列, 予想列, 達成率キー, 修正キー) を営業利益・純利益で回す
+    specs = (
+        (
+            "operating_profit",
+            "forecast_operating_profit",
+            "op_forecast_achievement",
+            "op_forecast_revision",
+        ),
+        ("profit", "forecast_profit", "profit_forecast_achievement", "profit_forecast_revision"),
+    )
+    for actual_key, fc_key, ach_key, rev_key in specs:
+        # beat/miss: 最新完了FY 実績 ÷ その FY 開示直前の最終 standing 予想（前年の最終Q予想）
+        if latest_fy is not None:
+            standing = None
+            for r in reversed(srt):  # 新しい順に、FY開示より前で予想のある最初の行
+                if _date(r) >= fy_date:
+                    continue
+                if r.get(fc_key) is not None:
+                    standing = r.get(fc_key)
+                    break
+            out[ach_key] = forecast_achievement(latest_fy.get(actual_key), standing)
+
+        # 上方/下方修正: 進行中FY（最新FY開示より後）の予想の直近 2 開示。FYが無ければ全予想行から
+        in_prog = [
+            r
+            for r in srt
+            if r.get(fc_key) is not None and (latest_fy is None or _date(r) > fy_date)
+        ]
+        if len(in_prog) >= 2:
+            out[rev_key] = forecast_revision(in_prog[-1].get(fc_key), in_prog[-2].get(fc_key))
+
+    return out
+
+
 def compute_valuation(
     close: float | None,
     eps: float | None,

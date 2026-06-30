@@ -124,6 +124,38 @@ def get_prior_annual_financials_by_code(conn: Connection) -> dict[str, dict[str,
     return {r["code"]: dict(r) for r in rows}
 
 
+def get_recent_financials_by_code(
+    conn: Connection, limit: int = 8
+) -> dict[str, list[dict[str, Any]]]:
+    """銘柄ごと直近 N 開示行（実績＋会社予想）を {code: [新しい順 dict]} で返す（ADR-063 #4）。
+
+    会社予想の beat/miss・上方/下方修正（quant.forecast_guidance）の素。各四半期開示に当期FY予想が
+    standing で載り FY実績行では空になる実機の形を、複数開示行をまとめて service へ渡すために引く。
+    既定 limit=8（約 2 年分の四半期＝当期＋前期FY の予想/実績が収まる）。
+    """
+    rn = (
+        func.row_number()
+        .over(partition_by=financials.c.code, order_by=financials.c.disclosed_date.desc())
+        .label("rn")
+    )
+    sub = select(
+        financials.c.code,
+        financials.c.disclosed_date,
+        financials.c.fiscal_period,
+        financials.c.operating_profit,
+        financials.c.profit,
+        financials.c.forecast_operating_profit,
+        financials.c.forecast_profit,
+        rn,
+    ).subquery()
+    stmt = select(sub).where(sub.c.rn <= limit).order_by(sub.c.code, sub.c.disclosed_date.desc())
+    out: dict[str, list[dict[str, Any]]] = {}
+    for r in conn.execute(stmt).mappings().all():
+        row = dict(r)
+        out.setdefault(row["code"], []).append(row)
+    return out
+
+
 def upsert_valuation_snapshots(rows: list[dict[str, Any]]) -> int:
     """valuation_snapshots を冪等 UPSERT（code 1 行・最新のみ保持・ADR-002/031）。"""
     return _upsert(valuation_snapshots, rows, index_elements=["code"])
@@ -203,6 +235,10 @@ def _valuation_inner_subquery():
             v.c.op_growth_yoy,
             v.c.profit_growth_yoy,
             v.c.eps_growth_yoy,
+            v.c.op_forecast_achievement,
+            v.c.profit_forecast_achievement,
+            v.c.op_forecast_revision,
+            v.c.profit_forecast_revision,
             per_sector_pctile,
             market_cap_rank,
         )

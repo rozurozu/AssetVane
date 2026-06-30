@@ -195,6 +195,11 @@ FINANCIALS_ROW_SUMMARY = {
     "DivAnn": "90",  # 実績年間配当（フォールバック）
     "ShOutFY": "15794987460",
     "TrShFY": "2761600733",
+    # 会社予想（当期FY予想・四半期開示に standing で載る・ADR-063 #4）
+    "FSales": "50000000000000",
+    "FOP": "3800000000000",
+    "FNP": "3570000000000",
+    "FEPS": "273.91",
 }
 
 # フルネーム（V1 互換・_first フォールバックの後方互換確認用）。
@@ -222,6 +227,33 @@ def test_normalize_financial_summary_keys() -> None:
     assert row["dividend_per_share"] == 95.0  # FDivAnn（予想）優先
     assert row["shares_outstanding"] == 15794987460.0
     assert row["treasury_shares"] == 2761600733.0
+    # 会社予想（ガイダンス・ADR-063 #4）
+    assert row["forecast_net_sales"] == 50000000000000.0
+    assert row["forecast_operating_profit"] == 3800000000000.0
+    assert row["forecast_profit"] == 3570000000000.0
+    assert row["forecast_eps"] == 273.91
+
+
+def test_normalize_financial_forecast_blank_on_fy_row_is_none() -> None:
+    """FY実績行は会社予想が空（=None）になる（実機確認 2026-06-30・ADR-063 #4）。"""
+    row = JQuantsAdapter._normalize_financial(
+        {
+            "Code": "72030",
+            "DiscDate": "2025-05-08",
+            "CurPerType": "FY",
+            "Sales": "48036704000000",
+            "OP": "4795586000000",
+            "FSales": "",  # FY実績行では予想は空
+            "FOP": "",
+            "FNP": "",
+            "FEPS": "",
+        }
+    )
+    assert row["operating_profit"] == 4795586000000.0
+    assert row["forecast_operating_profit"] is None
+    assert row["forecast_net_sales"] is None
+    assert row["forecast_profit"] is None
+    assert row["forecast_eps"] is None
 
 
 def test_normalize_financial_full_keys() -> None:

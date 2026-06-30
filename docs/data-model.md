@@ -97,9 +97,11 @@ J-Quants V2 `/v2/fins/summary` 由来。
 | `eps`/`bps` | REAL | EPS/BPS（**BPS は通期FY行のみ・四半期EPSは累計**）|
 | `dividend_per_share` | REAL | 年間配当（予想 `FDivAnn` 優先・実績 `DivAnn` 代替・ADR-031）|
 | `shares_outstanding`/`treasury_shares` | REAL | 期末発行済株式数 `ShOutFY` / 自己株式 `TrShFY`（時価総額の素・ADR-031）|
+| `forecast_net_sales`/`forecast_operating_profit`/`forecast_profit`/`forecast_eps` | REAL | 会社予想（当期FY予想 `FSales`/`FOP`/`FNP`/`FEPS`・[ADR-063](decisions.md) #4・0029）。**各四半期開示に standing で載り FY実績行では空**＝beat/miss・上方/下方修正の素 |
 
-- 主キー `(code, disclosed_date, fiscal_period)`。実フィールドは実機確認済み（2026-06・[jquants.md §6](jquants.md)）。
+- 主キー `(code, disclosed_date, fiscal_period)`。実フィールドは実機確認済み（2026-06・予想は 2026-06-30・[jquants.md §6](jquants.md)）。
 - 配当/株数は **スクリーナー（ADR-031）のバリュエーション導出**用に 0007_screening で追加。`fetch_financials` は全銘柄を by-date 一括取得する。
+- 会社予想 4 列は **業績の質シグナル（[ADR-063](decisions.md) #4）**用に 0029_financials_guidance で追加。夜間 calc_valuation が `valuation_snapshots` の達成率/修正率へ畳む。
 
 ### `index_quotes` — 主要指数の水準（Phase 2〜）
 `IndexAdapter` で取得（TOPIX / S&P500 等）。Advisor のマクロ文脈用。`daily_quotes` とは**別テーブル**にする（個別銘柄とは粒度・出所が違うため）。Phase 2 着手前にこの形で確定。
@@ -262,6 +264,8 @@ UNIQUE `(portfolio_id, isin)`。
 | `per`/`pbr`/`market_cap`/`dividend_yield` | REAL | 派生比率（PER=close/eps・PBR=close/bps・時価総額=close×shares_net・利回り=dps/close）|
 | `roe`/`operating_margin`/`net_margin` | REAL | 収益性（ROE=EPS/BPS 近似・営業利益率・純利益率。0..1・[ADR-048](decisions.md)・0012）|
 | `revenue_growth_yoy`/`op_growth_yoy`/`profit_growth_yoy`/`eps_growth_yoy` | REAL | YoY 成長率（売上・営業益・純益・EPS。[ADR-048](decisions.md)・0012）|
+| `op_forecast_achievement`/`profit_forecast_achievement` | REAL | 会社予想 達成率（最新完了FY 実績÷その期最終予想＝beat/miss。営業益・純益。[ADR-063](decisions.md) #4・0029）|
+| `op_forecast_revision`/`profit_forecast_revision` | REAL | 会社予想 直近修正（進行中FY 予想の最新÷前−1＝＋上方/−下方。[ADR-063](decisions.md) #4・0029）|
 | `fin_disclosed_date` | TEXT | 採用財務の開示日（監査） |
 | `updated_at` | TEXT | この行を焼いた時刻 ISO8601 |
 

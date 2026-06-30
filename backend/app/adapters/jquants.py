@@ -332,6 +332,8 @@ class JQuantsAdapter:
           EPS/BPS/Sales/OP/NP・DiscDate（開示日）・CurPerType（会計期間種別 'FY'/'1Q'…）。
           配当は FDivAnn（予想年間）優先・DivAnn（実績年間）フォールバック＝予想配当利回りを既定。
           発行済株式数 ShOutFY・自己株式 TrShFY → 時価総額 = close * (ShOutFY - TrShFY)。
+          会社予想 FSales/FOP/FNP/FEPS（当期FY予想・四半期開示に standing／FY実績行では空＝
+          ADR-063 #4。beat/miss・上方/下方修正の素で、解釈は LLM・ADR-014）。
         値は文字列・N/A は空文字のため数値は `_to_float` で None 化する。
         """
         return {
@@ -352,6 +354,12 @@ class JQuantsAdapter:
                 _first(r, ["ShOutFY", "NumberOfIssuedAndOutstandingShares"])
             ),
             "treasury_shares": _to_float(_first(r, ["TrShFY", "NumberOfTreasuryStock"])),
+            # 会社予想（ガイダンス・ADR-063 #4）。各四半期開示に当期FY予想が standing で載り、
+            # FY実績行では空（=None）になる（実機確認 2026-06-30）。beat/miss と上方/下方修正の素。
+            "forecast_net_sales": _to_float(_first(r, ["FSales", "ForecastNetSales"])),
+            "forecast_operating_profit": _to_float(_first(r, ["FOP", "ForecastOperatingProfit"])),
+            "forecast_profit": _to_float(_first(r, ["FNP", "ForecastProfit"])),
+            "forecast_eps": _to_float(_first(r, ["FEPS", "ForecastEarningsPerShare"])),
         }
 
     # --- TOPIX 指数（Phase 7・IndexAdapter 連鎖の最後段） ----------------------

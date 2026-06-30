@@ -273,6 +273,12 @@ financials = Table(
     Column("dividend_per_share", Float),  # 年間配当（予想優先）
     Column("shares_outstanding", Float),  # 期末発行済株式数（ShOutFY）
     Column("treasury_shares", Float),  # 期末自己株式数（TrShFY）
+    # 会社予想（ガイダンス）。各四半期開示行に当期FY予想が standing で載る。FY実績行では空＝None
+    # （実機確認 2026-06-30・ADR-063 #4）。beat/miss と上方/下方修正の素（解釈は LLM・ADR-014）。
+    Column("forecast_net_sales", Float),  # 当期FY予想 売上高（FSales）
+    Column("forecast_operating_profit", Float),  # 当期FY予想 営業利益（FOP）
+    Column("forecast_profit", Float),  # 当期FY予想 純利益（FNP）
+    Column("forecast_eps", Float),  # 当期FY予想 EPS（FEPS）
     PrimaryKeyConstraint("code", "disclosed_date", "fiscal_period", name="pk_financials"),
     Index("ix_financials_code", "code"),
 )
@@ -384,6 +390,13 @@ valuation_snapshots = Table(
     Column("op_growth_yoy", Float),  # 営業利益 YoY 成長率
     Column("profit_growth_yoy", Float),  # 純利益 YoY 成長率
     Column("eps_growth_yoy", Float),  # EPS YoY 成長率（FY 基準）
+    # 会社予想（ガイダンス）の質シグナル（ADR-063 #4・夜間 calc_valuation が焼く事実）。
+    # achievement=最新完了FY 実績÷その期の最終予想（beat/miss）、revision=進行中FY予想の直近
+    # 上方/下方修正（最新Q÷前Q-1）。予想なし/赤字予想は None（捏造しない・ADR-014）。
+    Column("op_forecast_achievement", Float),  # 営業利益 達成率（actual/forecast）
+    Column("profit_forecast_achievement", Float),  # 純利益 達成率
+    Column("op_forecast_revision", Float),  # 営業利益予想 直近修正（+=上方）
+    Column("profit_forecast_revision", Float),  # 純利益予想 直近修正
     Column("fin_disclosed_date", String),  # 採用した財務の開示日（監査・どの決算を使ったか）
     Column("updated_at", String),  # ISO8601（この行を焼いた時刻）
 )

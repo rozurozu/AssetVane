@@ -45,6 +45,10 @@ def _fin(code: str, date: str, period: str, **kw) -> dict:
         "dividend_per_share": None,
         "shares_outstanding": None,
         "treasury_shares": None,
+        "forecast_net_sales": None,
+        "forecast_operating_profit": None,
+        "forecast_profit": None,
+        "forecast_eps": None,
     }
     base.update(kw)
     return base
@@ -157,6 +161,31 @@ def test_build_snapshot_yoy_none_without_prior_fy(temp_db) -> None:
     assert abs(r["roe"] - 0.1) < 1e-12
     assert r["revenue_growth_yoy"] is None
     assert r["eps_growth_yoy"] is None
+
+
+def test_build_snapshot_bakes_forecast_guidance(temp_db) -> None:
+    # 会社予想（ADR-063 #4）: 最新完了FY 実績 vs 最終 standing 予想で beat/miss、進行中FY の
+    # 予想 直近修正で上方/下方修正を valuation_snapshots に焼く。
+    repo.upsert_stocks([_stock("72030")])
+    repo.upsert_daily_quotes([_quote("72030", "2026-06-03", 2500.0)])
+    repo.upsert_financials(
+        [
+            _fin("72030", "2024-08-01", "1Q", forecast_operating_profit=4.30e12),
+            _fin("72030", "2025-02-05", "3Q", forecast_operating_profit=4.70e12),  # 最終予想
+            _fin("72030", "2025-05-08", "FY", operating_profit=4.80e12, eps=359.56, bps=2753.09),
+            _fin("72030", "2025-08-07", "1Q", forecast_operating_profit=3.20e12),
+            _fin("72030", "2025-11-05", "2Q", forecast_operating_profit=3.40e12),
+            _fin("72030", "2026-02-06", "3Q", forecast_operating_profit=3.80e12),  # 直近修正
+        ]
+    )
+    with get_engine().connect() as conn:
+        rows = valsvc.build_valuation_snapshots(conn)
+    r = next(x for x in rows if x["code"] == "72030")
+    assert abs(r["op_forecast_achievement"] - 4.80e12 / 4.70e12) < 1e-9  # beat
+    assert abs(r["op_forecast_revision"] - (3.80e12 / 3.40e12 - 1)) < 1e-9  # 上方修正
+    # 純利益は予想・実績の素が無いので None（営業利益と独立・捏造しない）
+    assert r["profit_forecast_achievement"] is None
+    assert r["profit_forecast_revision"] is None
 
 
 def test_build_snapshot_priced_but_no_financials_gives_none_metrics(temp_db) -> None:

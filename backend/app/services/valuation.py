@@ -45,6 +45,7 @@ def build_valuation_snapshots(conn: Connection) -> list[dict[str, Any]]:
     latest_fin = repo.get_latest_financials_by_code(conn)  # 配当・株数
     annual_fin = repo.get_latest_annual_financials_by_code(conn)  # 実績 EPS/BPS・当期FY
     prior_fin = repo.get_prior_annual_financials_by_code(conn)  # 前期FY（YoY 前年同期・ADR-048）
+    recent_fin = repo.get_recent_financials_by_code(conn)  # 直近開示（会社予想・ADR-063 #4）
     now = datetime.now(UTC).isoformat()
 
     rows: list[dict[str, Any]] = []
@@ -76,6 +77,8 @@ def build_valuation_snapshots(conn: Connection) -> list[dict[str, Any]]:
                 "market_cap": metrics["market_cap"],
                 "dividend_yield": metrics["dividend_yield"],
                 **_fundamentals(annual, prior),
+                # 会社予想 beat/miss・上方/下方修正（直近開示の実績＋予想から・ADR-063 #4）
+                **valuation.forecast_guidance(recent_fin.get(code, [])),
                 "fin_disclosed_date": (annual or latest or {}).get("disclosed_date"),
                 "updated_at": now,
             }
