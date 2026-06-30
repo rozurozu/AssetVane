@@ -14,6 +14,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # pyright（型チェック・ADR-023）は内部で Node ランタイムを取得して動く。slim には
 # libatomic が無く Node が起動できないため入れておく（lint/型チェックを通すための土台）。
+# libgomp1 は LightGBM（AI Alpha Scorer・Phase 5）の OpenMP ランタイム（libgomp.so.1）。
+# slim には無く、無いと `import lightgbm` が OSError で落ちる。dev の学習（make train-ai-alpha・
+# ADR-066）と prod の推論（score_ai_alpha が .pkl をロード→predict・ADR-006）の双方で要るので
+# base に焼く（pyproject の「ARM ゲート」コメントが指す system 依存の実体）。
 # あわせて codex CLI（AI Advisor の provider="codex"・ADR-032）を同梱する。codex は PATH 上の
 # `codex` を `codex app-server` として spawn する前提なので、コンテナ内に置く必要がある（dev/prod
 # 双方で codex を使えるよう base に焼く）。Node 不要のネイティブ musl static バイナリを GitHub
@@ -21,7 +25,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # protocol に要る 0.136.0 以上を満たす rust-v0.137.0 にピン。ca-certificates は codex 実行時の
 # HTTPS（OpenAI/ChatGPT）に要るので残す。curl は取得用なので使い終わったら purge する。
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libatomic1 ca-certificates curl \
+    && apt-get install -y --no-install-recommends libatomic1 libgomp1 ca-certificates curl \
     && case "${TARGETARCH}" in \
          arm64) CODEX_ARCH=aarch64 ;; \
          amd64) CODEX_ARCH=x86_64 ;; \

@@ -31,7 +31,10 @@ def build_training_set(
     *,
     label_horizon_days: int = 60,
     label_kind: str = "regression",
-) -> tuple[pd.DataFrame, pd.Series, list[str]]:
+    with_dates: bool = False,
+) -> (
+    tuple[pd.DataFrame, pd.Series, list[str]] | tuple[pd.DataFrame, pd.Series, list[str], pd.Series]
+):
     """point-in-time で特徴量 X・ラベル y・feature_names を組む純関数（リーク防止＝§2/§3）。
 
     引数:
@@ -41,6 +44,8 @@ def build_training_set(
       benchmark: TOPIX 終値（index=date 文字列・value=close）。対ベンチ超過リターン算出用。
       label_horizon_days: ラベルの保有営業日数（既定 60）。
       label_kind: 'regression'（既定・超過リターンそのもの）/ 'classification'（符号で 2 値化）。
+      with_dates: True なら 4 つ目に各サンプルの as_of（開示日）Series を返す。walk-forward CV で
+        時系列順にソートして fold を切るために使う（既定 False＝後方互換の 3 タプル）。
 
     各 (code, disclosed_date) を as_of として 1 サンプルを作る:
       X 行 = features.build_features_at(...)、
@@ -51,6 +56,7 @@ def build_training_set(
     bench = {str(d): float(v) for d, v in benchmark.items() if pd.notna(v)}
     x_rows: list[dict[str, float]] = []
     y_vals: list[float] = []
+    as_of_dates: list[str] = []  # 各サンプルの開示日（with_dates 用・CV の時系列分割キー）
 
     for code, fin_group in financials.groupby("code"):
         fin_df = pd.DataFrame(fin_group)
@@ -87,12 +93,15 @@ def build_training_set(
             excess = (p_th / p_t - 1.0) - (b_th / b_t - 1.0)
             x_rows.append(feats)
             y_vals.append(excess)
+            as_of_dates.append(disclosed_date)
 
     feature_names = list(FEATURE_NAMES)
     x = pd.DataFrame(x_rows, columns=feature_names)
     y_series = pd.Series(y_vals, dtype=float)
     if label_kind == "classification":
         y_series = (y_series > 0).astype(int)
+    if with_dates:
+        return x, y_series, feature_names, pd.Series(as_of_dates, dtype="object")
     return x, y_series, feature_names
 
 
@@ -141,6 +150,63 @@ def train_model(
         metrics["ic"] = _spearman_ic(preds, y.to_numpy())
     metrics["n_samples"] = float(len(x_feat))
     return model, metrics
+
+
+def walk_forward_cv(
+    x: pd.DataFrame,
+    y: pd.Series,
+    sample_dates: pd.Series,
+    feature_names: list[str],
+    *,
+    n_splits: int = 5,
+    params: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    """時系列 expanding-window walk-forward CV（リーク防止・docs/ml-training.md §3）。
+
+    サンプルを as_of（sample_dates＝開示日）昇順に並べ、過去ブロックで学習→直後の未来ブロックで
+    評価、を n_splits 回繰り返す（expanding window）。各 fold は train の as_of < test の as_of を
+    満たし未来を学習に混ぜない（ADR-016 の再現性・リーク防止）。回帰のみ（分類化はしない方針）。
+    戻り: fold ごとの RMSE / IC（spearman）の平均・標準偏差・fold 数・サンプル数。サンプルが少なく
+    ブロックが作れなければ n_folds=0 で返す（学習側が判断）。
+    """
+    import lightgbm as lgb
+
+    n = len(x)
+    order = np.argsort(sample_dates.to_numpy().astype(str), kind="stable")
+    x_sorted = x.iloc[order].reset_index(drop=True)[feature_names]
+    y_sorted = y.iloc[order].reset_index(drop=True)
+    hp = {**_DEFAULT_PARAMS, **(params or {})}
+
+    # n を (usable+1) ブロックに分け、fold i は [0..b*(i+1)) 学習 / [b*(i+1)..) 評価（expanding）。
+    usable = max(1, min(n_splits, n - 1))
+    block = n // (usable + 1)
+    if block < 1:
+        return {"n_samples": float(n), "n_folds": 0.0}
+
+    rmses: list[float] = []
+    ics: list[float] = []
+    for i in range(usable):
+        tr_end = block * (i + 1)
+        te_end = block * (i + 2) if i < usable - 1 else n
+        x_tr, y_tr = x_sorted.iloc[:tr_end], y_sorted.iloc[:tr_end]
+        x_te, y_te = x_sorted.iloc[tr_end:te_end], y_sorted.iloc[tr_end:te_end]
+        if len(x_tr) == 0 or len(x_te) == 0:
+            continue
+        model = lgb.LGBMRegressor(**hp)
+        model.fit(x_tr, y_tr)
+        preds = np.asarray(model.predict(x_te), dtype=float)
+        rmses.append(float(np.sqrt(np.mean((preds - y_te.to_numpy()) ** 2))))
+        ics.append(_spearman_ic(preds, y_te.to_numpy()))
+
+    valid_ics = [v for v in ics if math.isfinite(v)]
+    return {
+        "n_samples": float(n),
+        "n_folds": float(len(rmses)),
+        "cv_rmse_mean": float(np.mean(rmses)) if rmses else float("nan"),
+        "cv_rmse_std": float(np.std(rmses)) if rmses else float("nan"),
+        "cv_ic_mean": float(np.mean(valid_ics)) if valid_ics else float("nan"),
+        "cv_ic_std": float(np.std(valid_ics)) if valid_ics else float("nan"),
+    }
 
 
 def save_model(
