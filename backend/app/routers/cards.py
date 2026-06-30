@@ -1,16 +1,19 @@
 """知識カードの REST ルータ（ADR-062・backend-router-pattern）。
 
-設計の真実: docs/decisions.md ADR-062（知識カード基盤）。
+設計の真実: docs/decisions.md ADR-062（知識カード基盤＋「雑追加」リデザイン追補）。
 
-`/cards` 管理画面から知識カードを追加・編集・削除し、AI 審査（triage）で status を振り分け、人間が
-active 化する（本番助言に効く操作は人間が最終承認・ADR-009）。HTTP 入出力だけの薄い層で、
-クエリは db/repo/knowledge_cards、AI 審査は advisor/card_triage、埋め込みは batch/jobs/embed_cards
-が持つ（ADR-005/014）。embedding BLOB は返さない（repo が明示列で返す）。
+`/cards` 管理画面から知識カードを追加・編集・削除する。**追加は本文（＋出所 URL）だけ**で行い、
+追加時に同期で AI（`assist_card`＝triage 面）を走らせて title/when_to_apply/level を生成しつつ
+verdict で status を振り分ける（rejected/to_core/needs_quant は自動・**active 候補は draft 留置＝
+人間がワンクリック承認**＝ADR-009）。AI 未整形（面未設定/応答不正）でも本文は draft 保存し、行から
+再整形できる。HTTP 入出力だけの薄い層で、クエリは db/repo/knowledge_cards、AI 整形は
+advisor/card_triage、埋め込みは batch/jobs/embed_cards が持つ（ADR-005/014）。embedding BLOB は
+返さない（repo が明示列で返す）。
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -46,19 +49,21 @@ class CardOut(BaseModel):
     # 重要度（retrieval ランク・注入順を distance/weight で重み付け・ADR-062 追補）
     weight: float = 1.0
     source: str | None = None
+    # 追加時 AI 審査（assist_card）の判定理由（None=AI 未整形・ADR-062 追補）
+    triage_reason: str | None = None
     embedded_at: str | None = None  # 埋め込み済みかの UI ヒント（None=未埋め込み）
     created_at: str | None = None
     updated_at: str | None = None
 
 
 class CardCreateIn(BaseModel):
+    """カード作成入力（ADR-062 追補・雑追加リデザイン）。本文＋出所 URL だけ。
+
+    title/when_to_apply/level は追加時に AI（assist_card）が生成する（ユーザーは入力しない）。
+    """
+
     body: str
-    title: str = ""  # 任意（空なら本文先頭で代替・AI 補助で埋めるのが基本・ADR-062 追補）
-    when_to_apply: str | None = None
-    level: CardLevel | None = None
-    sector17_code: str | None = None
-    theme: str | None = None
-    source: str | None = None
+    source: str | None = None  # 出所 URL（任意・記事の出典など）
 
 
 class CardUpdateIn(BaseModel):
@@ -75,25 +80,6 @@ class CardUpdateIn(BaseModel):
     weight: float | None = Field(default=None, gt=0)  # 重要度（>0・ADR-062 追補）
 
 
-class CardAssistIn(BaseModel):
-    """POST /cards/assist の入力（本文だけ → AI が整える・ADR-062 追補）。"""
-
-    body: str
-    title: str = ""
-
-
-class CardAssistOut(BaseModel):
-    """AI 補助の提案（保存前にフォームを埋める材料）。verdict=None は面未設定/応答不正。"""
-
-    title: str
-    when_to_apply: str | None = None
-    level: str | None = None
-    verdict: str | None = None
-    reason: str = ""
-    quant_note: str | None = None
-    linked_signal_type: str | None = None
-
-
 class TriageOut(BaseModel):
     """AI 審査の結果（ADR-062）。"""
 
@@ -104,7 +90,7 @@ class TriageOut(BaseModel):
 
 
 class TriageResponse(BaseModel):
-    """審査エンドポイントの応答。triage=None は面未設定/応答不正でレビューできなかったとき。"""
+    """再整形エンドポイントの応答。triage=None は面未設定/応答不正でレビューできなかったとき。"""
 
     triage: TriageOut | None = None
     card: CardOut
@@ -124,11 +110,42 @@ def _get_or_404(conn: Connection, card_id: int) -> dict[str, object]:
     return row
 
 
-def _fallback_title(body: str) -> str:
-    """title 空時の代替（本文先頭行を 40 字で・空なら『（無題）』・ADR-062 追補）。"""
-    stripped = (body or "").strip()
-    first = stripped.splitlines()[0] if stripped else ""
-    return first[:40] or "（無題）"
+async def _resolve_via_assist(body: str, *, title: str = "") -> dict[str, Any]:
+    """本文を `assist_card`（triage 面）に通し、保存に使うフィールドへ解決する（ADR-062 追補）。
+
+    返す dict＝title/when_to_apply/level/status/triage_reason/quant_note/linked_signal_type。
+    - assist=None（面未設定/応答不正）→ AI 未整形。status=draft・reason None・
+      title は入力のまま（再整形は既存 title 温存・create は空）。先頭切り出しはしない。
+    - verdict=='active' → 人間承認待ちで status=draft 据え置き（active 化は activate 経由）。
+    - 他（rejected/to_core/needs_quant）→ status=verdict を自動反映。
+    LLM の await は書き込み tx の外で駆動する（C-6 の規律）。
+    """
+    from app.advisor.card_triage import assist_card
+
+    result = await assist_card(
+        body=body, title=title, existing_signal_types=_IMPLEMENTED_SIGNAL_TYPES
+    )
+    if result is None:
+        return {
+            "title": title.strip(),  # 再整形は既存 title 温存・create は空（切り出さない）
+            "when_to_apply": None,
+            "level": None,
+            "status": "draft",
+            "triage_reason": None,
+            "quant_note": None,
+            "linked_signal_type": None,
+        }
+    status = "draft" if result.verdict == "active" else result.verdict
+    return {
+        "title": result.title,  # AI 生成（空でも切り出さない）
+        "when_to_apply": result.when_to_apply,
+        "level": result.level,
+        "status": status,
+        "triage_reason": result.reason or None,
+        "quant_note": result.quant_note,
+        "linked_signal_type": result.linked_signal_type,
+        "verdict": result.verdict,  # 応答（TriageOut）用
+    }
 
 
 @router.get("/cards", response_model=list[CardOut])
@@ -146,50 +163,26 @@ def get_card(card_id: int, conn: Connection = Depends(get_conn)) -> CardOut:
     return _card_out(_get_or_404(conn, card_id))
 
 
-@router.post("/cards/assist", response_model=CardAssistOut)
-async def assist_card_endpoint(body: CardAssistIn) -> CardAssistOut:
-    """本文から AI が title/when_to_apply/level を生成＋審査する（下書き補助・ADR-062 追補）。
-
-    フォームを埋める材料を返すだけ（保存はしない）。面未設定/応答不正なら verdict=None で、title は
-    入力 or 本文先頭で代替（ユーザーがそのまま保存できる・ADR-018）。
-    """
-    from app.advisor.card_triage import assist_card
-
-    result = await assist_card(
-        body=body.body, title=body.title, existing_signal_types=_IMPLEMENTED_SIGNAL_TYPES
-    )
-    if result is None:
-        return CardAssistOut(title=body.title.strip() or _fallback_title(body.body))
-    return CardAssistOut(
-        title=result.title or _fallback_title(body.body),
-        when_to_apply=result.when_to_apply,
-        level=result.level,
-        verdict=result.verdict,
-        reason=result.reason,
-        quant_note=result.quant_note,
-        linked_signal_type=result.linked_signal_type,
-    )
-
-
 @router.post("/cards", response_model=CardOut, status_code=201)
-def create_card(body: CardCreateIn) -> CardOut:
-    """カードを draft で作成し、本文ベースの合成テキストを best-effort で即時埋め込む（ADR-062）。
+async def create_card(body: CardCreateIn) -> CardOut:
+    """本文（＋source）だけでカードを作る。追加時に同期で AI が整形＋審査する（ADR-062 追補）。
 
-    title 空なら本文先頭で代替（AI 補助 /cards/assist でフォームを埋めるのが基本）。AI 審査は別口
-    （POST /cards/{id}/triage）。埋め込み失敗は握る（夜間で拾う）。active 化は人間承認。
+    `assist_card` が title/when_to_apply/level を生成し verdict で status を決める（active 候補は
+    draft 留置＝人間承認待ち）。AI 未整形でも本文は draft 保存（title 空）＝行から再整形できる。
+    埋め込みは保存後 best-effort（await を書き込み tx 外で駆動・C-6）。
     """
-    title = body.title.strip() or _fallback_title(body.body)
+    resolved = await _resolve_via_assist(body.body)
     card_id = repo.insert_knowledge_card(
-        title=title,
+        title=resolved["title"],
         body=body.body,
-        when_to_apply=body.when_to_apply,
-        status="draft",
-        level=body.level,
-        sector17_code=body.sector17_code,
-        theme=body.theme,
+        when_to_apply=resolved["when_to_apply"],
+        status=resolved["status"],
+        level=resolved["level"],
+        quant_note=resolved["quant_note"],
+        linked_signal_type=resolved["linked_signal_type"],
+        triage_reason=resolved["triage_reason"],
         source=body.source,
     )
-    # 保存後に await を tx 外で駆動して即時埋め込み（C-6 の規律・best-effort）。
     from app.batch.jobs.embed_cards import embed_card_best_effort
 
     embed_card_best_effort(card_id)
@@ -226,51 +219,51 @@ def delete_card(card_id: int) -> None:
     repo.delete_knowledge_card(card_id)
 
 
-@router.post("/cards/{card_id}/triage", response_model=TriageResponse)
-async def triage_card_endpoint(card_id: int) -> TriageResponse:
-    """カードを AI 審査し status を振り分ける（ADR-062）。
+@router.post("/cards/{card_id}/assist", response_model=TriageResponse)
+async def reassist_card_endpoint(card_id: int) -> TriageResponse:
+    """既存カードを再整形する（AI 未整形の再試行＋編集後の再審査・ADR-062 追補）。
 
-    verdict が needs_quant/to_core/rejected ならその status を反映。'active' は人間承認を待つため
-    status は draft のまま（linked_signal_type だけ反映）＝active 化は POST /cards/{id}/activate。
-    面未設定/応答不正で審査できないときは triage=None（status 据え置き・ADR-018）。
+    保存済み body を `assist_card` に通し、title/when_to_apply/level と verdict→status・
+    triage_reason を更新する（既存 title は assist に渡して温存/改善）。verdict=='active' は
+    draft 据え置き（active 化は人間承認）。面未設定/応答不正なら triage=None（status 据え置き）。
+    埋め込み元が変わるので best-effort で再埋め込みする。
     """
     with get_engine().connect() as conn:
         card = _get_or_404(conn, card_id)
 
-    from app.advisor.card_triage import triage_card
+    resolved = await _resolve_via_assist(str(card["body"]), title=str(card.get("title") or ""))
+    verdict = resolved.get("verdict")  # None=AI 未整形（更新しない）
 
-    wta = card.get("when_to_apply")
-    result = await triage_card(
-        title=str(card["title"]),
-        body=str(card["body"]),
-        when_to_apply=str(wta) if wta else None,
-        existing_signal_types=_IMPLEMENTED_SIGNAL_TYPES,
-    )
+    if verdict is not None:
+        repo.update_knowledge_card(
+            card_id,
+            {
+                "title": resolved["title"],
+                "when_to_apply": resolved["when_to_apply"],
+                "level": resolved["level"],
+            },
+        )
+        repo.set_knowledge_card_status(
+            card_id,
+            status=resolved["status"],
+            quant_note=resolved["quant_note"],
+            linked_signal_type=resolved["linked_signal_type"],
+            reason=resolved["triage_reason"],
+        )
+        from app.batch.jobs.embed_cards import embed_card_best_effort
 
-    if result is not None:
-        if result.verdict == "active":
-            # active 化は人間承認（ADR-009）。draft のまま linked_signal_type だけ反映。
-            repo.set_knowledge_card_status(
-                card_id, status="draft", linked_signal_type=result.linked_signal_type
-            )
-        else:
-            repo.set_knowledge_card_status(
-                card_id,
-                status=result.verdict,
-                quant_note=result.quant_note,
-                linked_signal_type=result.linked_signal_type,
-            )
+        embed_card_best_effort(card_id)
 
     with get_engine().connect() as conn:
         updated = _get_or_404(conn, card_id)
     triage_out = (
         TriageOut(
-            verdict=result.verdict,
-            reason=result.reason,
-            quant_note=result.quant_note,
-            linked_signal_type=result.linked_signal_type,
+            verdict=str(verdict),
+            reason=resolved["triage_reason"] or "",
+            quant_note=resolved["quant_note"],
+            linked_signal_type=resolved["linked_signal_type"],
         )
-        if result is not None
+        if verdict is not None
         else None
     )
     return TriageResponse(triage=triage_out, card=_card_out(updated))

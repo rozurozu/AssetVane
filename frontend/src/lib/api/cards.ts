@@ -32,20 +32,17 @@ export type CardOut = {
   always_inject: boolean; // 常時注入カードか
   source: string | null; // 出所（任意 URL 等）
   weight: number; // 重要度（>0・既定 1.0）。古い/信頼度低いカードを下げる用途（ADR-062 追補）
+  triage_reason: string | null; // 追加時 AI 審査の判定理由（null=AI 未整形・ADR-062 追補）
   embedded_at: string | null; // 埋め込み済みかの UI ヒント（null=未埋め込み）
   created_at: string | null;
   updated_at: string | null;
 };
 
-/** カード作成リクエスト（backend CardCreateIn と 1:1）。status は backend が "draft" 固定。
- * body 必須・title 任意（空なら backend が本文先頭で代替する＝ADR-062 追補）。 */
+/** カード作成リクエスト（backend CardCreateIn と 1:1・ADR-062 追補「雑追加」リデザイン）。
+ * 本文（＋出所 URL）だけ。title/when_to_apply/level は追加時に AI が生成する。status は backend が
+ * verdict から決める（active 候補は draft 留置＝人間承認待ち）。 */
 export type CardCreateIn = {
   body: string;
-  title?: string;
-  when_to_apply?: string | null;
-  level?: CardLevel | null;
-  sector17_code?: string | null;
-  theme?: string | null;
   source?: string | null;
 };
 
@@ -80,24 +77,6 @@ export type TriageResponse = {
   card: CardOut;
 };
 
-/** AI 整形リクエスト（backend CardAssistIn と 1:1）。本文だけを渡し、AI に title 等を補わせる。 */
-export type CardAssistIn = {
-  body: string;
-  title?: string;
-};
-
-/** AI 整形の結果（backend CardAssistOut と 1:1・保存しない）。
- * verdict=null は AI 面未設定/応答不正（その場合 title は本文先頭の代替が入る）。 */
-export type CardAssistOut = {
-  title: string;
-  when_to_apply: string | null;
-  level: string | null; // CardLevel 文字列
-  verdict: string | null; // active / needs_quant / to_core / rejected。null=AI 面未設定/応答不正
-  reason: string;
-  quant_note: string | null;
-  linked_signal_type: string | null;
-};
-
 /** 知識カード一覧（status で絞り込み可・省略で全件・新しい順）。 */
 export function getCards(status?: CardStatus, signal?: AbortSignal): Promise<CardOut[]> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
@@ -119,20 +98,16 @@ export function putCard(id: number, body: CardUpdateIn): Promise<CardOut> {
   return putJSON<CardOut>(`/cards/${id}`, body);
 }
 
-/** 本文だけ渡して AI に title/when_to_apply/level を整えてもらう（保存しない・アクション動詞・ADR-062 追補）。 */
-export function postCardAssist(body: CardAssistIn): Promise<CardAssistOut> {
-  return postJSON<CardAssistOut>("/cards/assist", body);
-}
-
 /** カードを削除（204・本文なし）。無ければ 404 で ApiError throw。 */
 export function deleteCard(id: number): Promise<void> {
   return delNoContent(`/cards/${id}`);
 }
 
-/** カードを AI 審査し status を振り分ける（アクション動詞・ADR-062）。
- * verdict='active' は人間承認を待つため status は draft 据え置き（linked_signal_type だけ反映）。 */
-export function triageCard(id: number): Promise<TriageResponse> {
-  return postJSON<TriageResponse>(`/cards/${id}/triage`, {});
+/** 既存カードを AI で再整形する（AI 未整形の再試行＋編集後の再審査・アクション動詞・ADR-062 追補）。
+ * 保存済み本文から title/when_to_apply/level を生成し直し、verdict→status・triage_reason を更新する。
+ * verdict='active' は人間承認を待つため status は draft 据え置き。 */
+export function assistCard(id: number): Promise<TriageResponse> {
+  return postJSON<TriageResponse>(`/cards/${id}/assist`, {});
 }
 
 /** カードを active 化（人間の最終承認＝本番助言に効く・ADR-009/062）。 */

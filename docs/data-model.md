@@ -567,8 +567,10 @@ AI アドバイザーの第 3 の知識源（CORE/POLICY に続く・[ADR-015](d
 | `linked_signal_type` | TEXT | 紐づく signal_type（未実装は null＝手法↔計算の索引）|
 | `quant_note` | TEXT | `needs_quant` のとき「必要な計算」のメモ |
 | `always_inject` | INTEGER | 1=常時注入の例外保険（0/1）|
+| `weight` | REAL | 重要度（>0・既定 1.0）。retrieval/注入順を `distance/weight` で重み付け（[ADR-062](decisions.md) 追補・`0026`）|
 | `source` | TEXT | URL・引用・由来（YouTuber 動画 URL 等）|
-| `embedding` | BLOB | `when_to_apply` の float32 LE ベクトル（未埋め込み/機能オフは null）|
+| `triage_reason` | TEXT | 追加時 AI 審査（`assist_card`）の判定理由（null=AI 未整形・[ADR-062](decisions.md) 追補・`0028`）|
+| `embedding` | BLOB | title+when_to_apply+body 合成テキストの float32 LE ベクトル（未埋め込み/機能オフは null）|
 | `embed_model` | TEXT | 埋め込みモデル名（不一致行を再埋め込み対象にするキー）|
 | `embedded_at` | TEXT | 埋め込み時刻 ISO8601 UTC |
 | `created_at` / `updated_at` | TEXT | ISO8601 |

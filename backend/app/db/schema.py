@@ -809,6 +809,9 @@ knowledge_cards = Table(
     # 古い/信頼度が下がったカードは weight を下げて生かす（created_at の鮮度と併せ AI が解釈）。
     Column("weight", Float, nullable=False, server_default="1.0"),
     Column("source", String),  # URL/引用/由来（YouTuber 動画 URL 等）
+    # AI 審査（assist_card）の判定理由＝再読込後も「なぜ却下/採用候補か」が残る
+    # （ADR-062 追補・0028・None=AI 未整形）。
+    Column("triage_reason", String),
     # ADR-045 同型の埋め込み 3 列（when_to_apply のベクトル・未埋め込み/機能オフは NULL）。
     Column("embedding", LargeBinary),  # float32 LE BLOB
     Column("embed_model", String),  # 埋め込みモデル名（不一致行を再埋め込み対象にするキー）

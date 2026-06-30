@@ -34,6 +34,7 @@ _CARD_COLS = (
     "always_inject",
     "weight",
     "source",
+    "triage_reason",
     "embed_model",
     "embedded_at",
     "created_at",
@@ -144,11 +145,13 @@ def insert_knowledge_card_tx(
     always_inject: int = 0,
     weight: float = 1.0,
     source: str | None = None,
+    triage_reason: str | None = None,
 ) -> int:
     """カードを 1 件挿入し新 id を返す（W2・commit しない＝呼び出し側が begin を所有）。
 
     チャット tool の persister（propose_card）が journal/proposal と同一トランザクションで束ねる
     （nested begin を避ける）ために conn 受け取り版を持つ。created_at/updated_at は now。
+    triage_reason は追加時 AI 審査（assist_card）の判定理由（ADR-062 追補・None=AI 未整形）。
     """
     now = datetime.now(UTC).isoformat()
     result = conn.execute(
@@ -165,6 +168,7 @@ def insert_knowledge_card_tx(
             always_inject=always_inject,
             weight=weight,
             source=source,
+            triage_reason=triage_reason,
             created_at=now,
             updated_at=now,
         )
@@ -209,11 +213,12 @@ def set_knowledge_card_status(
     status: str,
     quant_note: str | None = None,
     linked_signal_type: str | None = None,
+    reason: str | None = None,
 ) -> None:
     """status を遷移する（AI 審査・人間承認の両方が使う・W1）。
 
-    quant_note/linked_signal_type は渡されたときだけ更新（None は「変更しない」＝既存値を温存）。
-    needs_quant の必要計算メモや、紐づく signal_type の付与に使う。
+    quant_note/linked_signal_type/reason は渡されたときだけ更新（None は変更しない＝既存値温存）。
+    needs_quant の必要計算メモや、紐づく signal_type、AI 審査理由（triage_reason）の付与に使う。
     """
     fields: dict[str, Any] = {
         "status": status,
@@ -223,6 +228,8 @@ def set_knowledge_card_status(
         fields["quant_note"] = quant_note
     if linked_signal_type is not None:
         fields["linked_signal_type"] = linked_signal_type
+    if reason is not None:
+        fields["triage_reason"] = reason
     with get_engine().begin() as conn:
         conn.execute(
             update(knowledge_cards).where(knowledge_cards.c.id == card_id).values(**fields)
