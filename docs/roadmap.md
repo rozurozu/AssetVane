@@ -110,12 +110,12 @@
 **目的**: 機械学習スコアを Advisor の材料に加える。
 
 - `financials` と将来リターンで LightGBM の特徴量を設計。
-- **学習は別 PC**、`.pkl` をラズパイにコピーして推論のみ（[decisions.md ADR-006](decisions.md)）。
+- **学習は別 PC**（[decisions.md ADR-006](decisions.md)）＝現状は開発機 Mac の Docker コンテナで実行（[ADR-066](decisions.md)・スペック要時は GPU ゲーミングPC）、`.pkl` をラズパイにコピーして推論のみ。
 - スコアを `signals`（`signal_type=ai_alpha`）に保存。ランキング画面。
 
 **完了条件**: 学習済みモデルでスコアが算出・ランキング表示され、AI Advisor がスコアを根拠に使える。学習の再現手順がドキュメント化されている。
 
-**状況（推論経路まで実装済み）**: 特徴量・学習・推論の純関数（`quant/ml/{features,train,infer}.py`）・`.pkl` 配置/読込（`ml/model_store.py`）・推論ジョブ `score_ai_alpha`（NIGHTLY_JOBS 登録済み）・signals `signal_type=ai_alpha`・frontend の ai_alpha タブまで実装済み（pytest green）。**残**: 学習済み `.pkl` 未配置（モデル無時は `ok=True` で静かに skip＝ADR-006）・別 PC で学習を一度回して `ml-training.md` の `【実測】`（ハイパラ確定値・CV 評価）を埋めること（完了条件の「学習の再現手順ドキュメント化」が未達）。
+**状況（推論経路＋初回学習まで実装済み）**: 特徴量・学習・推論の純関数（`quant/ml/{features,train,infer}.py`）・`.pkl` 配置/読込（`ml/model_store.py`）・推論ジョブ `score_ai_alpha`（NIGHTLY_JOBS 登録済み）・signals `signal_type=ai_alpha`・frontend の ai_alpha タブまで実装済み（pytest green）。**初回学習も実測ずみ**＝[ADR-066](decisions.md) で開発機 Mac の Docker コンテナ（現用 DB を `?mode=ro` 直読）で `make train-ai-alpha` を完走し `ai_alpha-2026-06-30.pkl` を配置・`ml-training.md` の `【実測】`（サンプル22,219・walk-forward CV RMSE 0.2316±0.040／IC 0.0814±0.067）を穴埋め済み（完了条件「学習の再現手順ドキュメント化」も達成）。**Mac 学習に固定せず、大規模データや GPU が効くハイパラ探索などスペックが要る再学習は GPU 搭載ゲーミングPC で回す**（ADR-006「学習は別 PC」の精神は維持）。**残**: 本番ラズパイへの `.pkl` rsync 配布・ハイパラ調律。
 
 ---
 
