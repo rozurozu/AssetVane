@@ -236,3 +236,6 @@ docker compose -f compose.prod.yaml logs -f frontend
     uv run python -m app.scripts.backfill_edinet --from 2026-06-10 --limit 50
   ```
   既存の `company_descriptions(JP,'dossier')`（調査済み）は事前 skip ＋ `source!='dossier'` ガードの 2 段で**上書きしない**（dossier 優先・[ADR-056](decisions.md)）。`docTypeCode=120` のみ対象（訂正 130 は対象外）。
+- **CLI `--nightly`（別プロセス）は `GET /batch/status` に映らない（[ADR-070](decisions.md)）**: バッチの起動口は cron・`POST /batch/run`（裏タスク）・CLI `python -m app.scripts.backfill --nightly` の 3 つで、全部 flock（`data/batch.lock`）で排他される。ただし **status（running/current_job/started_at）は状態を持つプロセスのメモリ**（best-effort・ADR-070 が意図的にファイル永続していない）なので、**FastAPI と別プロセスの CLI `--nightly`（初回フル等）が走っていても WebUI は running=false に見える**。一方 **stop はファイル**（`data/batch.stop`）なので `POST /batch/stop` は CLI 起動のバッチにも届く（[ADR-070](decisions.md)）。運用指針:
+  - **進捗を WebUI で観測したい／画面から止めたい重いバッチは `POST /batch/run`（または `/settings` の「バッチ実行」ボタン）で回す**（FastAPI と同一プロセス＝status/stop 両方が効く）。初回フル（全 ~4400 銘柄・約 4.5h）も裏タスクとして走るので CLI でなくてよい。
+  - CLI `--nightly` は「ターミナルで直接見ながら回す／ssh 越しにスクリプトで叩く」向け。走行中に WebUI から `POST /batch/run` を押しても **flock が 409 で弾く**ので二重起動・データ破損は起きない（status に映らないだけ）。進捗は `docker compose … logs backend` で追う。
