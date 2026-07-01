@@ -74,7 +74,7 @@ async def run_tool_loop(
        - assistant の tool_calls 記録 → 各結果を {"role":"tool", ...} で messages に append
        - tool_runs に {"name", "args"} を蓄積（**結果値は載せない**＝ADR-025）
        - 再度 complete
-    3. max_rounds 超過時は打ち切り、最後の content（無ければ定型文）を返す。
+    3. max_rounds 超過時は打ち切り、実 content を返す（無ければ nightly は ""・chat は定型文）。
 
     戻り値: (最終テキスト, tool_runs)。tool_runs は [{name, args}]。
     """
@@ -108,11 +108,14 @@ async def run_tool_loop(
         resp = await complete(messages, face=face, tools=tools, source=source)
 
     if resp.tool_calls and rounds >= max_rounds:
-        # 上限到達で Tool 要求が続いている → 打ち切る。最後の content があれば返す。
-        return (
-            resp.content or "（応答が長すぎるため打ち切りました）",
-            tool_runs,
-        )
+        # 上限到達で Tool 要求が続く → 打ち切る。実 content があればそれを返す。content が空のときの
+        # 合成プレースホルダは reply→observations に化けて縮退検知（ADR-018）を素通りし、nightly で
+        # 偽成功＋ゴミ journal を残す（#13）。よって nightly は "" を返し縮退（journal スキップ）に
+        # 倒し、chat は利用者向けの定型文を出す（空応答の UX を避ける）。
+        if resp.content:
+            return resp.content, tool_runs
+        fallback = "" if source == "nightly" else "（応答が長すぎるため打ち切りました）"
+        return fallback, tool_runs
 
     return resp.content or "", tool_runs
 

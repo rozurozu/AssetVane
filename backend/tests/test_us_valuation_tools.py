@@ -127,6 +127,21 @@ def test_screen_us_valuation_filters_by_gics_sector_and_labels_usd(temp_db) -> N
     assert all(r["gics_sector"] == "Technology" for r in out["items"])
 
 
+def test_screen_us_valuation_normalizes_formal_gics_name(temp_db) -> None:
+    """#2: 正式 GICS 名 'Information Technology' も canonical 'Technology' に正規化して絞る。
+
+    正規化しないと格納値 'Technology' と exact 一致せず黙って 0 件になり AI が誤結論する。
+    """
+    _seed(temp_db)
+    out = _run(
+        handlers.handle_screen_us_valuation(
+            {"gics_sector": "Information Technology", "exclude_etf": True, "per_max": 15.0}
+        )
+    )
+    assert out["count"] == 1  # 正規化されて CHEAPT が拾える（0 件にならない）
+    assert out["items"][0]["symbol"] == "CHEAPT"
+
+
 def test_screen_us_valuation_empty_when_threshold_strict(temp_db) -> None:
     """しきい値を厳しくすると 0 件（破壊的ゲートはコードに無い＝AI が criteria を渡す）。"""
     _seed(temp_db)

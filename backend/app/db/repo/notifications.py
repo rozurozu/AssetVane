@@ -10,8 +10,6 @@ from app.db.repo._common import _upsert
 from app.db.schema import (
     advisor_journal,
     notifications,
-    signals,
-    stocks,
 )
 
 # ===== Phase 6: Signal Beacon（phase6-spec.md §2/§3・ADR-007/018・0010_notifications） =====
@@ -43,29 +41,6 @@ def record_notification(notify_key: str, channel: str, sent_at: str) -> None:
         [{"notify_key": notify_key, "channel": channel, "sent_at": sent_at}],
         index_elements=["notify_key", "channel"],
     )
-
-
-def list_signals_for_alert(conn: Connection, date: str) -> list[dict[str, Any]]:
-    """指定日の signals を stocks に LEFT JOIN し company_name 付きで全件返す（spec §3・⑧の素）。
-
-    notify_digest がこの全件を Python 側で閾値（score/payload.ratio）抽出 → score 降順 Top N に
-    絞る（AI に計算させない＝ADR-014/016）。`payload` は生の TEXT 文字列のまま返す（json.loads は
-    ジョブの責務）。並び順は score 降順（ジョブの Top N 切り詰めに合わせる）。
-    """
-    stmt = (
-        select(
-            signals.c.code,
-            stocks.c.company_name,
-            signals.c.signal_type,
-            signals.c.score,
-            signals.c.payload,
-            signals.c.date,
-        )
-        .select_from(signals.outerjoin(stocks, signals.c.code == stocks.c.code))
-        .where(signals.c.date == date)
-        .order_by(signals.c.score.desc())
-    )
-    return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
 def get_journal_for_date(conn: Connection, date: str) -> dict[str, Any] | None:

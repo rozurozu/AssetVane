@@ -17,6 +17,8 @@ import { useEffect, useState } from "react";
 export function UsSection() {
   const [holdings, setHoldings] = useState<UsHolding[] | null>(null);
   const [holdingsErr, setHoldingsErr] = useState<string | null>(null);
+  // 上部フォームは履歴コンポーネントの外にあるため、記録後に履歴一覧の再取得を bump で促す（#28）。
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
 
   // 初回ロード（米株保有は portfolio_id 非依存）。
   useEffect(() => {
@@ -30,6 +32,13 @@ export function UsSection() {
   // 取引（新規・編集・削除）後に backend が返す最新保有で差し替える。
   function handleHoldingsChange(updated: UsHolding[]) {
     setHoldings(updated);
+  }
+
+  // 上部フォームでの新規記録は保有を更新しつつ、履歴一覧も再取得させる（履歴の自前 mutation は
+  // 自身で refetch するため bump 不要・#28）。
+  function handleTopFormDone(updated: UsHolding[]) {
+    setHoldings(updated);
+    setHistoryReloadKey((k) => k + 1);
   }
 
   return (
@@ -48,11 +57,11 @@ export function UsSection() {
 
       {/* 取引入力 */}
       <Card title="米国株 取引を記録するのだ">
-        <UsTransactionForm onDone={handleHoldingsChange} />
+        <UsTransactionForm onDone={handleTopFormDone} />
       </Card>
 
       {/* 取引履歴（一覧＋インライン編集＋削除） */}
-      <UsTransactionHistory onHoldingsChange={handleHoldingsChange} />
+      <UsTransactionHistory onHoldingsChange={handleHoldingsChange} reloadKey={historyReloadKey} />
     </div>
   );
 }

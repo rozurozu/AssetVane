@@ -88,12 +88,14 @@ def run() -> JobResult:
     return JobResult(name="embed_cards", ok=failed_batches == 0, rows=embedded, detail=detail)
 
 
-def embed_card_best_effort(card_id: int) -> None:
-    """カード保存直後の即時埋め込み（best-effort・失敗は握る・ADR-062 追補）。
+async def embed_card_best_effort_async(card_id: int) -> None:
+    """カード保存直後の即時埋め込み（async 経路・best-effort・失敗は握る・ADR-062 追補／#9）。
 
-    embedding 機能オフ・本文ベース合成テキストが空なら何もしない。失敗しても呼び出し側（router）の
-    保存自体は成功済みなので握りつぶす（取りこぼしは夜間 run() が拾う）。await は DB 書き込み tx の
-    外で駆動する（C-6 の規律）。
+    async ルータ（POST /cards・POST /cards/{id}/assist）は実行中イベントループ上で走るため、内部で
+    `asyncio.run` を呼ぶと RuntimeError で必ず落ちる（→ 即時埋め込みが 100% 死んでいた＝#9）。
+    services/news.py の ingest 同型に `await embed_texts` を直接使う。embedding 機能オフ・本文ベース
+    合成テキストが空なら何もしない。失敗しても保存自体は成功済みなので握る（夜間 run() が拾う）。
+    await は DB 書き込み tx の外で駆動する（C-6 の規律）。
     """
     if not embedding_enabled():
         return
@@ -106,7 +108,7 @@ def embed_card_best_effort(card_id: int) -> None:
         return
     model = embedding_model()
     try:
-        vectors = asyncio.run(embed_texts([source_text]))
+        vectors = await embed_texts([source_text])
         if not vectors:
             return
         with get_engine().begin() as conn:
@@ -115,3 +117,13 @@ def embed_card_best_effort(card_id: int) -> None:
         logger.warning(
             "embed_card_best_effort: カード %s の即時埋め込みに失敗（夜間で拾う）", card_id
         )
+
+
+def embed_card_best_effort(card_id: int) -> None:
+    """同期経路（`PUT /cards/{id}`＝スレッドプール実行）向けの薄いラッパ。
+
+    走行中ループの無いスレッドから呼ばれるので `asyncio.run` で async 版を駆動する。async ルータは
+    直接 `embed_card_best_effort_async` を await すること
+    （sync 版を async 経路で呼ぶと #9 が再発する）。
+    """
+    asyncio.run(embed_card_best_effort_async(card_id))

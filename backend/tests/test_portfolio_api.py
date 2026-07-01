@@ -305,6 +305,48 @@ def test_put_transaction_recalcs_holdings(client) -> None:
     assert holdings[0]["avg_cost"] == 1800.0
 
 
+def test_put_transaction_recalcs_actual_portfolio_not_body(client) -> None:
+    """#26: PUT の recalc は取引の実所属 portfolio で行う（body.portfolio_id が誤っても実所属側）。
+
+    旧実装は body.portfolio_id で recalc したため、body に別（誤）portfolio_id を渡すと実所属側の
+    holdings が取引と乖離した。実所属で recalc することを固定する。
+    """
+    repo.upsert_stocks([STOCK_A])
+    pid = _get_portfolio_id(client)
+
+    create = client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 1500,
+            "traded_at": "2026-01-10",
+        },
+    )
+    txn_id = create.json()["transaction_id"]
+
+    # 株数 50 に編集するが body.portfolio_id は実在しない 999（誤指定）を渡す。
+    resp = client.put(
+        f"/transactions/{txn_id}",
+        json={
+            "portfolio_id": 999,
+            "code": "72030",
+            "side": "buy",
+            "shares": 50,
+            "price": 1500,
+            "traded_at": "2026-01-10",
+        },
+    )
+    assert resp.status_code == 200
+
+    # 実所属 pid の holdings が 50 に再計算されている（body の 999 側で recalc していない）。
+    holdings = client.get(f"/holdings?portfolio_id={pid}").json()["holdings"]
+    row = next(h for h in holdings if h["code"] == "72030")
+    assert row["shares"] == 50.0
+
+
 def test_put_transaction_404(client) -> None:
     """存在しない取引 id への PUT は 404。"""
     pid = _get_portfolio_id(client)

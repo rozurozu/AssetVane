@@ -49,27 +49,42 @@ export default function UsStockDetailPage() {
         )}
       </div>
 
-      {/* バリュエーション事実（夜間 calc_us_valuation が焼いた事実・未焼成は null＝「—」表示）。 */}
+      {/* バリュエーション事実（夜間 calc_us_valuation が焼いた事実）。取得失敗を「未焼成（—）」に
+          化けさせないため StatusBlock で loading/error を出す。成功時の null は「未焼成」を明示（#30）。 */}
       <section className="mb-3 rounded-lg border border-hairline bg-surface-1">
         <div className="flex items-center justify-between border-hairline border-b px-3 py-2">
           <h2 className="font-semibold text-[14px] tracking-[-0.1px]">バリュエーション（USD）</h2>
           <span className="text-[11px] text-ink-subtle">
-            {v?.as_of_date ? `${v.as_of_date} 基準` : "未焼成（夜間バッチ待ち）"}
+            {loading
+              ? "取得中…"
+              : error
+                ? "取得失敗"
+                : v?.as_of_date
+                  ? `${v.as_of_date} 基準`
+                  : "未焼成（夜間バッチ待ち）"}
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-4 lg:grid-cols-6">
-          <Metric label="終値" value={fmtUsd(v?.close)} />
-          <Metric label="PER" value={fmtRatio(v?.per)} />
-          <Metric label="PBR" value={fmtRatio(v?.pbr)} />
-          <Metric label="配当利回り" value={pct(v?.dividend_yield)} />
-          <Metric label="時価総額" value={fmtMarketCapUsd(v?.market_cap)} />
-          <Metric label="ROE" value={pct(v?.roe)} />
-          <Metric label="営業利益率" value={pct(v?.operating_margin)} />
-          <Metric label="純利益率" value={pct(v?.net_margin)} />
-          <Metric label="売上成長(YoY)" value={pct(v?.revenue_growth_yoy)} />
-          <Metric label="純益成長(YoY)" value={pct(v?.profit_growth_yoy)} />
-          <Metric label="EPS成長(YoY)" value={pct(v?.eps_growth_yoy)} />
-          <Metric label="時価総額順位" value={v?.market_cap_rank?.toString() ?? "—"} />
+        <div className="p-3">
+          <StatusBlock
+            loading={loading}
+            error={error}
+            errorHint={<>backend 起動と、夜間バッチ（calc_us_valuation）の実行を確認するのだ。</>}
+          >
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+              <Metric label="終値" value={fmtUsd(v?.close)} />
+              <Metric label="PER" value={fmtRatio(v?.per)} />
+              <Metric label="PBR" value={fmtRatio(v?.pbr)} />
+              <Metric label="配当利回り" value={pct(v?.dividend_yield)} />
+              <Metric label="時価総額" value={fmtMarketCapUsd(v?.market_cap)} />
+              <Metric label="ROE" value={pct(v?.roe)} />
+              <Metric label="営業利益率" value={pct(v?.operating_margin)} />
+              <Metric label="純利益率" value={pct(v?.net_margin)} />
+              <Metric label="売上成長(YoY)" value={pct(v?.revenue_growth_yoy)} />
+              <Metric label="純益成長(YoY)" value={pct(v?.profit_growth_yoy)} />
+              <Metric label="EPS成長(YoY)" value={pct(v?.eps_growth_yoy)} />
+              <Metric label="時価総額順位" value={v?.market_cap_rank?.toString() ?? "—"} />
+            </div>
+          </StatusBlock>
         </div>
       </section>
 

@@ -18,6 +18,8 @@ from typing import Any, cast
 
 import pandas as pd
 
+from app.quant._frame import column_has_nulls
+
 # 無リスク金利（U-3 裁定済み・ADR-027。env 不可・policy 不可・将来 method_settings へ）
 RISK_FREE_RATE = 0.0
 
@@ -26,15 +28,6 @@ _TRADING_DAYS = 252
 
 # ルックバック窓（直近何営業日を使うか）
 _LOOKBACK = 252
-
-
-def _column_has_nulls(frame: pd.DataFrame, column: str) -> bool:
-    """Pandas の列取得が Series/DataFrame どちらでも null 有無を bool で返す。"""
-    values = frame[column]
-    if isinstance(values, pd.DataFrame):
-        return bool(values.isna().to_numpy().any())
-    series = cast(pd.Series, values)
-    return bool(series.isna().any())
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +167,7 @@ def compute_portfolio_metrics(
         panel = panel.iloc[-_LOOKBACK:]
 
     # --- null 列（銘柄）を除外: 窓内に 1 つでも null があれば skip（裁定 L-26）---
-    valid_cols = [str(c) for c in panel.columns if not _column_has_nulls(panel, str(c))]
+    valid_cols = [str(c) for c in panel.columns if not column_has_nulls(panel, str(c))]
     if not valid_cols:
         return _empty_result()
     panel = panel[valid_cols]

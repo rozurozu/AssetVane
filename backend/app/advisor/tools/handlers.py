@@ -39,6 +39,7 @@ from app.advisor.tools.schemas import (
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     GetStockThemesArgs,
+    GetUsHoldingsArgs,
     GetUsValuationArgs,
     GetValuationArgs,
     InvestigateStockArgs,
@@ -492,11 +493,18 @@ async def handle_screen_us_valuation(args: dict[str, object]) -> dict[str, Any]:
     gics_sector・ADR-055）② market/currency を US/USD で明示 ③ 業種絞りが gics_sector。しきい値は
     AI が criteria で渡す（コードは破壊的ゲートを持たない＝ADR-026/031）。verdict は付けず事実だけを
     列挙する（ADR-014）。limit 既定は日本株 screen_valuation と同じ 50。
+
+    gics_sector は handle_screen_by_theme と同様に normalize_gics_sector で表記揺れ（正式 GICS 名・
+    大小文字）を Yahoo canonical に寄せてから渡す。これをしないと AI が 'Information Technology'
+    （正式 GICS 名）等を渡したとき格納値 'Technology' と exact 一致せず黙って 0 件になる（#2）。
     """
     try:
         c = ScreenUsValuationArgs.model_validate(args)
         criteria = c.model_dump(exclude_none=True)
         criteria.setdefault("limit", 50)
+        gics = criteria.get("gics_sector")
+        if gics is not None:
+            criteria["gics_sector"] = normalize_gics_sector(gics) or gics
         with get_engine().connect() as conn:
             rows = repo.screen_us_stocks(conn, criteria)
         as_of = rows[0].get("as_of_date") if rows else None
@@ -651,6 +659,9 @@ async def handle_get_us_holdings(args: dict[str, object]) -> dict[str, Any]:
     AI が日米横断バランスを相談できるように資産概要に米株を乗せる（ADR-057）。
     """
     try:
+        GetUsHoldingsArgs.model_validate(
+            args
+        )  # 引数なし（余分な引数を弾く検証・handlers 規約・#12）
         with get_engine().connect() as conn:
             holdings_rows = repo.list_us_holdings(conn)
             symbols = [h["symbol"] for h in holdings_rows]

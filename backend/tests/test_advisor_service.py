@@ -137,6 +137,56 @@ def test_run_tool_loop_max_rounds_cutoff(monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(tool_runs) == 2
 
 
+def test_max_rounds_cutoff_nightly_empty_content_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#13: nightly で content 空のまま打ち切ったら "" を返す（プレースホルダを流さない）。
+
+    合成プレースホルダを返すと reply→observations に化けて縮退検知（ADR-018）を素通りし、偽成功＋
+    ゴミ journal を残す。nightly は "" を返して縮退（journal スキップ）に倒す。
+    """
+
+    async def _always_tool_no_content(messages: Any, **_: Any) -> LLMResponse:
+        return LLMResponse(
+            content="", tool_calls=[ToolCall(id="c", name="get_signals", arguments={})]
+        )
+
+    async def _fake_handler(args: dict[str, object]) -> dict[str, object]:
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "complete", _always_tool_no_content)
+    _stub_handler(monkeypatch, "get_signals", _fake_handler)
+
+    reply, _ = _run(
+        service.run_tool_loop(
+            [{"role": "user", "content": "x"}], face=_FACE, source="nightly", max_rounds=2
+        )
+    )
+    assert reply == ""  # 縮退へ倒す（journal スキップ）＝プレースホルダは返さない
+
+
+def test_max_rounds_cutoff_chat_keeps_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#13: chat で content 空のまま打ち切ったら利用者向け定型文を返す（空応答の UX を避ける）。"""
+
+    async def _always_tool_no_content(messages: Any, **_: Any) -> LLMResponse:
+        return LLMResponse(
+            content="", tool_calls=[ToolCall(id="c", name="get_signals", arguments={})]
+        )
+
+    async def _fake_handler(args: dict[str, object]) -> dict[str, object]:
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "complete", _always_tool_no_content)
+    _stub_handler(monkeypatch, "get_signals", _fake_handler)
+
+    reply, _ = _run(
+        service.run_tool_loop(
+            [{"role": "user", "content": "x"}], face=_FACE, source="chat", max_rounds=2
+        )
+    )
+    assert "打ち切り" in reply  # chat は定型文で UX を保つ
+
+
 # ---------------------------------------------------------------------------
 # resolve_proposal
 # ---------------------------------------------------------------------------

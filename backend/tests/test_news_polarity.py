@@ -273,6 +273,30 @@ def test_tag_news_polarity_total_enum_out_not_ok(monkeypatch, temp_db) -> None:
     assert row["polarity"] is None
 
 
+def test_tag_news_polarity_unconfigured_face_is_silent_skip(monkeypatch, temp_db) -> None:
+    """#5: tagger 面が未設定なら沈黙 skip（ok=True・通知しない）。総崩れ（空 dict）と切り分ける。
+
+    classify_polarities は面未設定で FaceNotConfiguredError を伝播する。ジョブはそれを
+    「enrichment を静かに見送る」シグナルとして ok=True で握り、誤通知を鳴らさない（ADR-058）。
+    """
+    from app.services.llm_config import FaceNotConfiguredError
+
+    _seed_stocks("7203")
+    n1 = _insert_news("https://x/a", code="7203", polarity=None)
+
+    async def _unconfigured(batch):  # noqa: ANN001, ANN202
+        raise FaceNotConfiguredError("面 'tagger' に provider が未割当")
+
+    monkeypatch.setattr(tag_news_polarity, "classify_polarities", _unconfigured)
+    result = tag_news_polarity.run()
+
+    assert result.ok is True  # 未設定は失敗ではない（沈黙 skip）→ 通知されない
+    assert result.rows == 0
+    with get_engine().connect() as conn:
+        row = conn.execute(news.select().where(news.c.id == n1)).mappings().first()
+    assert row["polarity"] is None  # 判定は付かず NULL のまま（設定後の夜に再判定）
+
+
 def test_tag_news_polarity_partial_batch_persists_then_not_ok(monkeypatch, temp_db) -> None:
     """1 バッチ目成功→2 バッチ目 LLM 例外でも成功分は永続し ok=False（自己回復・C-7）。"""
     _seed_stocks("7203", "6758")

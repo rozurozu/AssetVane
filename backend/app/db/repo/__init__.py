@@ -120,7 +120,6 @@ from app.db.repo.notable import (
 )
 from app.db.repo.notifications import (
     get_journal_for_date,
-    list_signals_for_alert,
     notification_exists,
     record_notification,
 )
@@ -326,7 +325,6 @@ __all__ = [
     "remove_watchlist",
     "notification_exists",
     "record_notification",
-    "list_signals_for_alert",
     "get_journal_for_date",
     "list_signals_with_sector_for_date",
     "get_recent_adj_closes_by_codes",

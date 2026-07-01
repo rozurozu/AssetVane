@@ -261,8 +261,14 @@ export function AssetInputPanel({
   }
 
   async function handleExternalDelete(id: number) {
-    await deleteExternalAsset(id);
-    setExternalAssets((prev) => prev.filter((a) => a.id !== id));
+    // 削除失敗を握り潰さず externalErr に載せる（他 mutation と対称・#29）。
+    setExternalErr(null);
+    try {
+      await deleteExternalAsset(id);
+      setExternalAssets((prev) => prev.filter((a) => a.id !== id));
+    } catch (e) {
+      setExternalErr(e instanceof Error ? e.message : String(e));
+    }
   }
 
   return (

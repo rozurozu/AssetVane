@@ -39,6 +39,22 @@ def _guard_concurrent_start(fn: object, *args: object, **kwargs: object) -> None
         logger.warning("バッチ起動が他の実行と競合したためスキップした（既に実行中）。")
 
 
+def _reject_if_running() -> None:
+    """flock を「取得即解放」で試し、既に走行中なら 409 を送出する受付ゲート（#20）。
+
+    run_batch / run_edinet_differential が BackgroundTask 投入前に共有する（実行は
+    BackgroundTask 側で lock を取り直す）。競合窓は `_guard_concurrent_start` が握る。
+    """
+    try:
+        with lock.acquire():
+            pass
+    except lock.BatchAlreadyRunning as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="バッチが既に実行中です。完了後に再度お試しください。",
+        ) from exc
+
+
 class BatchRunRequest(BaseModel):
     full_backfill: bool = False  # true で BACKFILL_YEARS 分を頭から取り直す（初回/復旧）
 
@@ -59,7 +75,7 @@ class BatchStatusResponse(BaseModel):
 
 
 class BatchStopResponse(BaseModel):
-    stopping: bool  # 停止要求を受理したか（実行中でなければ false）
+    stopping: bool  # 停止要求を受理したか（ADR-070 で running ゲート撤廃＝常に true）
 
 
 @router.post("/batch/run", response_model=BatchRunResponse, status_code=202)
@@ -70,16 +86,7 @@ def run_batch(req: BatchRunRequest, background: BackgroundTasks) -> BatchRunResp
     取れたら一旦解放し、BackgroundTasks で `run_nightly` を起動する（run_nightly 自身が
     再度ロックを取り直して走る）。進捗は fetch_meta.last_fetched_date / Discord で追う。
     """
-    try:
-        # 取得即解放で「今走っていないか」だけ確認する（実行は BackgroundTasks 側で取り直す）。
-        with lock.acquire():
-            pass
-    except lock.BatchAlreadyRunning as exc:
-        raise HTTPException(
-            status_code=409,
-            detail="バッチが既に実行中です。完了後に再度お試しください。",
-        ) from exc
-
+    _reject_if_running()  # 取得即解放で走行中かだけ確認（実行は BackgroundTasks 側で取り直す）
     background.add_task(_guard_concurrent_start, run_nightly, full_backfill=req.full_backfill)
     return BatchRunResponse(started=True, job_id=None)
 
@@ -98,15 +105,7 @@ def run_edinet_differential(background: BackgroundTasks) -> BatchRunResponse:
     # 部分ジョブ列の起動口。NIGHTLY_JOBS 全体の import 循環を避けるため関数内 import する。
     from app.batch.jobs import fetch_edinet_descriptions, tag_jp_themes
 
-    try:
-        with lock.acquire():
-            pass
-    except lock.BatchAlreadyRunning as exc:
-        raise HTTPException(
-            status_code=409,
-            detail="バッチが既に実行中です。完了後に再度お試しください。",
-        ) from exc
-
+    _reject_if_running()  # run_batch 同型の受付ゲート（#20）
     background.add_task(
         _guard_concurrent_start,
         run_jobs,
@@ -118,10 +117,13 @@ def run_edinet_differential(background: BackgroundTasks) -> BatchRunResponse:
 
 @router.get("/batch/status", response_model=BatchStatusResponse)
 def batch_status() -> BatchStatusResponse:
-    """現在のバッチ実行状態を返す（ADR-036）。WebUI がポーリングして進捗・停止可否を出す。
+    """現在のバッチ実行状態を返す（ADR-036/070）。WebUI がポーリングして進捗・停止可否を出す。
 
-    cron 起動・`POST /batch/run` 裏ジョブ・CLI `--nightly` のどの口で走っていても、`run_nightly`
-    が更新する同じメモリ状態を映す（ADR-011「1つの脳」）。idle なら running=false で他は既定値。
+    running/current_job/started_at/full_backfill は**このプロセスのメモリ**（best-effort）。cron・
+    `POST /batch/run` 裏ジョブは同一プロセスなので映るが、CLI `--nightly` や dev の `--reload` で
+    分裂した別プロセスの走行は映らない（running=false に見える・ADR-070 state.py 参照）。一方
+    `stop_requested` は停止ファイル（`data/batch.stop`）由来でクロスプロセスに正しい。idle なら
+    running=false で他は既定値。
     """
     s = state.snapshot()
     return BatchStatusResponse(
@@ -135,10 +137,12 @@ def batch_status() -> BatchStatusResponse:
 
 @router.post("/batch/stop", response_model=BatchStopResponse)
 def batch_stop() -> BatchStopResponse:
-    """走行中バッチに停止を要求する（協調キャンセル・ADR-036）。
+    """走行中バッチに停止を要求する（協調キャンセル・ADR-036/070）。
 
-    `state.request_stop()` で `stop_requested` を立てるだけ。実体は `run_nightly` が**次のジョブ
-    境界**で検知して break する（今のジョブを終えてから止まる＝強制 kill はしない）。
-    走行中でなければ受理せず stopping=false を返す（差分・フルどちらの走行でも効く）。
+    `state.request_stop()` が停止ファイル（`data/batch.stop`）を touch するだけ。実体は
+    `run_nightly` が**次のジョブ境界**と長尺ジョブの最内ループ（stop_aware）で検知して break する
+    （今の単位を終えてから止まる＝強制 kill はしない）。ADR-070 で running ゲートを撤廃し常に
+    stopping=true を返す（`--reload`/CLI で前面プロセスの running=false でも停止を届かせるため。
+    idle 中の stray な要求は次の begin() が回収する）。差分・フルどちらの走行でも効く。
     """
     return BatchStopResponse(stopping=state.request_stop())

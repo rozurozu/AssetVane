@@ -21,6 +21,7 @@ from typing import Any, cast
 import pandas as pd
 from pypfopt import EfficientFrontier, expected_returns, risk_models
 
+from app.quant._frame import column_has_nulls
 from app.quant.portfolio import RISK_FREE_RATE
 
 # 年率換算の営業日数（spec §4.1）
@@ -32,15 +33,6 @@ _LOOKBACK = 252
 # デフォルトのウェイト境界（no_leverage/max_position_weight が無い場合）
 _DEFAULT_WEIGHT_LOWER = 0.0
 _DEFAULT_WEIGHT_UPPER = 1.0
-
-
-def _column_has_nulls(frame: pd.DataFrame, column: str) -> bool:
-    """Pandas の列取得が Series/DataFrame どちらでも null 有無を bool で返す。"""
-    values = frame[column]
-    if isinstance(values, pd.DataFrame):
-        return bool(values.isna().to_numpy().any())
-    series = cast(pd.Series, values)
-    return bool(series.isna().any())
 
 
 def optimize_portfolio(
@@ -127,7 +119,7 @@ def optimize_portfolio(
         panel = panel.iloc[-_LOOKBACK:]
 
     # --- null 銘柄を除外（裁定 L-26）---
-    valid_cols = [str(c) for c in panel.columns if not _column_has_nulls(panel, str(c))]
+    valid_cols = [str(c) for c in panel.columns if not column_has_nulls(panel, str(c))]
     if not valid_cols:
         return _infeasible_result(objective, cash_ratio, constraints_applied)
     panel = panel[valid_cols]

@@ -68,10 +68,12 @@ async def embed_texts(texts: list[str]) -> list[list[float]] | None:
     if not texts:
         return []
 
-    client = AsyncOpenAI(
+    # 都度生成のまま `async with` でクローズまで面倒を見る（HTTP コネクションプールの後始末漏れを
+    # 防ぐ・#24）。埋め込みは夜間バッチ/貼付時に多数回呼ばれるため未クローズは緩やかな leak になる。
+    async with AsyncOpenAI(
         base_url=str(config["base_url"]),
         api_key=str(config["api_key"]),
         timeout=settings.embedding_timeout_seconds,
-    )
-    resp = await client.embeddings.create(model=str(config["model"]), input=texts)
+    ) as client:
+        resp = await client.embeddings.create(model=str(config["model"]), input=texts)
     return [list(item.embedding) for item in resp.data]

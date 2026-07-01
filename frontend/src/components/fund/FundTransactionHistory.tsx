@@ -28,6 +28,7 @@ type Props = {
   funds: Fund[]; // ISIN → 名称の補完・編集フォームの候補
   onHoldingsChange?: (holdings: FundHolding[]) => void; // 編集・削除で再計算された保有を親へ伝播
   onFundCreated?: (fund: Fund) => void; // 編集フォーム内で未登録 ISIN を登録したとき親へ通知
+  reloadKey?: number; // 親（上部フォーム）起点で履歴一覧の再取得を促すトリガ（#28）
 };
 
 export function FundTransactionHistory({
@@ -35,11 +36,13 @@ export function FundTransactionHistory({
   funds,
   onHoldingsChange,
   onFundCreated,
+  reloadKey,
 }: Props) {
   // 初回ロードは useApi で取り、以降は mutation 成功時に setState で取り直す（操作起点の更新＝(c)）。
+  // reloadKey が変わる（親の上部フォームが記録した）ときも再取得する（#28）。
   const { data, error, loading } = useApi(
     (s) => getFundTransactions(portfolioId, s),
-    [portfolioId],
+    [portfolioId, reloadKey],
   );
   const [txns, setTxns] = useState<FundTransaction[] | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);

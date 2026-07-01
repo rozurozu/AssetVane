@@ -157,8 +157,14 @@ def get_recent_financials_by_code(
 
 
 def upsert_valuation_snapshots(rows: list[dict[str, Any]]) -> int:
-    """valuation_snapshots を冪等 UPSERT（code 1 行・最新のみ保持・ADR-002/031）。"""
-    return _upsert(valuation_snapshots, rows, index_elements=["code"])
+    """valuation_snapshots を冪等 UPSERT（code 1 行・最新のみ保持・ADR-002/031）。
+
+    partial=True＝**渡された列だけ**更新する。売掛/在庫の質列（DSO/DIO・受取債権/在庫 YoY）は
+    calc_valuation ではなく後段 calc_receivables_inventory が cadence で UPDATE 充填するため
+    （ADR-064 #2）、全列 EXCLUDED 更新にすると毎晩ここで NULL に潰れ、7 晩に 1 晩しか #2 が
+    生きなくなる。build_valuation_snapshots が作る主要列だけを更新し #2 列は温存する（#1）。
+    """
+    return _upsert(valuation_snapshots, rows, index_elements=["code"], partial=True)
 
 
 # screen_stocks が受け付ける数値レンジのキー（{field}_min / {field}_max で絞る）。

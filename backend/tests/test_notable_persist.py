@@ -65,6 +65,22 @@ def test_persist_idempotent_on_rerun(temp_db: None) -> None:
     assert picks[0]["reason"] == "再実行で更新"  # UPSERT で reason 更新
 
 
+def test_persist_skips_malformed_pick_keeps_valid(temp_db: None) -> None:
+    """#11: 1 件の不備（reason 欠落）で全落ちせず、有効な pick は残す（per-item グレースフル）。
+
+    旧実装は picks を一括 model_validate し、1 件の ValidationError で全 picks を破棄していた。
+    """
+    repo.upsert_stocks([STOCK])
+    # 2 件目は reason 欠落（不正）。1 件目（有効）は残らねばならない。
+    runs = _runs([{"code": "72030", "reason": "重なりで注目"}, {"code": "67580"}])
+    with get_engine().begin() as conn:
+        inserted = persist_notable_picks_from_tool_runs(conn, tool_runs=runs, date=DATE)
+    assert inserted == ["72030"]  # 有効分は残る（全落ちしない）
+    with get_engine().connect() as conn:
+        picks = repo.list_notable_picks_for_date(conn, DATE)
+    assert [p["code"] for p in picks] == ["72030"]
+
+
 def test_persist_empty_picks(temp_db: None) -> None:
     """picks 空（今夜は注目なし）は何も起票しない（毎回無理に出さない）。"""
     with get_engine().begin() as conn:

@@ -44,6 +44,10 @@ def _mock_async_openai(monkeypatch: pytest.MonkeyPatch, vectors: list[list[float
     resp = SimpleNamespace(data=[SimpleNamespace(embedding=v) for v in vectors])
     client = MagicMock()
     client.embeddings.create = AsyncMock(return_value=resp)
+    # embed_texts は `async with AsyncOpenAI(...) as client:` で使う（クローズ保証・#24）ので、
+    # client を async context manager として振る舞わせる（__aenter__ が自身を返す）。
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
     factory = MagicMock(return_value=client)
     monkeypatch.setattr(embedding, "AsyncOpenAI", factory)
     return client

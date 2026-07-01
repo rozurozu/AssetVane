@@ -55,24 +55,10 @@ def upsert_us_stocks(rows: list[dict[str, Any]]) -> int:
 
     universe 同期（symbol/company_name/is_etf）と fundamentals 巡回（財務素・業種・updated_at）が
     この関数を共有するため、行に含まれない列は既存値を保たねばならない（universe 同期が財務素を
-    NULL で上書きすると焼けた fundamentals が消える）。汎用 _upsert は table の全列を EXCLUDED で
-    更新し、executemany で行に無い列は NULL になるため partial update が壊れる。よってここでは
-    rows に現れた列の和集合だけを on_conflict_do_update の対象にする（symbol は更新しない）。
+    NULL で上書きすると焼けた fundamentals が消える）。よって `_upsert(partial=True)`＝rows に現れた
+    列の和集合だけを更新する（symbol だけの行は DO NOTHING で冪等・#8 と同じ仕組み）。
     """
-    if not rows:
-        return 0
-    present_cols = {k for r in rows for k in r}
-    update_cols = [c for c in present_cols if c != "symbol"]
-    stmt = sqlite_insert(us_stocks)
-    set_ = {name: stmt.excluded[name] for name in update_cols}
-    # 更新対象が無い（symbol だけ）場合は DO NOTHING で重複挿入を握る（冪等）。
-    if set_:
-        stmt = stmt.on_conflict_do_update(index_elements=["symbol"], set_=set_)
-    else:
-        stmt = stmt.on_conflict_do_nothing(index_elements=["symbol"])
-    with get_engine().begin() as conn:
-        conn.execute(stmt, rows)
-    return len(rows)
+    return _upsert(us_stocks, rows, index_elements=["symbol"], partial=True)
 
 
 def list_us_stocks(conn: Connection, q: str | None = None) -> list[dict[str, Any]]:
@@ -134,8 +120,13 @@ def upsert_us_daily_quotes(conn: Connection, rows: list[dict[str, Any]]) -> int:
 
 
 def upsert_us_valuation_snapshots(rows: list[dict[str, Any]]) -> int:
-    """us_valuation_snapshots を symbol 冪等 UPSERT（最新のみ保持・valuation 同型・ADR-031）。"""
-    return _upsert(us_valuation_snapshots, rows, index_elements=["symbol"])
+    """us_valuation_snapshots を symbol 冪等 UPSERT（最新のみ保持・valuation 同型・ADR-031）。
+
+    partial=True＝**渡された列だけ**更新する。JP の upsert_valuation_snapshots と同根で（#7）、
+    売掛/在庫の質列は後段 calc_us_receivables_inventory が cadence で UPDATE 充填する（ADR-064 #2）
+    ため、全列 EXCLUDED 更新にすると毎晩ここで NULL に潰れる。#2 列は温存する。
+    """
+    return _upsert(us_valuation_snapshots, rows, index_elements=["symbol"], partial=True)
 
 
 def get_us_quotes(

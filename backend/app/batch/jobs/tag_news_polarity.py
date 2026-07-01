@@ -18,7 +18,11 @@ NULL のまま翌晩に拾う（自己回復性は維持）。
 失敗の扱い（embed_news と契約対称・C-7・ADR-018）: 1 バッチの判定失敗（LLM 例外）は握って打ち切り、
 バッチが全件 enum 外（総崩れ）は握って次バッチへ進む。いずれも failed_batches に数え、
 failed_batches > 0 なら ok=False で返し runner の Discord 通知に乗せる（「黙って失敗を握りつぶさ
-ない」）。ジョブ境界の例外も握り ok=False で返す（後続ジョブを止めない）。冪等性（ADR-002）: 判定
+ない」）。**ただし tagger 面が未設定のときは沈黙 skip（ok=True・通知しない・ADR-058／#5）**＝
+classify_polarities が伝播する FaceNotConfiguredError を「面未設定＝enrichment を静かに見送る」
+シグナルとして扱い、LLM 総崩れ（空 dict＝通知する）と切り分ける（embed_news の embedding_enabled()
+事前ガードと同型）。ジョブ境界の例外も握り ok=False で返す（後続ジョブを止めない）。
+冪等性（ADR-002）: 判定
 済み（polarity 非 NULL）の行は list_news_needing_polarity が返さないため、再実行しても二重判定は
 起きない。
 """
@@ -33,6 +37,7 @@ from app.batch import state
 from app.batch.runner import JobResult
 from app.db import repo
 from app.db.engine import get_engine
+from app.services.llm_config import FaceNotConfiguredError
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +71,14 @@ def run() -> JobResult:
             batch = rows[start : start + POLARITY_BATCH]
             try:
                 results = asyncio.run(classify_polarities(batch))
+            except FaceNotConfiguredError:
+                # tagger 面が未設定＝沈黙 skip（enrichment・通知しない・ADR-018/058）。embed_news の
+                # embedding_enabled() 事前ガードと同じ意味。ここで通知に乗せると未設定なだけで毎晩
+                # Discord 誤アラートが飛ぶ（#5）。付いた分（あれば）は残し ok=True で静かに終える。
+                logger.info("tag_news_polarity: tagger 面が未設定のため沈黙 skip（ADR-058）")
+                return JobResult(
+                    name="tag_news_polarity", ok=True, rows=tagged, detail="tagger 面未設定で skip"
+                )
             except Exception:  # noqa: BLE001 — 1 バッチの判定失敗は握り打ち切る（ADR-018）
                 logger.warning("tag_news_polarity: 1 バッチの判定に失敗（残りは翌晩・ADR-049）")
                 failed_batches += 1

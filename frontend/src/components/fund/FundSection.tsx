@@ -19,6 +19,8 @@ export function FundSection({ portfolioId }: { portfolioId: number }) {
   const [funds, setFunds] = useState<Fund[]>([]);
   const [holdings, setHoldings] = useState<FundHolding[] | null>(null);
   const [holdingsErr, setHoldingsErr] = useState<string | null>(null);
+  // 上部フォームは履歴コンポーネントの外にあるため、記録後に履歴一覧の再取得を bump で促す（#28）。
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
 
   // 初回ロード（funds は portfolio 非依存・holdings は portfolio 依存）。
   useEffect(() => {
@@ -38,6 +40,13 @@ export function FundSection({ portfolioId }: { portfolioId: number }) {
   // 取引（新規・編集・削除）後に backend が返す最新保有で差し替える。
   function handleHoldingsChange(updated: FundHolding[]) {
     setHoldings(updated);
+  }
+
+  // 上部フォームでの新規記録は保有を更新しつつ、履歴一覧も再取得させる（履歴の自前 mutation は
+  // 自身で refetch するため bump 不要・#28）。
+  function handleTopFormDone(updated: FundHolding[]) {
+    setHoldings(updated);
+    setHistoryReloadKey((k) => k + 1);
   }
 
   // 未登録 ISIN を新規登録したら datalist 候補に足す（重複は無視）。
@@ -64,7 +73,7 @@ export function FundSection({ portfolioId }: { portfolioId: number }) {
         <FundTransactionForm
           portfolioId={portfolioId}
           funds={funds}
-          onDone={handleHoldingsChange}
+          onDone={handleTopFormDone}
           onFundCreated={handleFundCreated}
         />
       </Card>
@@ -75,6 +84,7 @@ export function FundSection({ portfolioId }: { portfolioId: number }) {
         funds={funds}
         onHoldingsChange={handleHoldingsChange}
         onFundCreated={handleFundCreated}
+        reloadKey={historyReloadKey}
       />
     </div>
   );

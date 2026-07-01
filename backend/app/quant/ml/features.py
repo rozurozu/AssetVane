@@ -35,10 +35,9 @@ FEATURE_NAMES: tuple[str, ...] = (
     "momentum_3m",  # 3 か月（≈60 営業日）モメンタム
 )
 
-_SCHEMA_VERSION = 1
 _FY = "FY"  # 通期タイプ（CurPerType）。PER/PBR/EPS 成長率はこのタイプ行を使う
 _MOMENTUM_WINDOW = 60  # 3 か月 ≈ 60 営業日
-_SURPRISE_WINDOW = 3  # 開示日 ±この営業日数の株価リターンをサプライズ代理に使う
+_SURPRISE_WINDOW = 3  # 開示日アンカーからこの営業日数さかのぼる（開示前リターンをサプライズ代理に）
 _NAN = float("nan")
 
 
@@ -113,21 +112,27 @@ def _momentum(adj: pd.Series) -> float:
 
 
 def _surprise(adj: pd.Series, dates: pd.Series, disclosed_date: str | None) -> float:
-    """開示日近傍（±_SURPRISE_WINDOW 営業日・as_of 既知範囲のみ）の株価リターン（サプライズ代理）。
+    """開示日までの株価リターン（サプライズ代理・train/serve 一致・#6）。
 
-    開示直前の株価から開示直後（as_of を超えない範囲）へのリターン。算出不能なら NaN。
+    アンカー idx は「開示日以前で最後の営業日」（開示日が非取引日でも直前の取引日）。窓は
+    [idx-_SURPRISE_WINDOW, idx]＝**開示前のみ**で、開示後の反応は含めない。学習は
+    as_of=disclosed_date で価格が開示日で切れ開示後を見られないのに、推論は as_of=当日で開示後を
+    含めると、同じ (code, 開示) の surprise_proxy が fit と serve で別分布になる（skew）。両側を
+    開示前窓へ揃え as_of 非依存にする（idx は「系列先頭〜開示日の営業日数」で as_of に依らず一定・
+    アンカーを開示日以前にすることで週末/祝日開示の skew も消す）。算出不能なら NaN（捏造しない）。
     """
     if disclosed_date is None or len(adj) == 0:
         return _NAN
-    # 開示日以降で最初の営業日インデックス（開示直後の約定）。positional で取り .index を避ける。
-    positions = np.flatnonzero(np.asarray(dates >= disclosed_date))
+    # 開示日以前で最後の営業日（非取引日開示でも直前の取引日）。positional で取り .index を避ける。
+    positions = np.flatnonzero(np.asarray(dates <= disclosed_date))
     if positions.size == 0:
         return _NAN
-    idx = int(positions[0])
+    idx = int(positions[-1])
     pre = max(idx - _SURPRISE_WINDOW, 0)
-    post = min(idx + _SURPRISE_WINDOW, len(adj) - 1)  # as_of 越えはしない（dates は <= as_of）
+    if pre == idx:
+        return _NAN  # 開示前の窓が取れない（履歴不足）＝捏造しない
     base = adj.iloc[pre]
-    end = adj.iloc[post]
+    end = adj.iloc[idx]
     if pd.isna(base) or pd.isna(end) or base <= 0:
         return _NAN
     return float(end / base - 1.0)

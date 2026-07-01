@@ -16,6 +16,7 @@ from datetime import date, timedelta
 
 from app.adapters.jquants import JQuantsCoverageError
 from app.batch import calendar, state
+from app.batch.jobs._cursor import backfill_start_date
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -34,9 +35,8 @@ def _start_date(*, full_backfill: bool, today: str) -> str:
     差分: fetch_meta['financials'].last_fetched_date の翌日。不在なら max(disclosed_date) で
     自己修復し、それも無ければ full 相当（today - BACKFILL_YEARS）。
     """
-    last = date.fromisoformat(today)
     if full_backfill:
-        return last.replace(year=last.year - settings.backfill_years).isoformat()
+        return backfill_start_date(today, settings.backfill_years)
 
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, _SOURCE)
@@ -45,7 +45,7 @@ def _start_date(*, full_backfill: bool, today: str) -> str:
             last_fetched = repo.get_max_financial_disclosed_date(conn)
 
     if last_fetched is None:
-        return last.replace(year=last.year - settings.backfill_years).isoformat()
+        return backfill_start_date(today, settings.backfill_years)
 
     return (date.fromisoformat(last_fetched) + timedelta(days=1)).isoformat()
 

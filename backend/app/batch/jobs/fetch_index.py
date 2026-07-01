@@ -12,9 +12,9 @@ from __future__ import annotations
 import logging
 from datetime import date
 
-from app.adapters.index import US_SECTOR_ETFS, IndexAdapter, IndexAdapterError
+from app.adapters.index import US_SECTOR_ETFS, IndexAdapter
 from app.batch import state
-from app.batch.jobs._cursor import resolve_differential_start
+from app.batch.jobs._cursor import backfill_start_date, resolve_differential_start
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -52,8 +52,7 @@ def _start_date_for_symbol(symbol: str, today: str) -> str:
     fetch_meta あり → last_fetched_date に重ねた地点から（鮮度プローブ）。
     重ね・冪等の意図と重ね日数は resolve_differential_start（_cursor.py）に集約（ADR-018/002）。
     """
-    last = date.fromisoformat(today)
-    backfill_start = last.replace(year=last.year - settings.backfill_years).isoformat()
+    backfill_start = backfill_start_date(today, settings.backfill_years)
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, _source_key(symbol))
         last_fetched = meta.get("last_fetched_date") if meta else None
@@ -104,7 +103,7 @@ def run() -> JobResult:
                 # 空配列でも fetch_meta を today まで前進させる（再実行で空振りを繰り返さない）
                 repo.upsert_fetch_meta(_source_key(symbol), today)
             logger.info("fetch_index: %s %s〜%s・%d 行 UPSERT", symbol, start, today, len(rows))
-        except (IndexAdapterError, Exception) as exc:  # noqa: BLE001 — ジョブ境界で握る
+        except Exception as exc:  # noqa: BLE001 — シンボル境界で全例外を握る（IndexAdapterError 含む）
             logger.exception("fetch_index: %s が失敗（start=%s）", symbol, start)
             # 直近試行の失敗を記録（last_fetched_date は据え置き）。
             # digest が「取得できなかった指数」を情報行に出す（ADR-018）。

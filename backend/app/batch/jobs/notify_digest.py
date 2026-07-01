@@ -149,8 +149,14 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
     True（既定）なら検知ゼロでもサマリを返す。
     """
     # 合流ゲートの counts（極薄サマリの素・AI 選別と同じ DB 状態を決定論的に読む＝ADR-067）。
-    candidates = build_notable_candidates(conn)
-    counts = candidates.get("counts") or {}
+    # best-effort: ここは末尾サマリの表示件数のためだけの再計算なので、失敗しても ②保有悪材料
+    # アラート（ADR-051・能動配信の安全網）や本文送信を巻き添えにしない（#18）。失敗時は counts を
+    # 空にしてサマリの件数を 0/省略にとどめる。
+    try:
+        counts = build_notable_candidates(conn).get("counts") or {}
+    except Exception:  # noqa: BLE001 — サマリ件数の best-effort。失敗しても digest 本体は送る
+        logger.warning("notify_digest: 候補 counts の再計算に失敗（サマリ件数を省略・#18）")
+        counts = {}
 
     # 注目（AI 選別・notable_picks）。
     notable_lines, n_picks = _notable_lines(conn, today)

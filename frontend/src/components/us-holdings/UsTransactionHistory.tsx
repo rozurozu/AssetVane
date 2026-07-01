@@ -23,11 +23,13 @@ import { useEffect, useState } from "react";
 
 type Props = {
   onHoldingsChange?: (holdings: UsHolding[]) => void;
+  reloadKey?: number; // 親（上部フォーム）起点で履歴一覧の再取得を促すトリガ（#28）
 };
 
-export function UsTransactionHistory({ onHoldingsChange }: Props) {
+export function UsTransactionHistory({ onHoldingsChange, reloadKey }: Props) {
   // 初回ロードは useApi で取り、以降は mutation 成功時に再 fetch（操作起点の更新＝frontend-component-pattern (c)）。
-  const { data, error, loading } = useApi((s) => getUsTransactions(s), []);
+  // reloadKey が変わる（親の上部フォームが記録した）ときも再取得する（#28）。
+  const { data, error, loading } = useApi((s) => getUsTransactions(s), [reloadKey]);
   const [txns, setTxns] = useState<UsTransaction[] | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);

@@ -13,6 +13,7 @@ from datetime import date, timedelta
 
 from app.adapters.jquants import JQuantsCoverageError
 from app.batch import calendar, state
+from app.batch.jobs._cursor import backfill_start_date
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -32,9 +33,8 @@ def _start_date(*, full_backfill: bool, today: str) -> str:
     土日は candidate_days が除外する）。fetch_meta 不在/NULL なら get_max_quote_date で自己修復し、
     それも無ければ full 相当（today - BACKFILL_YEARS）。
     """
-    last = date.fromisoformat(today)
     if full_backfill:
-        return last.replace(year=last.year - settings.backfill_years).isoformat()
+        return backfill_start_date(today, settings.backfill_years)
 
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, _SOURCE)
@@ -44,7 +44,7 @@ def _start_date(*, full_backfill: bool, today: str) -> str:
 
     if last_fetched is None:
         # 初回相当: full と同じく BACKFILL_YEARS 分を頭から。
-        return last.replace(year=last.year - settings.backfill_years).isoformat()
+        return backfill_start_date(today, settings.backfill_years)
 
     # 取得済み最終日の翌日から（candidate_days が土日を除外する）。
     return (date.fromisoformat(last_fetched) + timedelta(days=1)).isoformat()

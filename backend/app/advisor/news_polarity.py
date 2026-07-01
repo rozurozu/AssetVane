@@ -22,8 +22,6 @@ import json
 import logging
 import re
 
-from app.services.llm_config import FaceNotConfiguredError
-
 logger = logging.getLogger(__name__)
 
 # polarity の値域（3 値 enum・NULL=未判定）。これ以外は破棄して NULL のまま（ADR-049）。
@@ -75,13 +73,12 @@ async def classify_polarities(articles: list[dict[str, object]]) -> dict[int, st
     # engine は import 鎖の先にあるため関数内で遅延 import して循環を断つ（theme_tagger と同流儀）。
     from app.advisor.engine import generate_once
 
-    # tagger 面が未設定なら沈黙 skip（enrichment 扱い＝通知しない・ADR-058 確定8）。polarity を
-    # 付けない側に倒し（空 dict＝NULL のまま）、設定後の夜に再判定される。
-    try:
-        content = await generate_once(messages, source="tagger")
-    except FaceNotConfiguredError:
-        logger.info("news_polarity: tagger 面が未設定のため polarity 判定を沈黙 skip（ADR-058）")
-        return {}
+    # tagger 面が未設定なら FaceNotConfiguredError が伝播する。ここでは握らず
+    # 呼び出し元（tag_news_polarity ジョブ）に委ねる＝「面未設定＝沈黙 skip」と
+    # 「LLM 総崩れ＝空 dict で通知」を切り分ける。両方を空 dict に潰すと未設定でも
+    # 毎晩誤通知になる（#5・ADR-018/058）。embed_news の embedding_enabled() 事前
+    # ガードと同じ意味を、面未設定シグナルで実現する。
+    content = await generate_once(messages, source="tagger")
     valid_ids = {int(a["id"]) for a in articles}
     return _parse_polarity_response(content, valid_ids)
 

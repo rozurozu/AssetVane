@@ -117,6 +117,59 @@ def test_total_failure_is_not_ok(temp_db, monkeypatch) -> None:
     assert result.ok is False
 
 
+def test_write_failure_does_not_advance_cursor_past_unpersisted(temp_db, monkeypatch) -> None:
+    """#4: バッチ書き込みが失敗した date でカーソルを進めない（未永続データを飛び越えない）。
+
+    旧実装は UPSERT 前に max_date を積み、書き込み失敗後もその date までカーソルを前進させたため、
+    未永続シンボルの履歴を差分 overlap の外へ恒久欠落させていた。成功バッチの date だけで進める。
+    """
+    _seed_universe(["AAA", "BBB"])
+    monkeypatch.setattr(settings, "us_quotes_batch_size", 1)  # 1 バッチ=1 銘柄
+    fake = _FakeAdapter(
+        {
+            "AAA": [_q("AAA", "2026-06-05", 10.0)],  # 成功・永続
+            "BBB": [_q("BBB", "2026-06-09", 20.0)],  # より新しいが書き込みが失敗する
+        }
+    )
+    real_upsert = repo.upsert_us_daily_quotes
+
+    def _fail_on_bbb(conn: Any, rows: list[dict[str, Any]]) -> int:
+        if any(r["symbol"] == "BBB" for r in rows):
+            raise RuntimeError("write boom")
+        return real_upsert(conn, rows)
+
+    monkeypatch.setattr(repo, "upsert_us_daily_quotes", _fail_on_bbb)
+    result = fetch_us_quotes.run(adapter=fake)  # type: ignore[arg-type]
+
+    assert result.ok is True  # AAA は成功しているので総崩れではない
+    with get_engine().connect() as conn:
+        bbb = repo.get_us_quotes(conn, "BBB")
+        meta = repo.get_fetch_meta(conn, "us_daily_quotes")
+    assert bbb == []  # BBB は未永続
+    assert meta["last_fetched_date"] == "2026-06-05"  # 永続した AAA まで。未永続 06-09 は飛ばさない
+    assert "失敗 1 件" in result.detail  # BBB は失敗として計上
+
+
+def test_write_failure_all_batches_is_not_ok(temp_db, monkeypatch) -> None:
+    """#4: 全バッチの書き込みが失敗したら総崩れで ok=False（旧実装は ok=True で無通知だった）。"""
+    _seed_universe(["AAA", "BBB"])
+    monkeypatch.setattr(settings, "us_quotes_batch_size", 10)  # 1 バッチに 2 銘柄
+    fake = _FakeAdapter(
+        {"AAA": [_q("AAA", "2026-06-08", 10.0)], "BBB": [_q("BBB", "2026-06-08", 20.0)]}
+    )
+
+    def _always_fail(conn: Any, rows: list[dict[str, Any]]) -> int:
+        raise RuntimeError("write boom")
+
+    monkeypatch.setattr(repo, "upsert_us_daily_quotes", _always_fail)
+    result = fetch_us_quotes.run(adapter=fake)  # type: ignore[arg-type]
+
+    assert result.ok is False  # 書き込み全滅＝総崩れ（symbol 単位で failed を積む）
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, "us_daily_quotes")
+    assert meta is None  # カーソルは前進しない（未永続）
+
+
 def test_full_backfill_vs_incremental_start(temp_db, monkeypatch) -> None:
     """full_backfill は BACKFILL_YEARS 分頭から・差分はカーソルに重ねた地点から（開始日分岐）。"""
     _seed_universe(["AAA"])

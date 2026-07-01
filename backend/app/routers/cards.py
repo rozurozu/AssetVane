@@ -183,9 +183,9 @@ async def create_card(body: CardCreateIn) -> CardOut:
         triage_reason=resolved["triage_reason"],
         source=body.source,
     )
-    from app.batch.jobs.embed_cards import embed_card_best_effort
+    from app.batch.jobs.embed_cards import embed_card_best_effort_async
 
-    embed_card_best_effort(card_id)
+    await embed_card_best_effort_async(card_id)  # async 経路は await（sync 版は #9 を再発する）
     with get_engine().connect() as conn:
         return _card_out(_get_or_404(conn, card_id))
 
@@ -243,16 +243,24 @@ async def reassist_card_endpoint(card_id: int) -> TriageResponse:
                 "level": resolved["level"],
             },
         )
+        # #3: 既に active（人間承認済み・注入中）のカードを「AIで整える」で再整形したとき、AI が
+        # 再び verdict='active' を返すと resolved["status"] は draft になる
+        # （active 化は人間承認＝ADR-009）。だが一度承認した active を AI 整形で
+        # 無言降格させ注入/意味検索から落とすのは意図に反するので、現在 active かつ
+        # verdict=='active' のときは active を温存する（他 verdict は再審査を尊重）。
+        new_status = resolved["status"]
+        if card["status"] == "active" and verdict == "active":
+            new_status = "active"
         repo.set_knowledge_card_status(
             card_id,
-            status=resolved["status"],
+            status=new_status,
             quant_note=resolved["quant_note"],
             linked_signal_type=resolved["linked_signal_type"],
             reason=resolved["triage_reason"],
         )
-        from app.batch.jobs.embed_cards import embed_card_best_effort
+        from app.batch.jobs.embed_cards import embed_card_best_effort_async
 
-        embed_card_best_effort(card_id)
+        await embed_card_best_effort_async(card_id)  # async 経路は await（#9）
 
     with get_engine().connect() as conn:
         updated = _get_or_404(conn, card_id)

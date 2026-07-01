@@ -226,10 +226,16 @@ def put_fund_transaction(txn_id: int, body: FundTransactionIn) -> list[FundHoldi
     }
 
     with get_engine().begin() as conn:
-        if repo.update_fund_transaction(conn, txn_id, row) is None:
+        existing = repo.get_fund_transaction(conn, txn_id)
+        if existing is None:
             raise HTTPException(status_code=404, detail=f"投信取引 {txn_id} は存在しません。")
-        recalc_fund_holdings(conn, body.portfolio_id)
-        return _build_fund_holdings(conn, body.portfolio_id)
+        # recalc は取引の**実所属** portfolio で（body.portfolio_id ではない・#26）。update は
+        # portfolio_id を更新しないので、body の別 portfolio_id で recalc すると実所属側の
+        # fund_holdings が取引と乖離する（delete_fund_transaction_endpoint と同型に揃える）。
+        pid = int(existing["portfolio_id"])
+        repo.update_fund_transaction(conn, txn_id, row)
+        recalc_fund_holdings(conn, pid)
+        return _build_fund_holdings(conn, pid)
 
 
 @router.delete("/fund-transactions/{txn_id}", response_model=list[FundHoldingOut])

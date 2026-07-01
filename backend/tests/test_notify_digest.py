@@ -63,6 +63,28 @@ def test_build_digest_shows_ai_picks(temp_db: None) -> None:
     assert "ソニーグループ (67580) — 悪材料ニュースで急落、保有の点検が必要" in content
 
 
+def test_build_digest_survives_candidates_recompute_failure(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """#18: 候補 counts の再計算が失敗しても digest 本体（AI 選別・保有悪材料の安全網）は落ちない。
+
+    build_notable_candidates はサマリ件数だけの best-effort。例外でも本文送信を巻き添えにしない。
+    """
+    repo.upsert_stocks([STOCK])
+    _seed_pick("72030", "重なりで注目")  # 本文の実コンテンツ（has_content）
+
+    def _boom(conn: Any) -> dict[str, Any]:
+        raise RuntimeError("candidates down")
+
+    monkeypatch.setattr(notify_digest, "build_notable_candidates", _boom)
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+
+    assert content is not None  # 巻き添えにならず送信対象は残る
+    assert "72030" in content  # AI 選別（実コンテンツ）は出る
+    assert "サマリ" in content  # サマリは 0/省略でも出る（クラッシュしない）
+
+
 def test_build_digest_notable_cap_truncates(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
     """notable_digest_max を超える AI 選別は「…ほか N 件」で切る（ADR-067）。"""
     monkeypatch.setattr(settings, "notable_digest_max", 2)

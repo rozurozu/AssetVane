@@ -23,6 +23,21 @@ from datetime import date, timedelta
 DEFAULT_OVERLAP_DAYS = 5
 
 
+def backfill_start_date(today: str, years: int) -> str:
+    """初回/全取得の開始日を today から years 年前で決める純関数（閏日安全・#16）。
+
+    `date.replace(year=...)` は today が 2/29 で years 年前が非閏年だと ValueError を投げる。素朴に
+    `last.replace(year=last.year - N)` を書いていた 5 ジョブ（fetch_quotes/financials/index/
+    us_quotes/fx_rates）は、閏日（2/29）実行で差分運転でも毎回クラッシュしていた。年差を保ったまま
+    2/29 → 2/28 に丸めて安全に計算する（1 日のズレは backfill 開始日の粒度では無害・ADR-018）。
+    """
+    d = date.fromisoformat(today)
+    try:
+        return d.replace(year=d.year - years).isoformat()
+    except ValueError:  # 2/29 → years 年前が非閏年: 2/28 に丸める
+        return d.replace(year=d.year - years, day=28).isoformat()
+
+
 def resolve_differential_start(
     last_fetched: str | None,
     *,

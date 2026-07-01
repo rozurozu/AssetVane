@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-_SCHEMA_VERSION = 1  # payload スキーマ版（features._SCHEMA_VERSION と整合）
+_SCHEMA_VERSION = 1  # 推論 payload スキーマ版（この 1 箇所が唯一の真実・#27）
 _LABEL = "AI 決算スコア"  # 一覧 UI の人間可読ラベル（momentum/volume_spike と一貫・§5）
 
 

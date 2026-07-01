@@ -25,9 +25,9 @@ from sqlalchemy import Connection
 
 from app.advisor.tools.schemas import (
     AdjustCardWeightArgs,
+    NotablePickArg,
     ProposeCardArgs,
     ProposeTradeArgs,
-    SubmitNotableStocksArgs,
     coerce_policy_change,
 )
 from app.db import repo
@@ -265,7 +265,10 @@ def persist_notable_picks_from_tool_runs(
 
     手順（persist_trade_proposals_from_tool_runs と同型）:
     1. submit_notable_stocks の最終 args を拾う（無ければ何もしない＝[]）。
-    2. SubmitNotableStocksArgs で検証（不正なら [] で握る＝ループを落とさない・ADR-018）。
+    2. picks を **1 件ずつ** NotablePickArg で検証（不備の pick だけ warning でスキップ・#11）。
+       全件一括 model_validate だと 1 件の不備で有効分まで全落ちし、ADR-067 が解消した
+       「注目＝AI 提案なし（空 digest）」を再誘発する。coerce_policy_change / propose_trade と
+       同じ per-item グレースフル方針（ADR-018「ループを落とさない」）に揃える。
     3. 各 pick の JP コードを stocks で解決。未知は drop（幻覚/誤記を digest に載せない）。
     4. 同一 code は 1 度だけ（dedup）。upsert_notable_pick で冪等 UPSERT（再実行で重複しない）。
 
@@ -275,15 +278,20 @@ def persist_notable_picks_from_tool_runs(
     raw = _extract_notable_picks(tool_runs)
     if raw is None:
         return []
-    try:
-        parsed = SubmitNotableStocksArgs.model_validate(raw)
-    except ValidationError:
-        logger.warning("submit_notable_stocks: 引数が不正（%s）。永続せずスキップ", raw)
+    raw_picks = raw.get("picks") if isinstance(raw, dict) else None
+    if not isinstance(raw_picks, list):
+        logger.warning("submit_notable_stocks: picks が配列でない（%s）。永続せずスキップ", raw)
         return []
 
     inserted: list[str] = []
     seen: set[str] = set()
-    for pick in parsed.picks:
+    for raw_pick in raw_picks:
+        try:
+            pick = NotablePickArg.model_validate(raw_pick)
+        except ValidationError:
+            # 1 件の不備（reason 欠落・非 dict 等）はこの pick だけ落とし、有効分は残す（#11）。
+            logger.warning("notable pick: 1 件が不正（%s）。この pick だけスキップ", raw_pick)
+            continue
         code = pick.code
         if code in seen:
             continue

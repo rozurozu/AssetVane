@@ -363,13 +363,19 @@ def put_transaction(
     }
 
     with get_engine().begin() as conn:
-        if repo.get_transaction(conn, txn_id) is None:
+        existing = repo.get_transaction(conn, txn_id)
+        if existing is None:
             raise HTTPException(status_code=404, detail=f"取引 {txn_id} は存在しません。")
+        # recalc は取引の**実所属** portfolio で行う（body.portfolio_id ではない・#26）。
+        # update_transaction は portfolio_id を更新しないので取引は元の portfolio に留まる。body の
+        # 別 portfolio_id で recalc すると、その portfolio を誤再計算しつつ実所属側の holdings を
+        # 取引と乖離させる（delete_transaction_endpoint と同型＝実所属で recalc に揃える）。
+        pid = int(existing["portfolio_id"])
 
         # 取引更新と holdings 再導出を atomic にする（ADR-019）。
         repo.update_transaction(conn, txn_id, row)
-        recalc_holdings(conn, body.portfolio_id)
-        holdings_resp = _build_holdings_response(conn, body.portfolio_id)
+        recalc_holdings(conn, pid)
+        holdings_resp = _build_holdings_response(conn, pid)
     return TransactionResult(transaction_id=txn_id, holdings=holdings_resp)
 
 

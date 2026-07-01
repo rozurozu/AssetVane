@@ -68,6 +68,25 @@ def test_known_inputs_expected_features() -> None:
     assert np.isfinite(feats["surprise_proxy"])
 
 
+def test_surprise_proxy_consistent_train_vs_serve() -> None:
+    """#6: 同じ (code,開示) の surprise_proxy が as_of=開示日(学習)・as_of=後日(推論) で一致する。
+
+    旧実装は post=min(idx+window, as_of境界) が as_of 依存で、学習は開示前窓・推論は開示後込み窓に
+    なり train/serve skew を生んでいた。開示前窓に統一して as_of 非依存にしたことを固定する。
+    """
+    adj = list(np.linspace(1000.0, 1300.0, 120))  # 120 営業日（暦日）
+    prices = _prices(adj, end="2025-06-01")  # 2025-02-02..2025-06-01
+    disclosed = "2025-04-15"  # 価格窓の中ほど
+    fin = [_fin(disclosed, "FY", net_sales=1000, operating_profit=100, profit=80, eps=50, bps=500)]
+
+    train = build_features_at(fin, prices, as_of=disclosed)  # 価格が開示日で切れる（学習）
+    serve = build_features_at(fin, prices, as_of="2025-06-01")  # 開示後の株価も既知（推論）
+    assert train is not None and serve is not None
+    assert np.isfinite(train["surprise_proxy"])
+    # as_of に依らず一致（開示後の反応を含めない＝skew なし）。
+    assert train["surprise_proxy"] == serve["surprise_proxy"]
+
+
 def test_yoy_matches_same_period_type_not_fy() -> None:
     """latest が 2Q なら前年 2Q と突合する（FY を誤って使わない）。"""
     prices = _prices([1000.0] * 5, end="2025-09-01")

@@ -30,19 +30,20 @@ export type BatchStatusResponse = {
   stop_requested: boolean; // 停止要求済みか（次のジョブ境界で止まる）
 };
 
-/** バッチ停止レスポンス（POST /batch/stop・ADR-036）。 */
+/** バッチ停止レスポンス（POST /batch/stop・ADR-036/070）。 */
 export type BatchStopResponse = {
-  stopping: boolean; // 停止要求を受理したか（実行中でなければ false）
+  stopping: boolean; // 停止要求を受理したか（ADR-070 で running ゲート撤廃＝常に true）
 };
 
-/** 現在のバッチ実行状態を取得（ADR-036・WebUI がポーリングして進捗・停止可否を出す）。
- * cron・/batch/run・CLI --nightly のどの口で走っていても同じ状態を映す（ADR-011）。 */
+/** 現在のバッチ実行状態を取得（ADR-036/070・WebUI がポーリングして進捗・停止可否を出す）。
+ * running 等は同一プロセスのメモリ（best-effort）＝CLI --nightly や dev --reload の別プロセスの
+ * 走行は映らない。stop_requested は停止ファイル由来でクロスプロセスに正しい（ADR-070）。 */
 export function getBatchStatus(signal?: AbortSignal): Promise<BatchStatusResponse> {
   return getJSON<BatchStatusResponse>("/batch/status", signal);
 }
 
-/** 走行中バッチに停止を要求（協調キャンセル・ADR-036）。今のジョブを終えてから止まる。
- * 差分・フルどちらの走行でも効く。実行中でなければ stopping=false。 */
+/** 走行中バッチに停止を要求（協調キャンセル・ADR-036/070）。今の単位を終えてから止まる。
+ * ADR-070 で running ゲート撤廃＝常に stopping=true（--reload/CLI の別プロセスにも停止を届かせる）。 */
 export function stopBatch(): Promise<BatchStopResponse> {
   return postJSON<BatchStopResponse>("/batch/stop", {});
 }

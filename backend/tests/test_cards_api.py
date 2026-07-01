@@ -159,6 +159,53 @@ def test_reassist_updates_and_keeps_active_as_draft(
     assert body["card"]["triage_reason"] == "採用"
 
 
+def test_reassist_active_card_is_not_demoted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3: 既に active（人間承認済み）のカードを再整形しても draft に降格しない（active 温存）。"""
+    cid = client.post("/cards", json={"body": "本文"}).json()["id"]  # autouse None → draft
+    client.post(f"/cards/{cid}/activate")  # 人間が承認 → active
+    assert client.get(f"/cards/{cid}").json()["status"] == "active"
+    _mock_assist(
+        monkeypatch,
+        AssistResult(
+            title="整えた見出し",
+            when_to_apply="状況",
+            level="market",
+            verdict="active",  # AI は再び「active（既存データで成立）」と判定
+            reason="既存データで成立",
+            quant_note=None,
+            linked_signal_type=None,
+        ),
+    )
+    body = client.post(f"/cards/{cid}/assist").json()
+    assert body["card"]["title"] == "整えた見出し"  # 整形は効く
+    assert body["card"]["status"] == "active"  # active は温存（draft へ降格しない）
+
+
+def test_create_runs_immediate_embedding_on_async_path(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#9: POST /cards（async）の即時埋め込みが実際に走る（asyncio.run を実行中ループで呼ばない）。
+
+    旧実装は sync 版が内部で asyncio.run を呼び、実行中イベントループ上で RuntimeError → 握り潰しで
+    埋め込みが 100% 死んでいた（201 は返るが embedding=NULL）。埋め込みが実際に走ったかで判定する。
+    """
+    calls: list[list[str]] = []
+
+    async def _fake_embed(texts: list[str]) -> list[list[float]]:
+        calls.append(list(texts))
+        return [[0.1, 0.2, 0.3]]
+
+    monkeypatch.setattr("app.batch.jobs.embed_cards.embedding_enabled", lambda: True)
+    monkeypatch.setattr("app.batch.jobs.embed_cards.embedding_model", lambda: "fake-model")
+    monkeypatch.setattr("app.batch.jobs.embed_cards.embed_texts", _fake_embed)
+
+    res = client.post("/cards", json={"body": "本文だけの知識"})
+    assert res.status_code == 201
+    assert calls  # 埋め込みが実際に走った（旧経路は RuntimeError で走らなかった）
+
+
 def test_reassist_none_keeps_status(client: TestClient) -> None:
     """再整形でも AI が None なら status 据え置き・triage=None（autouse None）。"""
     cid = client.post("/cards", json={"body": "本文"}).json()["id"]

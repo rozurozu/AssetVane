@@ -22,7 +22,7 @@ import logging
 from datetime import date
 
 from app.adapters.fx import FxAdapter
-from app.batch.jobs._cursor import resolve_differential_start
+from app.batch.jobs._cursor import backfill_start_date, resolve_differential_start
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -41,8 +41,7 @@ def _start_date(*, full_backfill: bool, today: str) -> str:
     重ね・冪等・C-1/C-2 の意図と重ね日数は resolve_differential_start（_cursor.py）に集約
     （ADR-018/002）。アダプタの「0 行＝raise」が偽失敗にならないよう重ねて取り直す。
     """
-    last = date.fromisoformat(today)
-    backfill_start = last.replace(year=last.year - settings.backfill_years).isoformat()
+    backfill_start = backfill_start_date(today, settings.backfill_years)
     if full_backfill:
         return backfill_start
     with get_engine().connect() as conn:

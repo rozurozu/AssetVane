@@ -20,7 +20,15 @@ from app.db.schema import (
 
 
 def upsert_stocks(rows: list[dict[str, Any]]) -> int:
-    return _upsert(stocks, rows, index_elements=["code"])
+    """銘柄マスタを冪等 UPSERT（code 1 行・ADR-002/026）。
+
+    partial=True＝**渡された列だけ**更新する。edinet_code は sync_master
+    （_normalize_stock）が持たず、別経路 set_stock_edinet_code /
+    bulk_set_stock_edinet_codes（edinetdb sweep・ADR-064）が焼く永続キー。全列
+    EXCLUDED 更新だと NIGHTLY 先頭の sync_master が毎晩 edinet_code を NULL に潰し、
+    sweep の成果破棄＋edinetdb API 無駄叩きになる（#8）。edinet_code は温存する。
+    """
+    return _upsert(stocks, rows, index_elements=["code"], partial=True)
 
 
 def upsert_daily_quotes(rows: list[dict[str, Any]]) -> int:

@@ -7,7 +7,7 @@ LLM（run_turn）・Discord（notify.error）は必ずモック、DB は temp_db
 - ③縮退（observations 空）は journal を書かず理由 str を返すこと。
 - submit_journal 未呼び出しでも reply 非空なら journal を書く（フォールバック健全）こと。
 - run_advisor ジョブが上記を JobResult(ok) に畳み、失敗/縮退は runner 集約通知に乗ること。
-- collect_situation_briefing が監査用 dict を返すこと（handler はモック）。
+- _gather_briefing が監査用 dict を返すこと（handler はモック・#14）。
 """
 
 from __future__ import annotations
@@ -45,11 +45,10 @@ def _stub_briefing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(handlers, "handle_get_asset_overview", _fake_overview)
 
 
-def test_collect_situation_briefing(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
-    """briefing は signals/portfolio_metrics/asset_overview を集約した dict。"""
+def test_gather_briefing(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
+    """briefing は signals/portfolio_metrics/asset_overview を集約した dict（#14）。"""
     _stub_briefing(monkeypatch)
-    with get_engine().connect() as conn:
-        briefing = nightly.collect_situation_briefing(conn)
+    briefing = asyncio.run(nightly._gather_briefing())  # 本番と同じ async 経路を直接検証
     assert set(briefing) == {"signals", "portfolio_metrics", "asset_overview"}
     overview = briefing["asset_overview"]
     assert isinstance(overview, dict)

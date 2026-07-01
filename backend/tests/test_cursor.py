@@ -10,7 +10,26 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from app.batch.jobs._cursor import DEFAULT_OVERLAP_DAYS, resolve_differential_start
+from app.batch.jobs._cursor import (
+    DEFAULT_OVERLAP_DAYS,
+    backfill_start_date,
+    resolve_differential_start,
+)
+
+
+def test_backfill_start_date_normal_year() -> None:
+    """通常日は years 年前の同月日を返す。"""
+    assert backfill_start_date("2026-06-08", 2) == "2024-06-08"
+
+
+def test_backfill_start_date_leap_day_does_not_crash() -> None:
+    """#16: 閏日(2/29)実行で years 年前が非閏年でも ValueError で落ちず 2/28 に丸める。
+
+    素朴な date.replace(year=...) は 2024-02-29 → 2021-02-29 が不正で ValueError を投げ、
+    fetch_index/us_quotes/fx_rates が閏日の差分運転でも毎回クラッシュしていた（#16）。
+    """
+    assert backfill_start_date("2024-02-29", 3) == "2021-02-28"  # 2021 は非閏年 → 2/28 へ丸め
+    assert backfill_start_date("2024-02-29", 4) == "2020-02-29"  # 2020 は閏年 → そのまま
 
 
 def test_no_meta_returns_backfill_start() -> None:
