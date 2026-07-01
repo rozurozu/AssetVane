@@ -254,6 +254,9 @@ REGISTRY: dict[str, ToolDef] = {
             "ニュース取得→要約→保存を行い、最新の summary_md / key_facts と"
             "追加したソース件数（n_sources_added）を返す。"
             "「この銘柄を調査して」と頼まれたとき・既存ドシエが古い/無いときに呼ぶ。"
+            "調査の中で『決算後に戻る癖』のような耐久的な知見（アノマリー・構造的な癖）が"
+            "見つかったら、それはドシエでなく知識ノート向きなので propose_card を"
+            "提案する（置き場所の逆提案・ADR-062 追補）。"
         ),
         parameters=_schema(InvestigateStockArgs),
         handler=handlers.handle_investigate_stock,
@@ -344,6 +347,9 @@ REGISTRY: dict[str, ToolDef] = {
             "市場文脈・手法の解釈・外部情報の要約など、後の分析に再利用したい知識を残すときに呼ぶ。"
             "body（知識の中身）必須、title/when_to_apply/level/source は任意。起票は draft で、"
             "人間が /cards で確認・active 化する（毎回は出さない・残す価値があるときだけ）。"
+            "内容が『今の事実・直近トピック・その銘柄の現況』ならノートでなくドシエ向きなので、"
+            "起票せず investigate_stock を提案する（耐久的な解釈/アノマリーだけを"
+            "ノートにする・ADR-062 追補）。"
         ),
         parameters=_schema(ProposeCardArgs),
         handler=handlers.handle_propose_card,
