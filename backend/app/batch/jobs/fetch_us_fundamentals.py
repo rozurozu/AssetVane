@@ -98,16 +98,11 @@ def run(adapter: UsEquityAdapter | None = None) -> JobResult:
     now = datetime.now(UTC).isoformat()
     n_ok = 0
     failures: list[str] = []
-    stopped = False
 
-    for symbol in symbols:
-        # `.info` は 1 銘柄ごとに HTTP で重く、夜天井 cap（最大 900 本）の巡回は数十分かかりうる。
-        # ジョブ境界停止（ADR-036）だけだと長く止まらないため、銘柄境界でも停止要求を見て中断する
-        # （ADR-036 追補）。per-symbol カーソルは焼いた銘柄まで前進済み＝再開可（ADR-018）。
-        if state.should_stop():
-            logger.info("fetch_us_fundamentals: 停止要求を検知。焼いた分で中断する（ADR-036）。")
-            stopped = True
-            break
+    # `.info` は 1 銘柄ごとに HTTP で重く、夜天井 cap（最大 900 本）の巡回は数十分かかりうる。銘柄
+    # 境界で should_stop を見て中断する（stop_aware・ADR-036 追補/070）。per-symbol カーソルは焼いた
+    # 銘柄まで前進済み＝再開可（ADR-018）。
+    for symbol in state.stop_aware(symbols):
         try:
             snap = adapter.fetch_fundamentals(symbol)
             # us_stocks に実在する列だけ残す（YoY 率など未知キーは捨てる・ADR-055）。
@@ -136,6 +131,10 @@ def run(adapter: UsEquityAdapter | None = None) -> JobResult:
             logger.exception("fetch_us_fundamentals: %s の `.info` 取得に失敗", symbol)
             repo.mark_fetch_attempt_failed(_source_key(symbol))
             failures.append(f"{symbol}: {exc}")
+
+    stopped = state.should_stop()  # stop_aware がループを打ち切ったか（ADR-070）
+    if stopped:
+        logger.info("fetch_us_fundamentals: 停止要求を検知。焼いた分で中断する（ADR-036/070）。")
 
     detail = f"巡回 {len(symbols)} 件中 成功 {n_ok}・失敗 {len(failures)}（夜天井 {cap}）"
     if stopped:

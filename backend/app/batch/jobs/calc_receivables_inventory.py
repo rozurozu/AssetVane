@@ -82,9 +82,8 @@ def run() -> JobResult:
         updated = 0  # valuation_snapshots を実際に更新できた件数
         skipped_cadence = 0
 
-        for code in targets:
-            if state.should_stop():
-                break
+        # cadence＋予算ガードで元々短命だが、停止も最内ループで見る（stop_aware・ADR-036/070）。
+        for code in state.stop_aware(targets):
             if processed >= limits.nightly_soft_cap:
                 break
             mo_rem = adapter.last_budget.get("monthly_remaining")

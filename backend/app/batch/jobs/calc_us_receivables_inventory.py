@@ -59,9 +59,8 @@ def run() -> JobResult:
         processed = 0
         skipped_cadence = 0
 
-        for symbol in symbols:
-            if state.should_stop():
-                break
+        # 停止を最内ループでも見る（stop_aware＝ADR-036 追補／停止フラグはファイル＝ADR-070）。
+        for symbol in state.stop_aware(symbols):
             with get_engine().connect() as conn:
                 if _recently_fetched(conn, symbol, today):
                     skipped_cadence += 1

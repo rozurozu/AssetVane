@@ -26,6 +26,7 @@ import asyncio
 import logging
 
 from app.adapters.embedding import embed_texts, embedding_enabled, embedding_model
+from app.batch import state
 from app.batch.runner import JobResult
 from app.db import repo
 from app.db.engine import get_engine
@@ -55,6 +56,10 @@ def run() -> JobResult:
     failed_batches = 0
     try:
         while True:
+            # embedding API を大量バッチで叩き長引くことがある。バッチ境界で should_stop を見て
+            # 中断する（stop_aware・ADR-036 追補/070）。埋めた分は冪等 UPSERT 済み。
+            if state.should_stop():
+                break
             with get_engine().connect() as conn:
                 rows = repo.list_news_needing_embedding(
                     conn, current_model=model, limit=EMBED_BATCH

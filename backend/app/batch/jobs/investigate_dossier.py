@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.advisor.dossier import investigate_stock
+from app.batch import state
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -120,7 +121,9 @@ def run() -> JobResult:
     n_ok = 0
     n_sources = 0
     failures: list[str] = []
-    for item in targets:
+    # 1 銘柄あたり LLM パイプラインで重く、夜天井 cap でも数分かかりうる。銘柄境界で should_stop を
+    # 見て中断する（stop_aware・ADR-036 追補/070）。
+    for item in state.stop_aware(targets):
         code = item["code"]
         try:
             # 銘柄ごとに begin() で束ねる（複数ソース＋ドシエ本体を atomic に・dossier W2 規約）。

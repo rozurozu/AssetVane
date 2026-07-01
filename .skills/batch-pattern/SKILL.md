@@ -1,6 +1,6 @@
 ---
 name: batch-pattern
-description: 夜間バッチ（batch/ 配下の runner・jobs・lock・notify・calendar・state）を新規作成・修正するときに必ず使う。1つの脳・2つの起動口(cron と POST /batch/run が同一関数を呼ぶ・ADR-011)・ロックで多重起動を防ぐ・各ジョブは独立/冪等/部分失敗から再開可能・個別ジョブ失敗は握って後続を止めず Discord 通知(ADR-007/018)・JobResult で結果集約・実行状態はメモリ singleton で持ち停止は協調キャンセル(ADR-036)、を規定する。
+description: 夜間バッチ（batch/ 配下の runner・jobs・lock・notify・calendar・state）を新規作成・修正するときに必ず使う。1つの脳・2つの起動口(cron と POST /batch/run が同一関数を呼ぶ・ADR-011)・ロックで多重起動を防ぐ・各ジョブは独立/冪等/部分失敗から再開可能・個別ジョブ失敗は握って後続を止めず Discord 通知(ADR-007/018)・JobResult で結果集約・実行状態(running等)はメモリ singleton／停止フラグはファイル data/batch.stop でクロスプロセス協調キャンセル・長尺ジョブは stop_aware で最内ループ停止(ADR-036/070)、を規定する。
 ---
 
 # 夜間バッチ規約
@@ -60,15 +60,18 @@ def run_nightly(*, full_backfill: bool = False) -> list[JobResult]:
     return results
 ```
 
-## 実行状態と停止（メモリ singleton・協調キャンセル・ADR-036）
+## 実行状態と停止（status=メモリ・停止=ファイル・協調キャンセル・ADR-036/070）
 
-WebUI に「動いているか・今どのジョブか・止めたいか」を見せるための実行状態は、**DB ではなく FastAPI プロセス内のメモリ singleton**（`batch/state.py`）に持つ。バッチは BackgroundTask（`/batch/run`）・APScheduler（cron）・CLI（`--nightly`）の**いずれも同一プロセス内**で走る（[[backend-foundations]]・ADR-005）ため、プロセスが死ねば走行も状態も一緒に消えて `running` の真偽が常に整合する＝永続化が要らない。
+2 つの関心を**別の器**に置く（ADR-070 が ADR-036 の保存方式を改訂）。
 
-- **状態更新は `run_nightly()`（脳）の中だけ**で行う（`state.begin()` → 各ジョブ前に `state.set_current_job(name)` → `finally: state.end()`）。起動口で分岐させない（ADR-011「1つの脳」）。
-- **停止は協調キャンセル**: `POST /batch/stop` は `state.request_stop()` で `stop_requested` を立てるだけ。`run_nightly` が**各ジョブの境界で** `state.should_stop()` を見て break する（**今のジョブを終えてから止まる**＝強制 kill しない＝UPSERT 途中で切らずジョブ冪等性を壊さない）。
-- **長尺ジョブは内部ループでも `should_stop` を見る（ADR-036 追補）**: 全ユニバース走査など **1 ジョブが数十分〜数時間**かかるものは、ジョブ境界停止だけだと「今のジョブ完了後」が長すぎる。**最外ループの先頭で `state.should_stop()` を見て break** し、二段構えにする（runner と同じフラグを見るので意味が一貫する）。break しても各ループ反復で UPSERT＋`fetch_meta` 前進が済んでいれば「取れた分まで」永続化＋冪等再開でき、歴史に穴は空かない（実例＝`fetch_us_quotes`/`fetch_quotes`/`fetch_us_fundamentals`）。逆に**夜天井 cap で数十分以内に収まるジョブ（タガー/embed/巡回系）には足さない**（過剰）。`break` 後は `detail` に「停止により中断」を添えてログ/通知で分かるようにする。なお走行中ジョブを**今すぐ**止めたいときはプロセス再起動（`docker compose restart backend`）が確実（UPSERT 冪等で DB は壊れない）。
+- **status（running / current_job / started_at / full_backfill）＝メモリ singleton**（`batch/state.py`）。WebUI に「動いているか・今どのジョブか」を見せる用。バッチは BackgroundTask（`/batch/run`）・APScheduler（cron）・CLI（`--nightly`）の**いずれも同一プロセス内**で走る（[[backend-foundations]]・ADR-005）ため、プロセスが死ねば表示も消えて整合する best-effort。**更新は `run_jobs()`（脳）の中だけ**（`state.begin()` → 各ジョブ前に `state.set_current_job(name)` → `finally: state.end()`）。`GET /batch/status` がそのまま返す（[[backend-router-pattern]]）。
+- **停止フラグ（stop_requested）＝ファイル `data/batch.stop`（`batch.lock` の兄弟・ADR-070）**。相互排他はもう flock＝クロスプロセスなのに停止だけメモリに閉じていて、dev の `--reload` で分裂した別プロセスや CLU 起動から届かなかった（走行中バッチが古プロセスに残り、`POST /batch/stop` は前面プロセスのメモリに立つ）。ロックと同じ土俵にファイルで出すと reload/編集/CLI のどれでも届く。
+  - `request_stop()`＝**running ゲートを撤廃**し常にファイルを touch（前面プロセスの running=false でも受理）。`should_stop()`＝ファイルの存在を見る（真実源）。
+  - **ライフサイクルの不変条件**＝touch はロック外の `request_stop()` から・**unlink は flock 保持中の `begin()`/`end()` だけ**（`with lock.acquire()` 内）。これで走行中には必ず届き、idle 中の stray な要求は次 begin が回収する。起動時クリアはしない（orphan 宛の停止を誤消去しないため）。
+- **停止は協調キャンセル**: `run_jobs` が**各ジョブの境界で** `state.should_stop()` を見て break（**今のジョブを終えてから止まる**＝強制 kill しない＝UPSERT 途中で切らず冪等性を壊さない）。
+- **長尺ジョブは `state.stop_aware(iterable)` で最内ループでも見る（ADR-036 追補・ADR-070）**: `1 ジョブが数十分〜数時間`かかるもの（全ユニバース走査・営業日ループ・LLM/embed）は、ジョブ境界停止だけだと長すぎる（例＝3〜4 時間の `fetch_quotes` は 1 ジョブ）。最内ループを `for x in state.stop_aware(items):` で包む（should_stop が立つまで yield・立ったら打ち切り）。各反復で UPSERT＋`fetch_meta` 前進が済んでいれば「取れた分まで」永続化＋冪等再開でき歴史に穴は空かない。**helper 化で 1 行になりコストがほぼゼロなので、cap 付き LLM/embed/巡回系にも一律で被せる**（旧版の「cap で短いものには足さない＝過剰」は撤回・ADR-070。`while True` 再取得ループなど iterable でない所は先頭で `if state.should_stop(): break`）。「停止で打ち切ったか」を detail に出したいジョブは**ループ後**に `state.should_stop()` を見て「停止により中断」を添える（実例＝`fetch_quotes`/`fetch_financials`）。なお走行中ジョブを**今すぐ**止めたいときはプロセス再起動（`docker compose restart backend`）も確実（UPSERT 冪等で DB は壊れない）。
 - **中断は「正常終了」扱い**: 停止で残ジョブを飛ばしたときは `notify.error` を**鳴らさない**（ユーザー操作は失敗ではない）。失敗通知は通常完了時のみ。
-- `begin()` は `stop_requested` を必ず初期化する（前回の停止要求を次の走行へ持ち越さない）。状態は新エンドポイント `GET /batch/status` がそのまま返す（[[backend-router-pattern]]）。
+- **dev の reload-orphan に注意**: バッチ稼働中にソース編集や `uv run` をすると `--reload` で走行中バッチが古プロセスに取り残される（stop はファイルなので効くが、status は前面プロセスで running=false に見え UI に停止ボタンが出ない＝直 API で止める）。**編集したければ stop→編集→再開**が安全（ADR-070）。
 
 ```python
 stopped = False
@@ -106,7 +109,7 @@ if not stopped:                              # 停止は失敗ではないので
 - [ ] ほぼ同型の 2 ジョブ本体は `_`接頭の共通モジュール（例 `_theme_tagging.py`）へ寄せ、各ジョブは docstring＋`run()` を残して委譲した。差し替え対象（タガー等）は引数で受け各ジョブの名前空間から渡し、テストの patch seam を保った
 - [ ] 個別ジョブ失敗を握って後続を止めず `JobResult(ok=False)` に集約。`except Exception` に統一記法の理由コメント付き noqa（`# noqa: BLE001 — ジョブ境界で握り runner に返す`）を添えた
 - [ ] 失敗時のみ Discord 通知（無人バッチに限る・対話チャットは通知しない）。停止（協調キャンセル）での中断は「正常終了」扱いで通知しない（ADR-036）
-- [ ] 実行状態が要るならメモリ singleton（`batch/state.py`）に持ち、更新は `run_nightly` の中だけ（DB スキーマを増やさない・ADR-005/036）。停止はジョブ境界で `should_stop` を見て break（強制 kill しない）
-- [ ] 長尺ジョブ（全ユニバース走査・数十分〜数時間）は**最外ループ先頭でも** `should_stop` を見て break し、`detail` に「停止により中断」を添えた（ジョブ境界停止だけだと長すぎる・ADR-036 追補）。夜天井 cap で短いジョブには足さない
+- [ ] status（running 等）はメモリ singleton（`batch/state.py`）に持ち、更新は `run_jobs` の中だけ（DB スキーマを増やさない・ADR-005/036）。停止フラグは**ファイル `data/batch.stop`**（`request_stop` は running ゲートなしで touch・`should_stop` は存在を見る・unlink は flock 内の begin/end だけ）でクロスプロセスに効かせる（ADR-070）。ジョブ境界で `should_stop` を見て break（強制 kill しない）
+- [ ] 長尺ジョブ（全ユニバース走査・営業日ループ・LLM/embed で数十分〜数時間）は**最内ループを `state.stop_aware(items)` で包む**（`while` 再取得は先頭で `if should_stop(): break`）。helper 化でコストほぼゼロなので cap 付き系にも一律で足す（ADR-036 追補・ADR-070）。detail に出すジョブはループ後に `should_stop` を見て「停止により中断」を添えた
 - [ ] 夜のジョブは軽め（無人で使えない外部依存に頼らない）
 - [ ] docstring 冒頭に ADR-002/007/011/018・spec 参照

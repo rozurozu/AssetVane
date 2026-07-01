@@ -24,6 +24,7 @@ from typing import Any
 
 from sqlalchemy import Connection
 
+from app.batch import state
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -84,7 +85,9 @@ def run_theme_tagging(
     n_new_themes = 0
     n_bumped = 0
     failures: list[str] = []
-    for code in codes:
+    # 1 銘柄あたり LLM タガーで重く、夜天井 cap でも数分かかりうる。銘柄境界で should_stop を見て
+    # 中断する（stop_aware・ADR-036 追補/070）。
+    for code in state.stop_aware(codes):
         try:
             if use_bump_optimization:
                 with get_engine().connect() as conn:

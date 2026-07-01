@@ -17,6 +17,7 @@ import logging
 from datetime import date
 
 from app.adapters.fund_nav import FundNavAdapter, FundNavFetchError
+from app.batch import state
 from app.batch.jobs._cursor import resolve_differential_start
 from app.batch.runner import JobResult
 from app.db import repo
@@ -75,7 +76,9 @@ def run() -> JobResult:
 
     adapter = FundNavAdapter()
 
-    for fund in funds:
+    # ISIN 境界で should_stop を見て中断する（stop_aware・ADR-036 追補／停止フラグはファイル＝
+    # ADR-070）。取れた分は fetch_meta 前進済み＝冪等再開できる（ADR-018）。
+    for fund in state.stop_aware(funds):
         isin = fund["isin"]
         assoc_code = fund.get("assoc_code")
         start = _start_date_for_isin(isin)

@@ -29,6 +29,7 @@ import asyncio
 import logging
 
 from app.advisor.news_polarity import classify_polarities
+from app.batch import state
 from app.batch.runner import JobResult
 from app.db import repo
 from app.db.engine import get_engine
@@ -59,7 +60,9 @@ def run() -> JobResult:
         if not rows:
             return JobResult(name="tag_news_polarity", ok=True, rows=0, detail="判定対象なし")
 
-        for start in range(0, len(rows), POLARITY_BATCH):
+        # LLM を天井 200 件までバッチ判定するため長引きうる。バッチ境界で should_stop を見て中断する
+        # （stop_aware＝最内ループ停止・ADR-036 追補／停止フラグはファイル＝ADR-070）。
+        for start in state.stop_aware(range(0, len(rows), POLARITY_BATCH)):
             batch = rows[start : start + POLARITY_BATCH]
             try:
                 results = asyncio.run(classify_polarities(batch))

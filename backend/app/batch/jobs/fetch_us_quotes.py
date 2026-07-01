@@ -95,16 +95,11 @@ def run(*, full_backfill: bool = False, adapter: UsEquityAdapter | None = None) 
     attempted = 0
     failed: list[str] = []
     max_date: str | None = None
-    stopped = False
 
-    for batch in _batches(symbols, settings.us_quotes_batch_size):
-        # 全 us_stocks（約 1 万銘柄）を 1 ジョブで走査するため、ジョブ境界停止（ADR-036）だけだと
-        # 「今のジョブ完了後」が長くなる。バッチ境界でも停止要求を見て中断する（ADR-036 追補）。
-        # 取れた分は下の max_date でカーソル前進＝冪等（ADR-018）。
-        if state.should_stop():
-            logger.info("fetch_us_quotes: 停止要求を検知。取得済み分で中断する（ADR-036）。")
-            stopped = True
-            break
+    # 全 us_stocks（約 1 万銘柄）を 1 ジョブで走査するため、バッチ境界で should_stop を見て中断する
+    # （stop_aware＝最内ループ停止・ADR-036 追補／停止フラグはファイル＝ADR-070）。取れた分は下の
+    # max_date でカーソル前進＝冪等（ADR-018）。
+    for batch in state.stop_aware(_batches(symbols, settings.us_quotes_batch_size)):
         attempted += len(batch)
         try:
             # バッチ全 symbol を 1 回の yf.download で取得（ADR-055 バルク化）。返り値は
@@ -139,6 +134,11 @@ def run(*, full_backfill: bool = False, adapter: UsEquityAdapter | None = None) 
             except Exception as exc:  # noqa: BLE001 — バッチ書き込み境界で握り後続バッチを止めない
                 logger.exception("fetch_us_quotes: バッチ UPSERT に失敗（%d 行）", len(batch_rows))
                 failed.append(f"batch({len(batch_rows)}行): {exc}")
+
+    # stop_aware がループを打ち切ったか（ADR-070）。取れた分は下でカーソル前進済み＝冪等再開できる。
+    stopped = state.should_stop()
+    if stopped:
+        logger.info("fetch_us_quotes: 停止要求を検知。取得済み分で中断する（ADR-036/070）。")
 
     # 取れた最大 date までカーソルを前進させる（取れた範囲で再開境界を進める・ADR-018）。
     if max_date is not None:

@@ -80,6 +80,8 @@ uv run ruff check . && uv run ruff format .       # lint / format（ADR-023）
 uv run alembic upgrade head                       # スキーマ移行（起動時の init_db とは別に手動でも）
 ```
 
+**dev でバッチ稼働中の操作に注意（ADR-070）**: `POST /batch/stop`（停止）は `data/batch.stop` ファイルで効くので、`--reload` で分裂したプロセスや CLI 起動でも走行中バッチに届く（メモリ旗だった旧実装は届かなかった）。長尺ジョブ（`fetch_quotes` 等）は `stop_aware` で最内ループも見るので数秒〜1営業日で止まる。ただし**バッチ中にソース編集や `uv run`（bytecode を pre-compile しリロードを誘発）をすると、走行中バッチが古プロセスに取り残される**（orphan・named volume＋WAL なので破損はしないが、UI の `running` は false に見え停止ボタンが出ない）。**編集したければ stop→編集→再開**が安全。稼働中の状態確認は reload を誘発しない urllib 直叩き（`http://localhost:8000/batch/status`）で。
+
 frontend は `npm run lint`（Biome）/ `npm run format`（Biome）/ `npm run build`。`dev` のみ Turbopack、`build` は現状 webpack（ADR-022 の「不安定なら webpack へフォールバック」に従った状態）。
 
 ## コーディング作法（スキルが正本）

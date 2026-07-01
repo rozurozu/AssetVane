@@ -13,6 +13,7 @@ import logging
 from datetime import date
 
 from app.adapters.index import US_SECTOR_ETFS, IndexAdapter, IndexAdapterError
+from app.batch import state
 from app.batch.jobs._cursor import resolve_differential_start
 from app.batch.runner import JobResult
 from app.config import settings
@@ -79,7 +80,9 @@ def run() -> JobResult:
 
     adapter = IndexAdapter()
 
-    for symbol in symbols:
+    # シンボル境界で should_stop を見て中断する（stop_aware・ADR-036 追補／停止フラグはファイル＝
+    # ADR-070）。取れた分は fetch_meta 前進済み＝冪等再開できる（ADR-018）。
+    for symbol in state.stop_aware(symbols):
         start = _start_date_for_symbol(symbol, today)
         if start > today:
             logger.info(

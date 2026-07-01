@@ -41,6 +41,7 @@ from app.adapters.edinet import (
     EdinetAdapterError,
 )
 from app.advisor.edinet_summary import summarize_business_description
+from app.batch import state
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -114,7 +115,11 @@ def crawl(
     cap_reached = False
     last_cursor: str | None = None
 
-    for d in _daterange(start_date, end_date):
+    # 提出日クロールは backfill だと ~15ヶ月と長い。提出日境界で should_stop を見て中断する
+    # （stop_aware・ADR-036 追補/070）。日末に fetch_meta を前進させる作り（下）なので、日の頭で
+    # 止めればカーソルは完了済みの日に居る＝クリーンに再開（日の途中で止めると未要約 doc を落とす
+    # ため日単位で止める）。
+    for d in state.stop_aware(_daterange(start_date, end_date)):
         iso = d.isoformat()
         try:
             docs = adapter.list_documents(iso)

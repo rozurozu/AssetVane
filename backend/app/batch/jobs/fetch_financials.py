@@ -15,7 +15,7 @@ import logging
 from datetime import date, timedelta
 
 from app.adapters.jquants import JQuantsCoverageError
-from app.batch import calendar
+from app.batch import calendar, state
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -71,7 +71,10 @@ def run(*, full_backfill: bool = False) -> JobResult:
             known_codes = set(repo.list_stock_codes(conn))
 
         adapter = build_jquants_adapter()
-        for d in calendar.candidate_days(start, today):
+        # backfill は数年分の営業日を 1 ジョブで回す（≒数時間）。営業日境界で should_stop を見て
+        # 中断する（stop_aware・ADR-036 追補/070）。fetch_meta は処理済み日まで前進済み＝続きから
+        # 再開できる（冪等・ADR-018）。
+        for d in state.stop_aware(calendar.candidate_days(start, today)):
             try:
                 rows = adapter.fetch_financials(date=d)
             except JQuantsCoverageError:
@@ -99,7 +102,10 @@ def run(*, full_backfill: bool = False) -> JobResult:
             detail=f"start={start} で {days} 日処理後に失敗: {exc}",
         )
 
+    stopped = state.should_stop()  # stop_aware が打ち切ったか（ADR-070）
     tail = f"・前線 {frontier} で打ち切り" if frontier else f"〜{today}"
+    if stopped:
+        tail += "・停止により中断"
     return JobResult(
         name="fetch_financials",
         ok=True,

@@ -39,6 +39,7 @@ import asyncio
 import logging
 
 from app.adapters.embedding import embed_texts, embedding_enabled, embedding_model
+from app.batch import state
 from app.batch.runner import JobResult
 from app.db import repo
 from app.db.engine import get_engine
@@ -72,6 +73,10 @@ def run() -> JobResult:
     failed_batches = 0
     try:
         while True:
+            # 埋め込み＋near_dup 判定を大量バッチで回すと長引く。バッチ境界で should_stop を見て
+            # 中断する（stop_aware・ADR-036 追補/070）。埋めた分は冪等 UPSERT 済み。
+            if state.should_stop():
+                break
             with get_engine().connect() as conn:
                 rows = repo.list_themes_needing_embedding(
                     conn, current_model=model, limit=_EMBED_BATCH
