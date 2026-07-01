@@ -243,15 +243,19 @@ class SearchNewsArgs(_ToolArgs):
 
 
 class SearchCardsArgs(_ToolArgs):
-    """search_cards の引数（ADR-062・知識カード意味検索）。
+    """search_cards の引数（ADR-062・追補で code 対応）。
 
-    AI アドバイザーの知識ベース（知識カード）を意味（embedding 余弦距離）で検索する。query は必須、
-    level（market/sector/stock/general）は任意の構造フィルタ、limit は件数上限（既定 5）。任意引数の
-    "None"/"null" は _ToolArgs が実 None に正規化する。
+    AI アドバイザーの知識ベース（知識カード）を検索する。query は必須（code 指定時は無視される）、
+    level（market/sector/stock/general）は任意の構造フィルタ、limit は件数上限（既定 5）。
+    code を渡すと**その銘柄の active ノートを exact-match で全返し**（意味検索でなく完全一致・
+    ADR-062 追補）。market は JP/US（省略時 code だけで一致）。任意引数の "None"/"null" は
+    _ToolArgs が実 None に正規化する。
     """
 
     query: str
     level: str | None = None
+    code: str | None = None
+    market: str | None = None
     limit: int | None = None
 
 
@@ -260,6 +264,10 @@ class ProposeCardArgs(_ToolArgs):
 
     AI が会話から知識カードを起票する。body 必須、ほかは任意（title/when_to_apply/level/source）。
     起票は draft で、人間が /cards で active 化する（本番助言に効く操作は人間が最終承認・ADR-009）。
+    code を渡すと**特定銘柄のノート**（アノマリー等）になる＝会話で論じている銘柄の code を渡す
+    （社名からの推測でなく tool 文脈由来の grounded な値を・未知 code は起票せず drop・
+    market は JP/US・
+    ADR-062 追補）。code 付きは level='stock' に確定する（起票側で矯正）。
     """
 
     body: str
@@ -267,6 +275,8 @@ class ProposeCardArgs(_ToolArgs):
     when_to_apply: str | None = None
     level: str | None = None
     source: str | None = None
+    code: str | None = None
+    market: str | None = None
 
 
 class AdjustCardWeightArgs(_ToolArgs):

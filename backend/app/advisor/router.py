@@ -77,12 +77,19 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     # 最新のユーザー発話を retrieval キーに知識カードを引く（ADR-062・ambient＋意味検索）。
     query = next((m.content for m in reversed(req.messages) if m.role == "user"), None)
+    # 見ている銘柄（focus.code）の銘柄ノートは exact-match で無条件注入する（ADR-062 追補・③(1)）。
+    # FocusRef は type=stock/signal のとき code を持つ（market は運ばない＝code 一致で衝突
+    # しない・②）。
+    focus = req.context.focus if req.context else None
+    focus_code = (
+        focus.code if focus and focus.type in ("stock", "signal") and focus.code else None
+    )
     messages = build_messages(
         core_prompt=CORE,
         policy=policy,
         conversation=req.messages,
         screen_context=req.context,
-        knowledge_cards=await load_card_texts_for_injection(query),
+        knowledge_cards=await load_card_texts_for_injection(query, focus_code=focus_code),
         recent_journal=recent,
     )
 

@@ -98,13 +98,20 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
     candidates = build_notable_candidates(conn)
     instruction = _NIGHTLY_INSTRUCTION + "\n\n" + format_candidates_for_prompt(candidates)
 
+    # 夜 AI は focus が無い（単発分析）ので、注目候補の code ぶんの銘柄ノートを exact-match で
+    # 決定論注入する（ADR-062 追補・④＝AI に掘らせず取りこぼさない・ADR-067 の直接注入精神）。
+    # {候補} ∩ {ノート持ち} は保有/ウォッチ中心の少数なので実質数枚（weight 降順で
+    # _STOCK_INJECT_LIMIT）。
+    candidate_codes = [str(c["code"]) for c in candidates.get("candidates", []) if c.get("code")]
+
     messages = build_messages(
         core_prompt=CORE,
         policy=policy,
         conversation=[Message(role="user", content=instruction)],
         screen_context=None,  # 軸1 は画面が無い（ADR-025）
-        # 夜AIは ambient（市況/一般）のみ＋具体は search_cards Tool で深掘り（ADR-062）。
-        knowledge_cards=await load_card_texts_for_injection(None),
+        # 夜AIは ambient（市況/一般）＋注目候補の銘柄ノート exact-match、具体の深掘りは search_cards
+        # Tool（ADR-062 追補・④）。
+        knowledge_cards=await load_card_texts_for_injection(None, candidate_codes=candidate_codes),
         recent_journal=recent,
     )
 

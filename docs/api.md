@@ -388,7 +388,7 @@ interface UsTransactionOut {
 |---|---|---|
 | GET | `/cards?status=` | カード一覧（`status` で絞り込み可・新しい順）。`CardOut[]` |
 | GET | `/cards/{id}` | 1 件取得（404 あり）。`CardOut` |
-| POST | `/cards` | 作成（`CardCreateIn={body, source?}`）→ `CardOut`（201）。追加時に同期で `assist_card` が title 等生成＋verdict で status 決定（active 候補は draft 留置）。**title は AI 生成・本文先頭の切り出しはしない**。AI 未整形（面未設定/応答不正）でも本文は draft 保存し title=""。保存後 best-effort で本文ベース合成テキストを即時埋め込み |
+| POST | `/cards` | 作成（`CardCreateIn={body, source?, code?}`）→ `CardOut`（201）。追加時に同期で `assist_card` が title 等生成＋verdict で status 決定（active 候補は draft 留置）。**title は AI 生成・本文先頭の切り出しはしない**。AI 未整形（面未設定/応答不正）でも本文は draft 保存し title=""。保存後 best-effort で本文ベース合成テキストを即時埋め込み。**`code`（任意）を渡すと銘柄ノート**（[ADR-062](decisions.md) 追補）＝実在検証し `market` を JP→US で解決（未知は 400）・`level='stock'` に矯正・`always_inject` は 0 固定 |
 | PUT | `/cards/{id}` | 部分更新（`CardUpdateIn`・`weight` 等。埋め込み元〔title/when_to_apply/body〕変更で再埋め込み）→ `CardOut` |
 | DELETE | `/cards/{id}` | 削除（204） |
 | POST | `/cards/{id}/assist` | 既存カードを AI で再整形（AI 未整形の再試行＋編集後の再審査・[ADR-062](decisions.md) 追補）。保存済み body から title/when_to_apply/level と verdict→status・triage_reason を更新（active は draft 維持）→ `{triage: TriageOut|null, card: CardOut}` |
@@ -397,4 +397,5 @@ interface UsTransactionOut {
 - **`CardOut`** = `{id, title, body, when_to_apply, status, level, sector17_code, theme, linked_signal_type, quant_note, always_inject(bool), weight(float・既定1.0), source, triage_reason, embedded_at, created_at, updated_at}`（`embedding` BLOB は返さない）。`weight` は retrieval ランク/注入順を `distance/weight` で重み付け（古い/信頼度低を下げて生かす・[ADR-062](decisions.md) 追補）。`triage_reason` は AI 審査の判定理由（`null`＝AI 未整形）。
 - **`status`** = `draft`/`active`/`needs_quant`（計算未実装で実装待ち）/`to_core`（規律→CORE 誘導）/`rejected`（LLM 一般知識でカード不要）。
 - **追加/再整形時の verdict 反映**: `needs_quant`/`to_core`/`rejected` はその status を自動反映、`active` は draft 据え置き（人間承認待ち・`linked_signal_type` だけ反映）。AI 面未設定/応答不正は AI 未整形＝status 据え置き（`/cards` は draft・`/cards/{id}/assist` は `triage=null`・[ADR-018](decisions.md)）。
-- **意味検索（RAG）retrieval 実装済み**（[ADR-045](decisions.md) 同型・純 retrieval）。注入は **`always_inject` のカードだけ常時**＋**チャットは最新発話で意味検索 top-K 追加**、夜AI は always_inject のみ。`level` は検索の事前フィルタタグ（注入ポリシーは決めない）。AI は **`search_cards` Tool**（min_phase=4・query/level/limit・[ADR-062](decisions.md)）で知識カードを能動的に意味検索できる。機能オフ（embedding 未設定）は全 active を注入する fallback で graceful。埋め込み元は title+when_to_apply+body の合成テキスト（when_to_apply 任意）。
+- **意味検索（RAG）retrieval 実装済み**（[ADR-045](decisions.md) 同型・純 retrieval）。注入は **`always_inject` の非銘柄カードだけ常時**＋**チャットは最新発話で意味検索 top-K 追加（非銘柄カードのみ）**、夜AI は ambient＋注目候補の銘柄ノート。`level` は検索の事前フィルタタグ（注入ポリシーは決めない）。AI は **`search_cards` Tool**（min_phase=4・`query`/`level`/`code`/`market`/`limit`・[ADR-062](decisions.md)）で知識カードを能動的に検索できる（`code` 指定はその銘柄の active を exact-match で全返し）。機能オフ（embedding 未設定）は非銘柄 active を注入する fallback で graceful。埋め込み元は title+when_to_apply+body の合成テキスト（when_to_apply 任意）。
+- **銘柄ノート（[ADR-062](decisions.md) 追補・銘柄粒度）**: `code` 付きカードは特定銘柄の知見（アノマリー等）。**exact-match でだけ注入**＝chat は見ている銘柄（`focus.code`）、夜 AI は当日の注目候補の code ぶんを**意味距離を問わず**注入し、汎用の意味検索プール／ambient からは除外する（他銘柄会話への漏れ防止）。`propose_card` にも `code`/`market`（会話の tool 文脈由来・未知 code は drop）。

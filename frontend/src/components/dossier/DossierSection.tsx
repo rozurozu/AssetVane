@@ -10,6 +10,7 @@
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import { type Dossier, getDossier, investigateStock, postWatchlist } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
+import Link from "next/link";
 import { useState } from "react";
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
@@ -70,6 +71,14 @@ export function DossierSection({ code }: Props) {
               {current.last_investigated_at ? current.last_investigated_at.slice(0, 10) : "—"}
             </span>
           )}
+          {/* この銘柄の知識ノート（アノマリー等）を追加する導線＝/cards に code をプリフィル
+              （ADR-062 追補）。ドシエ＝揮発的な事実の要約とは別に、蓄積する解釈的知見を置く場所。 */}
+          <Link
+            href={`/cards?code=${encodeURIComponent(code)}`}
+            className="rounded-md bg-surface-2 px-2 py-1 text-[12px] text-ink hover:text-accent"
+          >
+            この銘柄のノート
+          </Link>
           {/* watchlist 追加（夜の巡回対象に入れる＝screens.md #3） */}
           <button
             type="button"

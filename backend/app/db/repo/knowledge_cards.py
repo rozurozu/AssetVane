@@ -29,6 +29,8 @@ _CARD_COLS = (
     "level",
     "sector17_code",
     "theme",
+    "market",  # 銘柄ノートの market（ADR-062 追補・0033）
+    "code",  # 銘柄ノートの code（ADR-062 追補・0033）
     "linked_signal_type",
     "quant_note",
     "always_inject",
@@ -53,6 +55,8 @@ _EDITABLE_COLS = frozenset(
         "level",
         "sector17_code",
         "theme",
+        "market",  # 銘柄ノートの付け替え・除去（ADR-062 追補・整合は router が担う）
+        "code",
         "linked_signal_type",
         "quant_note",
         "always_inject",
@@ -140,6 +144,8 @@ def insert_knowledge_card_tx(
     level: str | None = None,
     sector17_code: str | None = None,
     theme: str | None = None,
+    market: str | None = None,
+    code: str | None = None,
     linked_signal_type: str | None = None,
     quant_note: str | None = None,
     always_inject: int = 0,
@@ -163,6 +169,8 @@ def insert_knowledge_card_tx(
             level=level,
             sector17_code=sector17_code,
             theme=theme,
+            market=market,
+            code=code,
             linked_signal_type=linked_signal_type,
             quant_note=quant_note,
             always_inject=always_inject,
@@ -243,6 +251,37 @@ def delete_knowledge_card(card_id: int) -> int:
     return result.rowcount
 
 
+def list_active_cards_by_codes(
+    conn: Connection,
+    *,
+    codes: list[str],
+    market: str | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """指定 code の active な銘柄ノートを weight 降順で返す（ADR-062 追補・exact-match 注入用）。
+
+    銘柄ノート（code 付き）は意味検索の運任せにせず「その銘柄を見ているときの完全一致」でだけ出す
+    （ADR-062 追補・③(1)）。embedding の有無を問わない（意味クエリを使わない exact-match）。
+    chat は codes=[focus.code]、夜 AI は codes=注目候補、search_cards Tool は codes=[code] で
+    共用する。
+    market は当面 chat/夜では None（FocusRef は market を運ばない＝code 一致で衝突しない）、Tool で
+    明示されたときだけ絞る。codes 空は空 list。返す列は _CARD_COLS。
+    """
+    if not codes:
+        return []
+    stmt = (
+        _select_cols()
+        .where(knowledge_cards.c.status == "active")
+        .where(knowledge_cards.c.code.in_(codes))
+    )
+    if market is not None:
+        stmt = stmt.where(knowledge_cards.c.market == market)
+    stmt = stmt.order_by(knowledge_cards.c.weight.desc(), knowledge_cards.c.id.asc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
 def search_knowledge_cards(
     conn: Connection,
     query_blob: bytes,
@@ -250,6 +289,7 @@ def search_knowledge_cards(
     level: str | None = None,
     sector17_code: str | None = None,
     theme: str | None = None,
+    only_unscoped: bool = False,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """active カードを本文ベース embedding の余弦距離で近い順に返す（ADR-062・weight 重み付け）。
@@ -258,10 +298,15 @@ def search_knowledge_cards(
     上位＝重要度を効かせる）。query_blob は pack_embedding 済みの BLOB。status='active' かつ
     embedding 非 NULL の行のみ。level/sector17_code/theme で構造事前フィルタ。返す列は _CARD_COLS ＋
     distance。weight は server_default 1.0 で NULL/0 にならない（router で >0 検証）。
-    sqlite-vec 未ロードだと SQL 失敗するが握らず投げる（service が空に翻訳・ADR-018）。
+    only_unscoped=True は銘柄ノート（code 付き）を除外する＝汎用の意味検索プールを非銘柄カードに
+    絞り、他銘柄会話への漏れを防ぐ（ADR-062 追補・③(2)。銘柄ノートは list_active_cards_by_codes で
+    exact-match のみ）。sqlite-vec 未ロードだと SQL 失敗するが握らず投げる（service が空に翻訳・
+    ADR-018）。
     """
     conds = ["status = 'active'", "embedding IS NOT NULL"]
     params: dict[str, Any] = {"qvec": query_blob, "lim": limit}
+    if only_unscoped:
+        conds.append("code IS NULL")
     if level is not None:
         conds.append("level = :level")
         params["level"] = level

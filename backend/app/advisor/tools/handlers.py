@@ -946,7 +946,11 @@ async def handle_search_cards(args: dict[str, object]) -> dict[str, Any]:
     try:
         a = SearchCardsArgs.model_validate(args)
         return await search_cards_for_tool(
-            a.query, level=a.level, limit=a.limit if a.limit is not None else 5
+            a.query,
+            level=a.level,
+            code=a.code,
+            market=a.market,
+            limit=a.limit if a.limit is not None else 5,
         )
     except Exception as exc:
         logger.exception("handle_search_cards 失敗")
@@ -967,10 +971,14 @@ async def handle_propose_card(args: dict[str, object]) -> dict[str, Any]:
         return {"error": str(exc)}
     if not parsed.body.strip():
         return {"error": "body が空です。知識の中身を入れてください。"}
+    # code 付きは銘柄ノート（未知 code は起票側 persister が drop・ADR-062 追補・③(1)）。ここは
+    # 検証 only なので手応えに反映するだけ（実起票は persist_card_ops_from_tool_runs）。
+    scope = f"銘柄 {parsed.code} のノート" if parsed.code else "知識カード"
     return {
         "ok": True,
         "title": parsed.title or "（本文先頭で代替）",
-        "message": "知識カードを draft で起票する（/cards で確認・active 化は人間承認）。",
+        "code": parsed.code,
+        "message": f"{scope}を draft で起票する（/cards で確認・active 化は人間承認）。",
     }
 
 

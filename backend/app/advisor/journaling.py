@@ -348,7 +348,24 @@ def persist_card_ops_from_tool_runs(
             continue
         if not a.body.strip():
             continue
+        # code 付きは銘柄ノート（ADR-062 追補・⑥）。tool 文脈由来だが幻覚もあり得るので JP→US で実在
+        # 検証し、未知 code は起票せず drop（propose_trade と同型・ADR-018＝queue に幻覚を
+        # 入れない）。
+        # code 付きは level='stock' に確定（推測させない・always_inject は既定 0＝汎用注入に
+        # 混ぜない）。
+        market: str | None = None
+        code: str | None = None
         level = a.level if a.level in ("stock", "sector", "market", "general") else None
+        if a.code and a.code.strip():
+            target = resolve_trade_target(conn, a.code.strip())
+            if target is None:
+                logger.warning(
+                    "propose_card: 銘柄 %s が stocks/us_stocks に無い。起票せずスキップ", a.code
+                )
+                continue
+            code = a.code.strip()
+            market = target["market"]
+            level = "stock"
         cid = repo.insert_knowledge_card_tx(
             conn,
             title=_card_title_or_fallback(a.title, a.body),
@@ -356,6 +373,8 @@ def persist_card_ops_from_tool_runs(
             when_to_apply=a.when_to_apply,
             status="draft",
             level=level,
+            market=market,
+            code=code,
             source=a.source,
         )
         card_ids.append(cid)

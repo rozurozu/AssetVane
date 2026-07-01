@@ -27,6 +27,9 @@ export type CardOut = {
   level: string | null; // CardLevel 文字列
   sector17_code: string | null;
   theme: string | null;
+  // 銘柄ノート（ADR-062 追補）。code あり＝level='stock' の 1 カード 1 銘柄・market は JP/US。
+  market: string | null;
+  code: string | null;
   linked_signal_type: string | null; // triage が紐づけた実装済みシグナル種別
   quant_note: string | null; // needs_quant の補足（必要な新計算のメモ）
   always_inject: boolean; // 常時注入カードか
@@ -44,6 +47,9 @@ export type CardOut = {
 export type CardCreateIn = {
   body: string;
   source?: string | null;
+  // 銘柄コード（任意・ADR-062 追補）。渡すと特定銘柄のノートになる（backend が実在検証し market を
+  // 解決・未知は 400・level='stock' に矯正）。市場（JP/US）は code から一意なのでフロントは送らない。
+  code?: string | null;
 };
 
 /** カード部分更新リクエスト（backend CardUpdateIn と 1:1・全て optional）。
@@ -55,6 +61,9 @@ export type CardUpdateIn = {
   level?: CardLevel | null;
   sector17_code?: string | null;
   theme?: string | null;
+  // 銘柄ノートの付け替え・除去（ADR-062 追補）。実在コード＝銘柄化（market 解決＋level='stock'）、
+  // 空文字/null＝銘柄解除（汎用プールへ戻る）。market は backend が code から解決するので送らない。
+  code?: string | null;
   source?: string | null;
   linked_signal_type?: string | null;
   quant_note?: string | null;

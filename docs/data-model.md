@@ -574,6 +574,8 @@ AI アドバイザーの第 3 の知識源（CORE/POLICY に続く・[ADR-015](d
 | `level` | TEXT | 構造タグ `stock`/`sector`/`market`/`general`（事前フィルタ・[ADR-044](decisions.md) 同体系）|
 | `sector17_code` | TEXT | 業種事前フィルタ（J-Quants S17・任意・[ADR-053](decisions.md)）|
 | `theme` | TEXT | テーマ事前フィルタ（任意）|
+| `market` | TEXT | 銘柄ノートの市場 'JP'/'US'（[ADR-062](decisions.md) 追補・`0033`・非銘柄は null）|
+| `code` | TEXT | 銘柄ノートの code（JP 5 桁 / US ティッカー・`code` あり＝`level='stock'`・exact-match 注入・汎用意味検索プールからは除外・[ADR-062](decisions.md) 追補・`0033`・非銘柄は null）|
 | `linked_signal_type` | TEXT | 紐づく signal_type（未実装は null＝手法↔計算の索引）|
 | `quant_note` | TEXT | `needs_quant` のとき「必要な計算」のメモ |
 | `always_inject` | INTEGER | 1=常時注入の例外保険（0/1）|

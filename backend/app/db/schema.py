@@ -845,6 +845,12 @@ knowledge_cards = Table(
     ),  # 構造タグ 'stock'/'sector'/'market'/'general'（事前フィルタ・ADR-044 同体系）
     Column("sector17_code", String),  # 業種事前フィルタ（J-Quants S17・任意・ADR-053）
     Column("theme", String),  # テーマ事前フィルタ（任意）
+    # 銘柄粒度の知識軸（ADR-062 追補・0033）。code あり＝level='stock' の 1 カード 1 銘柄。
+    # market は 'JP'/'US'（同定は market+code）。注入は当面 code 一致
+    # （FocusRef は market を運ばない）。
+    # code 付きは exact-match でだけ注入し汎用の意味検索プールからは除外する（他銘柄漏れ防止）。
+    Column("market", String),  # 'JP'/'US'（銘柄ノートのとき・非銘柄カードは NULL）
+    Column("code", String),  # 銘柄コード（JP 5 桁 / US ティッカー・非銘柄カードは NULL）
     Column("linked_signal_type", String),  # 紐づく signal_type（未実装は NULL＝手法↔計算の索引）
     Column("quant_note", String),  # needs_quant のとき「必要な計算」のメモ
     Column(
@@ -864,6 +870,8 @@ knowledge_cards = Table(
     Column("created_at", String),  # ISO8601
     Column("updated_at", String),  # ISO8601
     Index("ix_knowledge_cards_status", "status"),  # active 行の取り出しを速くする
+    # 銘柄ノートの exact-match 注入を速くする（ADR-062 追補・0033）。
+    Index("ix_knowledge_cards_market_code", "market", "code"),
 )
 
 # ===== ADR-067: 夜 digest 注目シグナルの AI 選別（notable_picks・0032_notable_picks） =====

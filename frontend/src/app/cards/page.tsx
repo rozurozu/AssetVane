@@ -277,10 +277,19 @@ type CreateCardFormProps = {
 function CreateCardForm({ onCreate }: CreateCardFormProps) {
   const [body, setBody] = useState("");
   const [source, setSource] = useState("");
+  // 銘柄コード（任意・ADR-062 追補）。埋めると特定銘柄のノートになる（backend が実在検証＋market 解決）。
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // 直近の追加結果（AI 判定）。フォーム下にインライン表示して「却下された/採用候補」を伝える。
   const [lastResult, setLastResult] = useState<CardOut | null>(null);
+
+  // 銘柄詳細の「この銘柄のノートを追加」導線（/cards?code=…）から来たとき code を初期化する
+  // （focus.code プリフィル・ADR-062 追補）。useSearchParams の Suspense 制約を避け mount 時に読む。
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("code");
+    if (q) setCode(q);
+  }, []);
 
   const canSubmit = body.trim() !== "" && !busy;
 
@@ -289,13 +298,18 @@ function CreateCardForm({ onCreate }: CreateCardFormProps) {
     setBusy(true);
     setErr(null);
     try {
-      const input: CardCreateIn = { body: body.trim(), source: source.trim() || null };
+      const input: CardCreateIn = {
+        body: body.trim(),
+        source: source.trim() || null,
+        code: code.trim() || null,
+      };
       const created = await postCard(input);
       setLastResult(created);
       await onCreate(created);
       // 成功で入力をクリア（結果表示は残す）。
       setBody("");
       setSource("");
+      setCode("");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -332,6 +346,19 @@ function CreateCardForm({ onCreate }: CreateCardFormProps) {
               value={source}
               onChange={(e) => setSource(e.target.value)}
               placeholder="https://…（任意）"
+            />
+          </div>
+          {/* 銘柄コード（任意・ADR-062 追補）。埋めるとその銘柄のノートになる（アノマリー等）。 */}
+          <div className="w-40">
+            <label htmlFor="card-code" className={labelCls}>
+              銘柄コード（任意）
+            </label>
+            <input
+              id="card-code"
+              className={inputCls}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="例 72030 / AAPL"
             />
           </div>
           <button
@@ -435,6 +462,13 @@ function CardRow({
               適用条件（when_to_apply）は UI に出さない（AI が埋める内部キー・ADR-062 追補）。 */}
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-ink-subtle">
             {card.level && <span>level: {card.level}</span>}
+            {/* 銘柄ノート（ADR-062 追補）＝この銘柄を見ているとき/夜の注目候補で exact-match 注入。 */}
+            {card.code && (
+              <span className="text-accent">
+                銘柄: {card.code}
+                {card.market ? `（${card.market}）` : ""}
+              </span>
+            )}
             {card.sector17_code && <span>S17: {card.sector17_code}</span>}
             {card.theme && <span>theme: {card.theme}</span>}
             {card.linked_signal_type && <span>signal: {card.linked_signal_type}</span>}

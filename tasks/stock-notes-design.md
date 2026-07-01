@@ -2,7 +2,9 @@
 
 作成: 2026-07-02 / 方法: ユーザーとの設計相談（grill-me・設計ツリーを 9 分岐で降下）＋実装の裏取り（`db/schema.py`・`db/repo/knowledge_cards.py`・`services/knowledge_cards.py`・`advisor/router.py`・`advisor/nightly.py`・`advisor/prompt_builder.py`・`routers/cards.py`・`advisor/tools/schemas.py`）。基点コミット: `4f6ed808`（ADR-071・遅延誤注記の是正）。
 
-> **このファイルの位置づけ**: 「個別銘柄特有の知見（アノマリー等）をどこに置くか」の設計合意の正本。**まだ実装していない**（この紙が先・ATDD＋ADR 同期で着工する）。ドシエ（`stock_dossiers`）との切り分けと、`knowledge_cards` を銘柄粒度に拡張する設計を確定した。ADR は 067 までではなく **070・071 まで進行済み**（新規採番なら 072）だが、本件は既存 **ADR-062 の追補**として記録する方針。
+> **このファイルの位置づけ**: 「個別銘柄特有の知見（アノマリー等）をどこに置くか」の設計合意の正本。ドシエ（`stock_dossiers`）との切り分けと、`knowledge_cards` を銘柄粒度に拡張する設計を確定した。ADR は 067 までではなく **070・071 まで進行済み**だが、本件は既存 **ADR-062 の追補**として記録した（decisions.md 同期済み）。
+>
+> **実装済み（2026-07-02）**: §1〜§4 のとおり backend（schema/migration `0033`・repo・service・注入経路・Tool・router・persister）＋frontend（`/cards` 銘柄欄＋一覧表示・銘柄詳細「この銘柄のノート」導線）を実装。ATDD＝`tests/test_stock_scoped_cards.py`（§4 の 13 項目）。ゲート＝backend pytest **1037 passed**・pyright 0・自分の変更ファイルは ruff/format green（既存 baseline の E501 は untouched な 0023/0024/0032 のみで本件と無関係）・frontend tsc/Biome green。
 >
 > **進め方**: memory「ATDD＋ADR 同期」に従い、§4 の受け入れテストを先に書いてから実装。設計変更は本ファイル→`docs/decisions.md`（ADR-062 追補）→各 docs へ同期。
 

@@ -43,6 +43,9 @@ class CardOut(BaseModel):
     level: str | None = None
     sector17_code: str | None = None
     theme: str | None = None
+    # 銘柄ノート（ADR-062 追補）。code あり＝level='stock' の 1 カード 1 銘柄・market は JP/US。
+    market: str | None = None
+    code: str | None = None
     linked_signal_type: str | None = None
     quant_note: str | None = None
     always_inject: bool = False
@@ -60,10 +63,16 @@ class CardCreateIn(BaseModel):
     """カード作成入力（ADR-062 追補・雑追加リデザイン）。本文＋出所 URL だけ。
 
     title/when_to_apply/level は追加時に AI（assist_card）が生成する（ユーザーは入力しない）。
+    code を渡すと**特定銘柄のノート**（アノマリー等）になる（任意・ADR-062 追補）。market は
+    code から
+    サーバが解決するのでユーザーは入力しない（JP 5 桁は stocks・US ティッカーは us_stocks で一意）。
     """
 
     body: str
     source: str | None = None  # 出所 URL（任意・記事の出典など）
+    code: str | None = (
+        None  # 銘柄コード（任意・grounding のため実在検証＝未知は 400・ADR-062 追補）
+    )
 
 
 class CardUpdateIn(BaseModel):
@@ -73,6 +82,10 @@ class CardUpdateIn(BaseModel):
     level: CardLevel | None = None
     sector17_code: str | None = None
     theme: str | None = None
+    # 銘柄ノートの付け替え・除去（ADR-062 追補）。code に実在コード＝銘柄化（market 解決＋
+    # level='stock'
+    # ＋always_inject 0 矯正）、code に null/空＝銘柄解除（汎用プールへ戻る）。market はサーバ解決。
+    code: str | None = None
     source: str | None = None
     linked_signal_type: str | None = None
     quant_note: str | None = None
@@ -108,6 +121,24 @@ def _get_or_404(conn: Connection, card_id: int) -> dict[str, object]:
     if row is None:
         raise HTTPException(status_code=404, detail="知識カードが見つかりません。")
     return row
+
+
+def _resolve_market_or_400(code: str) -> str:
+    """銘柄ノートの code を JP→US で実在検証し market を返す（未知は 400・ADR-062 追補・⑤）。
+
+    grounding の要＝LLM に code を推測させず、実在する銘柄だけ紐づける（typo な code は「注入され
+    ないだけの死にノート」になるので弾く）。JP 5 桁は stocks・US ティッカーは us_stocks で一意なので
+    market は code から一意に決まる（ユーザーは market を入力しない）。
+    """
+    with get_engine().connect() as conn:
+        if repo.get_stock(conn, code) is not None:
+            return "JP"
+        if repo.get_us_stock(conn, code) is not None:
+            return "US"
+    raise HTTPException(
+        status_code=400,
+        detail=f"銘柄 {code} が見つかりません（stocks/us_stocks に無い）。",
+    )
 
 
 async def _resolve_via_assist(body: str, *, title: str = "") -> dict[str, Any]:
@@ -172,12 +203,25 @@ async def create_card(body: CardCreateIn) -> CardOut:
     埋め込みは保存後 best-effort（await を書き込み tx 外で駆動・C-6）。
     """
     resolved = await _resolve_via_assist(body.body)
+    # 銘柄ノート（ADR-062 追補・⑤/⑦）: code があれば実在検証＋market 解決し、level を 'stock' に
+    # 上書き（assist の判定より優先＝code は決定論）、always_inject は 0（汎用注入に混ぜない）。
+    market: str | None = None
+    code: str | None = None
+    level = resolved["level"]
+    always_inject = 0
+    if body.code and body.code.strip():
+        code = body.code.strip()
+        market = _resolve_market_or_400(code)
+        level = "stock"
     card_id = repo.insert_knowledge_card(
         title=resolved["title"],
         body=body.body,
         when_to_apply=resolved["when_to_apply"],
         status=resolved["status"],
-        level=resolved["level"],
+        level=level,
+        market=market,
+        code=code,
+        always_inject=always_inject,
         quant_note=resolved["quant_note"],
         linked_signal_type=resolved["linked_signal_type"],
         triage_reason=resolved["triage_reason"],
@@ -202,6 +246,21 @@ def update_card(card_id: int, body: CardUpdateIn) -> CardOut:
     values = body.model_dump(exclude_unset=True)
     if "always_inject" in values:
         values["always_inject"] = 1 if values["always_inject"] else 0
+    # 銘柄ノートの付け替え・除去（ADR-062 追補・⑦/⑪）。
+    if "code" in values:
+        code = (values["code"] or "").strip()
+        if code:
+            # 銘柄化: 実在検証＋market 解決、level='stock'・always_inject 0 に矯正
+            # （code は決定論）。
+            values["code"] = code
+            values["market"] = _resolve_market_or_400(code)
+            values["level"] = "stock"
+            values["always_inject"] = 0
+        else:
+            # 銘柄解除: 汎用プールへ戻す（code/market を NULL・stock だった level も外す）。
+            values["code"] = None
+            values["market"] = None
+            values["level"] = None
     repo.update_knowledge_card(card_id, values)
     if any(f in values for f in _EMBED_SOURCE_FIELDS):  # repo が embedding を無効化済み → 焼き直す
         from app.batch.jobs.embed_cards import embed_card_best_effort
