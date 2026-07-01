@@ -65,6 +65,7 @@ from app.quant import (
     optimize_portfolio,
 )
 from app.reference.gics_sectors import normalize_gics_sector
+from app.services import freshness
 from app.services.fund_holdings import value_fund_holdings
 from app.services.knowledge_cards import search_cards_for_tool
 from app.services.news import build_news_context, search_news_corpus
@@ -80,13 +81,6 @@ from app.services.us_holdings import value_us_holdings
 
 logger = logging.getLogger(__name__)
 
-# Free プランは 12 週間遅延（ADR-008）。signals/indicators 等は遅延扱いを True 固定にする
-# （既存ルータの流儀＝routers/signals.py・portfolio.py・assets.py に合わせる）。
-_IS_DELAYED = True
-
-# get_signals のトップ date が today からこの日数以上前なら遅延扱い（routers/signals.py と同値）。
-_DELAY_THRESHOLD_DAYS = 7
-
 
 def _parse_payload(raw: Any) -> dict[str, Any]:
     """signals.payload（生 TEXT）を dict にする。壊れていたら空 dict（落とさない）。"""
@@ -100,14 +94,13 @@ def _parse_payload(raw: Any) -> dict[str, Any]:
 
 
 def _signals_is_delayed(date_str: str | None) -> bool:
-    """signals のトップ date が遅延境界を超えていれば True（routers/signals.py と同式）。"""
-    if not date_str:
-        return False
-    try:
-        d = datetime.date.fromisoformat(date_str)
-    except ValueError:
-        return False
-    return (datetime.date.today() - d).days >= _DELAY_THRESHOLD_DAYS
+    """signals のトップ date の鮮度（ADR-071）。
+
+    鮮度判定は共有 freshness.is_delayed に委譲する。ただし date が無い（＝該当 type の
+    シグナルが 1 件も無い＝当日発火なし）ケースは「データが古い」わけではないので False に倒す
+    （routers/signals.py の空ケースと同じ意味論。価格系ツールの None→True とは別扱い）。
+    """
+    return freshness.is_delayed(date_str) if date_str else False
 
 
 def _resolve_portfolio_id(conn: Connection, portfolio_id: int | None) -> int | None:
@@ -139,7 +132,7 @@ async def handle_get_indicators(args: dict[str, object]) -> dict[str, Any]:
             "sma75": result.get("sma75"),
             "rsi14": result.get("rsi14"),
             "vol_ma20": result.get("vol_ma20"),
-            "is_delayed": _IS_DELAYED,
+            "is_delayed": freshness.is_delayed(result.get("as_of")),
         }
     except Exception as exc:
         logger.exception("handle_get_indicators 失敗")
@@ -252,7 +245,7 @@ async def handle_get_portfolio_metrics(args: dict[str, object]) -> dict[str, Any
         return {
             "portfolio_id": portfolio_id,
             "as_of": result.get("as_of"),
-            "is_delayed": bool(result.get("is_delayed", _IS_DELAYED)),
+            "is_delayed": freshness.is_delayed(result.get("as_of")),
             "annual_return": result.get("annual_return"),
             "annual_volatility": result.get("annual_volatility"),
             "sharpe": result.get("sharpe"),
@@ -305,7 +298,7 @@ async def handle_optimize_portfolio(args: dict[str, object]) -> dict[str, Any]:
         return {
             "portfolio_id": portfolio_id,
             "as_of": result.get("as_of"),
-            "is_delayed": bool(result.get("is_delayed", _IS_DELAYED)),
+            "is_delayed": freshness.is_delayed(result.get("as_of")),
             "objective": result.get("objective", "max_sharpe"),
             "cash_weight": float(result.get("cash_weight", 0.0)),
             "weights": weights_out,
@@ -354,7 +347,7 @@ async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
                 "market": "JP",
                 "currency": "JPY",
                 "found": False,
-                "is_delayed": _IS_DELAYED,
+                "is_delayed": freshness.is_delayed(None),
                 "last_restatement_at": last_restatement_at,
             }
         return {
@@ -364,7 +357,7 @@ async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
             "market": "JP",
             "currency": "JPY",
             "as_of": row.get("as_of_date"),
-            "is_delayed": _IS_DELAYED,
+            "is_delayed": freshness.is_delayed(row.get("as_of_date")),
             "found": True,
             "per": row.get("per"),
             "pbr": row.get("pbr"),
@@ -417,7 +410,7 @@ async def handle_screen_valuation(args: dict[str, object]) -> dict[str, Any]:
             "market": "JP",
             "currency": "JPY",
             "as_of": as_of,
-            "is_delayed": _IS_DELAYED,
+            "is_delayed": freshness.is_delayed(as_of),
             "count": len(rows),
             "items": rows,
         }
@@ -450,7 +443,7 @@ async def handle_get_us_valuation(args: dict[str, object]) -> dict[str, Any]:
                 "market": "US",
                 "currency": "USD",
                 "found": False,
-                "is_delayed": _IS_DELAYED,
+                "is_delayed": freshness.is_delayed(None),
             }
         return {
             "symbol": symbol,
@@ -460,7 +453,7 @@ async def handle_get_us_valuation(args: dict[str, object]) -> dict[str, Any]:
             "market": "US",
             "currency": "USD",
             "as_of": row.get("as_of_date"),
-            "is_delayed": _IS_DELAYED,
+            "is_delayed": freshness.is_delayed(row.get("as_of_date")),
             "found": True,
             "per": row.get("per"),
             "pbr": row.get("pbr"),
@@ -512,7 +505,7 @@ async def handle_screen_us_valuation(args: dict[str, object]) -> dict[str, Any]:
             "market": "US",
             "currency": "USD",
             "as_of": as_of,
-            "is_delayed": _IS_DELAYED,
+            "is_delayed": freshness.is_delayed(as_of),
             "count": len(rows),
             "items": rows,
         }
@@ -595,7 +588,7 @@ async def handle_get_asset_overview(args: dict[str, object]) -> dict[str, Any]:
         }
         return {
             "as_of": as_of,
-            "is_delayed": _IS_DELAYED,
+            "is_delayed": freshness.is_delayed(as_of),
             "total_value": total_value,
             "stock_value": stock_value,
             "cash_value": cash_value,

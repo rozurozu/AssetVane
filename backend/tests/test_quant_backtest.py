@@ -155,17 +155,18 @@ def test_max_drawdown_non_positive() -> None:
 
 
 # ---------------------------------------------------------------------------
-# is_delayed は常に True（ADR-008）
+# is_delayed は返さない（ADR-071: 鮮度は as_of から呼び出し側が判定・quant は today を知らない）
 # ---------------------------------------------------------------------------
 
 
-def test_is_delayed_always_true() -> None:
-    """is_delayed は Free 12週遅延のため常に True（ADR-008）。"""
+def test_no_is_delayed_key() -> None:
+    """is_delayed は返さない（ADR-071・ADR-016）。as_of だけ返す。"""
     prices = list(np.linspace(100.0, 110.0, 20))
     bench = list(np.linspace(1000.0, 1050.0, 20))
     panel, benchmark = _panel_and_bench({"A": prices}, bench)
     result = backtest_portfolio(panel, {"A": 1.0}, benchmark)
-    assert result["is_delayed"] is True
+    assert "is_delayed" not in result
+    assert "as_of" in result
 
 
 # ---------------------------------------------------------------------------

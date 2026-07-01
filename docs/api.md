@@ -12,7 +12,7 @@
 - **形式**: JSON。日付は `YYYY-MM-DD`。
 - **認証**: 単一ユーザーのため認証なし（[ADR-001](decisions.md)）。**家庭内 LAN 限定で公開しない**前提。外部公開する場合は別途要設計。
 - **エラー**: FastAPI 標準の `{"detail": ...}` ＋適切な HTTP ステータス。
-- **評価額の注意**: Free プランは株価が 12 週間遅延。評価額・P/L 系は遅延値である旨をレスポンスまたは UI で明示する（[data-model.md](data-model.md)）。
+- **評価額の注意**: 評価額・P/L 系は `is_delayed`/`as_of` を載せる。`is_delayed` は**プランの仮定でなく as_of の鮮度**で判定する（`(today - as_of) >= 7 日`＝`services/freshness.is_delayed`・[ADR-071](decisions.md)）。Free プランは物理的に約 12 週遅れのデータしか来ないので as_of 自体が古く自動で `true` になり、有料プランでも夜間バッチ停止で古ければ `true`（stale 検出）。遅延時はレスポンスまたは UI で明示する（[data-model.md](data-model.md)）。
 
 ---
 

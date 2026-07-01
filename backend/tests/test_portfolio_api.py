@@ -637,6 +637,36 @@ def test_asset_overview_with_stocks_and_cash(client) -> None:
     assert 0 <= (targets.get("max_position_weight") or 0) <= 1
 
 
+def test_asset_overview_fresh_quotes_not_delayed(client) -> None:
+    """最新終値の日付が新しければ is_delayed=False（鮮度実測・ADR-071）。
+
+    旧実装は is_delayed=True 固定で、有料プランや新鮮データでも「遅延あり」と誤っていた。
+    as_of（daily_quotes の最新日）を freshness.is_delayed に正しく渡す配線を router ごと検証する。
+    """
+    from datetime import date, timedelta
+
+    repo.upsert_stocks([STOCK_A])
+    # 今日を含む直近 3 営業日ぶんを seed → as_of=今日 → 遅延なし。
+    fresh_start = (date.today() - timedelta(days=2)).isoformat()
+    _seed_daily_quotes("72030", [2000, 2100, 2200], start_date=fresh_start)
+    pid = _get_portfolio_id(client)
+    client.post(
+        "/transactions",
+        json={
+            "portfolio_id": pid,
+            "code": "72030",
+            "side": "buy",
+            "shares": 100,
+            "price": 2000,
+            "traded_at": "2026-01-10",
+        },
+    )
+
+    body = client.get("/asset-overview").json()
+    assert body["as_of"] == date.today().isoformat()
+    assert body["is_delayed"] is False
+
+
 def test_asset_overview_with_policy_row(client) -> None:
     """policy 行が存在しても GET /asset-overview は 200（2026-06-12 の 500 回帰・ADR-013）。
 

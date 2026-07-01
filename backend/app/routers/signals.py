@@ -17,12 +17,9 @@ from sqlalchemy import Connection
 
 from app.db import repo
 from app.db.engine import get_conn
+from app.services import freshness
 
 router = APIRouter(tags=["signals"])
-
-# Free プランは 12 週間遅延。返した算出日が today からこの日数以上前なら遅延扱いにする
-# （spec §0 留意・ADR-008）。鮮度の境界値（営業日でなく暦日で素朴に判定する）。
-_DELAY_THRESHOLD_DAYS = 7
 
 SignalType = Literal["momentum", "volume_spike", "ai_alpha", "lead_lag"]
 
@@ -87,21 +84,11 @@ def list_signals(
         )
 
     # signals が空でも妥当な既定を返す（date=今日・is_delayed=False）。
+    # 空＝「該当 type のシグナルが 1 件も無い＝当日発火なし」であって、データが古いわけではない。
     today = datetime.date.today()
     if resolved is None:
         return SignalsResponse(date=today.isoformat(), is_delayed=False, signals=signals)
 
-    is_delayed = _is_delayed(resolved, today)
+    # 鮮度判定は共有 freshness.is_delayed に一元化（ADR-071・暦日 7 日境界）。
+    is_delayed = freshness.is_delayed(resolved, today)
     return SignalsResponse(date=resolved, is_delayed=is_delayed, signals=signals)
-
-
-def _is_delayed(date_str: str, today: datetime.date) -> bool:
-    """算出日が today から _DELAY_THRESHOLD_DAYS 日以上前なら遅延扱い（spec §5.1・ADR-008）。
-
-    パースできない日付は遅延判定の対象外（False）として落とさない（表示を止めない）。
-    """
-    try:
-        d = datetime.date.fromisoformat(date_str)
-    except ValueError:
-        return False
-    return (today - d).days >= _DELAY_THRESHOLD_DAYS

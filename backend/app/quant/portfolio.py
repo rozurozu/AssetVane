@@ -119,10 +119,10 @@ def compute_portfolio_metrics(
     policy: 逸脱判定に使う（None なら deviations は空配列）。
     labels: code -> company_name（correlation.labels 用）。
 
-    返却 dict は spec §5 P2-5 と同形（is_delayed は常に True）:
+    返却 dict は spec §5 P2-5 と同形。is_delayed は返さず、鮮度は呼び出し側が as_of から判定する
+    （ADR-071・quant は today を知らない純関数）:
     {
         "as_of": <price_panel 最終 date 文字列 or None>,
-        "is_delayed": True,
         "annual_return": float | None,
         "annual_volatility": float | None,
         "sharpe": float | None,
@@ -146,7 +146,6 @@ def compute_portfolio_metrics(
     def _empty_result(reason: str = "") -> dict[str, Any]:  # noqa: ANN001 (ローカル関数)
         return {
             "as_of": as_of,
-            "is_delayed": True,
             "annual_return": None,
             "annual_volatility": None,
             "sharpe": None,
@@ -238,7 +237,6 @@ def compute_portfolio_metrics(
 
     return {
         "as_of": as_of,
-        "is_delayed": True,
         "annual_return": annual_return,
         "annual_volatility": annual_volatility,
         "sharpe": sharpe,

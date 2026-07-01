@@ -93,12 +93,12 @@ def backtest_portfolio(
                ※ 月次リバランスは引数のみ予約。現状は 'monthly' を渡しても 'none' と同じ挙動。
 
     ※ 取引コスト・手数料・スリッページは無視（確定 L-15・提示用途）。
-    ※ Free プラン 12 週遅延（ADR-008）のため is_delayed=True 固定。
+    ※ is_delayed は返さない。鮮度は呼び出し側が as_of から判定する
+      （ADR-071・quant は today を知らない純関数）。
 
     返却 dict:
     {
         "as_of": str | None,
-        "is_delayed": True,
         "portfolio": {
             "cumulative_return": float,
             "annual_return": float,
@@ -126,7 +126,6 @@ def backtest_portfolio(
         }
         return {
             "as_of": as_of,
-            "is_delayed": True,
             "portfolio": empty_stats,
             "benchmark": dict(empty_stats),
             "excess_return": 0.0,
@@ -176,7 +175,6 @@ def backtest_portfolio(
 
     return {
         "as_of": as_of,
-        "is_delayed": True,
         "portfolio": port_stats,
         "benchmark": bench_stats,
         "excess_return": excess_return,

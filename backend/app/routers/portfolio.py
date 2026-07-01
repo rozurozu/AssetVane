@@ -19,7 +19,9 @@ from sqlalchemy import Connection
 from app.db import repo
 from app.db.engine import get_conn, get_engine
 from app.quant import compute_portfolio_metrics, optimize_portfolio
+from app.services import freshness
 from app.services.holdings import recalc_holdings
+from app.services.jquants_config import current_plan
 from app.services.policy import get_policy
 from app.services.portfolio import (
     backtest_portfolio_service,
@@ -224,7 +226,7 @@ def _build_holdings_response(conn: Connection, portfolio_id: int) -> HoldingsRes
     """holdings を評価額付きで構築して HoldingsResponse にする。
 
     DB から holdings + latest_closes を引き、value_holdings で評価額を付与する。
-    as_of は daily_quotes の MAX(date)（Free 12週遅延）。
+    as_of は daily_quotes の MAX(date)。is_delayed は as_of の鮮度で判定する（ADR-071）。
     """
     holdings_rows = repo.list_holdings(conn, portfolio_id)
     codes = [h["code"] for h in holdings_rows]
@@ -238,8 +240,10 @@ def _build_holdings_response(conn: Connection, portfolio_id: int) -> HoldingsRes
         holdings=[HoldingOut(**h) for h in valued],
         valuation_meta=ValuationMeta(
             as_of=as_of,
-            is_delayed=True,  # Free 12週遅延（ADR-008）
-            plan="free",
+            # 遅延はプラン仮定でなく as_of の鮮度で判定（ADR-071）。
+            # plan は実プランを中継（ADR-061）。
+            is_delayed=freshness.is_delayed(as_of),
+            plan=current_plan(conn),
         ),
     )
 
@@ -265,8 +269,8 @@ def get_holdings(
 ) -> HoldingsResponse:
     """保有銘柄と評価額を返す（spec P2-2）。
 
-    last_close / market_value / unrealized_pnl は Free 12週遅延株価（ADR-008）。
-    valuation_meta に as_of（日付）と is_delayed=True を付与する。
+    last_close / market_value / unrealized_pnl は最新終値ベース（プランにより遅延しうる・ADR-008）。
+    valuation_meta に as_of（日付）と、その鮮度から判定した is_delayed を付与する（ADR-071）。
     """
     pid = _resolve_portfolio(conn, portfolio_id)
     return _build_holdings_response(conn, pid)
@@ -443,7 +447,7 @@ def get_portfolio_metrics(
     return PortfolioMetricsOut(
         portfolio_id=portfolio_id,
         as_of=result.get("as_of"),
-        is_delayed=bool(result.get("is_delayed", True)),
+        is_delayed=freshness.is_delayed(result.get("as_of")),
         annual_return=result.get("annual_return"),
         annual_volatility=result.get("annual_volatility"),
         sharpe=result.get("sharpe"),
@@ -518,7 +522,7 @@ def post_optimize(
     return OptimizeResultOut(
         portfolio_id=portfolio_id,
         as_of=result.get("as_of"),
-        is_delayed=bool(result.get("is_delayed", True)),
+        is_delayed=freshness.is_delayed(result.get("as_of")),
         objective=result.get("objective", "max_sharpe"),
         cash_weight=float(result.get("cash_weight", 0.0)),
         weights=weights_out,
@@ -552,7 +556,7 @@ def get_portfolio_backtest(
     return BacktestResultOut(
         portfolio_id=portfolio_id,
         as_of=result.get("as_of"),
-        is_delayed=bool(result.get("is_delayed", True)),
+        is_delayed=freshness.is_delayed(result.get("as_of")),
         portfolio=BacktestLegOut(**result["portfolio"]),
         benchmark=BacktestLegOut(**result["benchmark"]),
         excess_return=float(result.get("excess_return", 0.0)),

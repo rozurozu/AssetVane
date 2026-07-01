@@ -3,7 +3,7 @@
 GET/PUT /cash, GET/POST /external-assets, PUT/DELETE /external-assets/{id},
 GET /asset-overview。
 比率・weight・deviation は 0..1（spec 単位約束）。
-is_delayed は Free 12週遅延（ADR-008）で True 固定。
+is_delayed は as_of の鮮度で判定する（プラン仮定でなく実測・ADR-071）。
 """
 
 from __future__ import annotations
@@ -16,7 +16,9 @@ from sqlalchemy import Connection
 
 from app.db import repo
 from app.db.engine import get_conn
+from app.services import freshness
 from app.services.fund_holdings import value_fund_holdings
+from app.services.jquants_config import current_plan
 from app.services.policy import get_policy
 from app.services.portfolio import portfolio_deviations, value_holdings
 from app.services.us_holdings import value_us_holdings
@@ -189,7 +191,7 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
     の合計。投信の含み損益も pnl に合算する。
     deviations は quant の compute_deviations（単一関数）が計算（決定6）。
     sector_weights は株式内 0..1 ベースで統一（注記: 全資産内比率ではなく株式内）。
-    Free 12週遅延（ADR-008）: is_delayed=True 固定。
+    is_delayed は as_of（株式の最新終値日）の鮮度で判定する（ADR-071）。plan は実プランを中継。
     """
     # --- 先頭ポートフォリオを取得 ---
     portfolios = repo.list_portfolios(conn)
@@ -290,8 +292,9 @@ def get_asset_overview(conn: Connection = Depends(get_conn)) -> AssetOverviewOut
 
     return AssetOverviewOut(
         as_of=as_of,
-        is_delayed=True,  # Free 12週遅延（ADR-008）
-        plan="free",
+        # 遅延はプラン仮定でなく as_of の鮮度で判定（ADR-071）。plan は実プランを中継（ADR-061）。
+        is_delayed=freshness.is_delayed(as_of),
+        plan=current_plan(conn),
         total_value=total_value,
         stock_value=stock_value,
         cash_value=cash_value,

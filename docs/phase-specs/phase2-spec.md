@@ -228,7 +228,7 @@ def compute_portfolio_metrics(
 | 最大DD | `cum=(1+port_ret).cumprod(); dd=cum/cum.cummax()-1; mdd=dd.min()` | 負値 |
 
 - **lookback**: 直近 **252 営業日**。不足なら取得できた日数で計算し `lookback_days` に実数。
-- 返却 dict = Tool `get_portfolio_metrics`（§5 P2-5 と同形）。`correlation` は `{codes, labels, matrix}`（`codes[i]`/`labels[i]` が `matrix[i][j]` に対応）。`is_delayed` は Free 12週遅延の明示。
+- 返却 dict = Tool `get_portfolio_metrics`（§5 P2-5 と同形）。`correlation` は `{codes, labels, matrix}`（`codes[i]`/`labels[i]` が `matrix[i][j]` に対応）。`is_delayed` は as_of の鮮度で判定（プラン仮定でなく実測・ADR-071）。
 
 ### 4.2 deviations（policy 逸脱）の単一計算関数（B-12・決定6）
 

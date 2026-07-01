@@ -188,15 +188,16 @@ def test_min_volatility_objective() -> None:
 
 
 # ---------------------------------------------------------------------------
-# is_delayed は常に True（ADR-008）
+# is_delayed は返さない（ADR-071: 鮮度は as_of から呼び出し側が判定・quant は today を知らない）
 # ---------------------------------------------------------------------------
 
 
-def test_is_delayed_always_true() -> None:
-    """is_delayed は Free 12週遅延のため常に True（ADR-008）。"""
+def test_no_is_delayed_key() -> None:
+    """is_delayed は返さない（ADR-071・ADR-016）。as_of だけ返す。"""
     panel = _rand_panel(300, ["A", "B"])
     result = optimize_portfolio(panel, _base_policy(), sectors={})
-    assert result["is_delayed"] is True
+    assert "is_delayed" not in result
+    assert "as_of" in result
 
 
 # ---------------------------------------------------------------------------

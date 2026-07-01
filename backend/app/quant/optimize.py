@@ -50,10 +50,10 @@ def optimize_portfolio(
     objective: 'max_sharpe' | 'min_volatility' | 'efficient_return'。
     current_weights: 現在の構成比（0..1）。delta 計算用・任意。
 
-    返却 dict は spec §5 P2-6 と同形（is_delayed は常に True）:
+    返却 dict は spec §5 P2-6 と同形。is_delayed は返さず、鮮度は呼び出し側が as_of から判定する
+    （ADR-071・quant は today を知らない純関数）:
     {
         "as_of": <price_panel 最終 date 文字列 or None>,
-        "is_delayed": True,
         "objective": str,
         "cash_weight": float,
         "weights": [{"code", "current_weight", "target_weight", "delta"}, ...],
@@ -80,7 +80,6 @@ def optimize_portfolio(
     def _infeasible_result(obj: str, cash_w: float, constraints: dict[str, Any]) -> dict[str, Any]:
         return {
             "as_of": as_of,
-            "is_delayed": True,
             "objective": obj,
             "cash_weight": cash_w,
             "weights": [],
@@ -208,7 +207,6 @@ def optimize_portfolio(
 
     return {
         "as_of": as_of,
-        "is_delayed": True,
         "objective": actual_objective,
         "cash_weight": float(cash_ratio),
         "weights": weights_list,
