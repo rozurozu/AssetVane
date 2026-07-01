@@ -27,6 +27,7 @@ description: db/repo/ パッケージのクエリ関数や db/schema.py の Tabl
 - **戻り値を素 dict にするには `.mappings()`**。`conn.execute(select(...)).mappings().all()`（または `.first()`）で dict ライクの行を得て、`dict(row)` 相当で返す。
 - 名前など別テーブルの値は **JOIN で補完**して返す（例: `signals JOIN stocks` で `company_name`）。行レベルに名前を焼かず、読むときに結合する。
 - 文字列の JSON（TEXT 列）は**パースせず生のまま返す**。`json.loads` は router の責務。
+- **window 関数・集約の戻り型は Float 化する**。`func.percent_rank()` / `cume_dist()` 等は SQLAlchemy が `Numeric(asdecimal=True)` と解釈し **`Decimal` を返す**。この行が AI Advisor の Tool 経由で LLM/MCP 境界に渡ると `json.dumps` が `Decimal` を直列化できず **500 になる**（実障害あり）。`type_coerce(func.percent_rank().over(...), Float())` で Float 化し素の `float` で返す（出所を断つ＝[[advisor-tool-pattern]] の「返り値は JSON-safe」の repo 側の担保）。`func.row_number()`（int）は対象外。
 
 ## 読み取り = 注入 conn・commit しない
 

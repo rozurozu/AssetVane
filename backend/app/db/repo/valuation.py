@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, and_, func, select, update
+from sqlalchemy import Connection, Float, and_, func, select, type_coerce, update
 
 from app.db.engine import get_engine
 from app.db.repo._common import _upsert
@@ -210,11 +210,13 @@ def _valuation_inner_subquery():
     """
     v = valuation_snapshots
     s = stocks
-    per_sector_pctile = (
-        func.percent_rank()
-        .over(partition_by=s.c.sector33_code, order_by=v.c.per)
-        .label("per_sector_pctile")
-    )
+    # percent_rank は SQLAlchemy が Numeric(asdecimal=True) と解釈し Decimal を返す。handler→
+    # LLM/MCP 境界で JSON 化されて 500 になるため Float 化して素の float で返す（ADR-014・
+    # [[backend-repo-pattern]] / [[advisor-tool-pattern]]）。
+    per_sector_pctile = type_coerce(
+        func.percent_rank().over(partition_by=s.c.sector33_code, order_by=v.c.per),
+        Float(),
+    ).label("per_sector_pctile")
     market_cap_rank = (
         func.row_number().over(order_by=v.c.market_cap.desc()).label("market_cap_rank")
     )

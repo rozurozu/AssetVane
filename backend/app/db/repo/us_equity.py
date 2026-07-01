@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Connection, and_, delete, func, select, update
+from sqlalchemy import Connection, Float, and_, delete, func, select, type_coerce, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.engine import get_engine
@@ -244,11 +244,13 @@ def _us_valuation_inner_subquery():
     """
     v = us_valuation_snapshots
     s = us_stocks
-    gics_sector_pctile = (
-        func.percent_rank()
-        .over(partition_by=s.c.gics_sector, order_by=v.c.per)
-        .label("gics_sector_pctile")
-    )
+    # percent_rank は SQLAlchemy が Numeric(asdecimal=True) と解釈し Decimal を返す。handler→
+    # LLM/MCP 境界で JSON 化されて 500 になるため Float 化して素の float で返す（ADR-014・
+    # [[backend-repo-pattern]] / [[advisor-tool-pattern]]）。valuation.py 版と同型。
+    gics_sector_pctile = type_coerce(
+        func.percent_rank().over(partition_by=s.c.gics_sector, order_by=v.c.per),
+        Float(),
+    ).label("gics_sector_pctile")
     market_cap_rank = (
         func.row_number().over(order_by=v.c.market_cap.desc()).label("market_cap_rank")
     )

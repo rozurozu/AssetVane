@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from sqlalchemy import Connection
@@ -31,6 +32,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # (a) Tool dispatch ループ（spec §4.2）
 # ---------------------------------------------------------------------------
+
+
+def _tool_result_default(o: object) -> object:
+    """Tool 結果を LLM へ渡す JSON 化の最終防波堤（ADR-014・保険）。
+
+    handler の返り値は JSON-safe な素の型に限るのが規約（[[advisor-tool-pattern]]）で、Decimal を
+    生む出所（repo の window 関数 percent_rank 等）は [[backend-repo-pattern]] で Float 化して断つ。
+    本関数はその規約が破れても openai 経路（run_tool_loop の json.dumps）が 500 で落ちないための
+    保険。codex/MCP 経路は mcp フレームワーク内で JSON 化されるためここは通らない（＝出所を断つ
+    のが本命）。既知型は素直に正規化し、未知型は str に倒しつつ warning で顕在化する
+    （握りつぶさない）。
+    """
+    if isinstance(o, Decimal):
+        return float(o)
+    if isinstance(o, (date, datetime)):  # datetime は date のサブクラス
+        return o.isoformat()
+    item = getattr(o, "item", None)  # numpy scalar 等（0 次元 → Python ネイティブ）
+    if callable(item):
+        return item()
+    logger.warning("Tool 結果に JSON 非対応の型: %s（str に倒す）", type(o).__name__)
+    return str(o)
 
 
 def _assistant_tool_call_record(content: str | None, tool_calls: list) -> dict[str, object]:
@@ -98,7 +120,7 @@ async def run_tool_loop(
                 {
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": json.dumps(result, ensure_ascii=False),
+                    "content": json.dumps(result, ensure_ascii=False, default=_tool_result_default),
                 }
             )
             # tool_runs には名前と引数だけ（結果の数値は載せない＝ADR-025）。

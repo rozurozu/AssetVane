@@ -96,6 +96,7 @@ frontend は `npm run lint`（Biome）/ `npm run format`（Biome）/ `npm run bu
 | クエリ・Table 定義（`db/repo/` パッケージ ・`db/schema.py`） | `backend-repo-pattern` |
 | 数理計算・下ごしらえ（`services/` ・`quant/`） | `backend-service-quant-pattern` |
 | 外部 API クライアント（`adapters/`） | `backend-adapter-pattern` |
+| AI Advisor の Tool（`app/advisor/tools/` の registry/schemas/handlers） | `advisor-tool-pattern` |
 | 夜間バッチ（`batch/` の runner/jobs/lock/notify） | `batch-pattern` |
 | テスト（pytest・一時 SQLite） | `testing-strategy` |
 | ページ・コンポーネント・フック・共有 UI（frontend） | `frontend-component-pattern` |
@@ -109,7 +110,7 @@ frontend は `npm run lint`（Biome）/ `npm run format`（Biome）/ `npm run bu
 - **AI に数値を計算させない**（quant の純関数が事実を計算・ADR-014/016）。**DB に触るのは FastAPI だけ**（ADR-005）。
 - スタイルは **Tailwind v4 トークン（`DESIGN.md`）・density-first**。生の色やマジック値を散らさない。
 
-> AI Advisor（CORE/POLICY プロンプト・Tool）の作法は Phase 3 が固まり次第 `advisor-pattern` スキルとして追記する。
+> AI Advisor の **Tool**（`app/advisor/tools/` の registry/schemas/handlers）の作法は `advisor-tool-pattern` に切り出した。**CORE/POLICY プロンプト**そのものの作法は将来 `advisor-pattern` として追記する。
 
 ## バージョン管理・言語
 
