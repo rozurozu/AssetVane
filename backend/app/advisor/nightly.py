@@ -27,6 +27,7 @@ from app.advisor.engine import resolve_face, run_turn
 from app.advisor.journaling import (
     persist_card_ops_from_tool_runs,
     persist_journal_from_tool_runs,
+    persist_notable_picks_from_tool_runs,
     persist_trade_proposals_from_tool_runs,
 )
 from app.advisor.prompt_builder import Message, build_messages
@@ -34,18 +35,28 @@ from app.advisor.tools import handlers
 from app.advisor.tools.registry import CURRENT_PHASE
 from app.db import repo
 from app.services.knowledge_cards import load_card_texts_for_injection
+from app.services.notable import build_notable_candidates, format_candidates_for_prompt
 
 logger = logging.getLogger(__name__)
 
-# 夜の定型指示文（spec §5）。画面は無いので「今日の事実を Tool で取り直して突き合わせよ」。
+# 夜の定型指示文（spec §5・ADR-067）。画面は無いので「今日の事実を Tool で取り直して突き合わせよ」。
+# 末尾に合流ゲート済みの「今日の注目候補」を注入し、その中から submit_notable_stocks で厳選させる
+# （生の全 signals を見せて 1.00 の山で溺れさせない＝ADR-067）。
 _NIGHTLY_INSTRUCTION = (
-    "あなたは夜間の自動分析を担っている。利用可能な Tool（get_signals / get_portfolio_metrics / "
+    "あなたは夜間の自動分析を担っている。利用可能な Tool（get_portfolio_metrics / "
     "get_asset_overview 等）で今日の事実を取り直し、昨日までの方針と突き合わせて、見直しが必要なら"
     "方針変更を提案せよ。get_general_news で当日の一般ニュース（市況・マクロ・世界情勢）も取得し、"
-    "市況・マクロ文脈を踏まえて分析せよ（ADR-034）。最後に必ず submit_journal で所見"
-    "（observations）・提案（proposal）・方針変更案（proposed_policy_change）を提出すること。"
-    "強い買い/売り材料がある銘柄があれば propose_trade で方向と根拠を起票せよ（無ければ"
-    "出さなくてよい・数値は出さない＝ADR-052）。数値は必ず Tool の戻り値のみを使う。"
+    "市況・マクロ文脈を踏まえて分析せよ（ADR-034）。\n\n"
+    "この指示文の末尾に、Python が合流(confluence)ゲートで絞った『今日の注目候補』（独立材料が"
+    "重なった銘柄＋材料タグ）を渡す。その中から総合的に本当に注目すべき銘柄だけを "
+    "submit_notable_stocks で挙げよ（材料の重なり・保有との関係・市況で厳選し、丸写しはしない・"
+    "本当に無ければ空でよい）。深掘りが要る候補は get_dossier / get_news_context / search_news で"
+    "調べてから理由を書け。より広く候補を見たいときは get_notable_candidates を呼べる（生の全 "
+    "signals を score 降順で舐めるのは避ける＝上昇トレンドの山で埋もれる・ADR-067）。\n\n"
+    "最後に必ず submit_journal で所見（observations）・提案（proposal）・方針変更案"
+    "（proposed_policy_change）を提出すること。強い買い/売り材料がある銘柄があれば propose_trade で"
+    "方向と根拠を起票せよ（無ければ出さなくてよい・数値は出さない＝ADR-052）。"
+    "数値は必ず Tool の戻り値のみを使う。"
 )
 
 
@@ -95,10 +106,14 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
     briefing = await _gather_briefing()
     recent = repo.get_recent_journal_summary(conn)
 
+    # 合流ゲート済みの注目候補をプロンプトに直接注入（ツール依存なしで堅牢＝ADR-067/018）。
+    candidates = build_notable_candidates(conn)
+    instruction = _NIGHTLY_INSTRUCTION + "\n\n" + format_candidates_for_prompt(candidates)
+
     messages = build_messages(
         core_prompt=CORE,
         policy=policy,
-        conversation=[Message(role="user", content=_NIGHTLY_INSTRUCTION)],
+        conversation=[Message(role="user", content=instruction)],
         screen_context=None,  # 軸1 は画面が無い（ADR-025）
         # 夜AIは ambient（市況/一般）のみ＋具体は search_cards Tool で深掘り（ADR-062）。
         knowledge_cards=await load_card_texts_for_injection(None),
@@ -127,6 +142,9 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
     persist_trade_proposals_from_tool_runs(
         conn, tool_runs=tool_runs, date=today, journal_id=journal_id
     )
+    # 注目銘柄の AI 選別を永続（ADR-067・同一トランザクション）。journal とは独立＝縮退で
+    # journal_id=None でも選別は残し、朝の digest が読む（source='nightly'）。
+    persist_notable_picks_from_tool_runs(conn, tool_runs=tool_runs, date=today, source="nightly")
     # 知識カードの起票/weight 変更を起票（ADR-062 追補・同一トランザクション）。
     persist_card_ops_from_tool_runs(conn, tool_runs=tool_runs, date=today)
 

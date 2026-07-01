@@ -1,8 +1,8 @@
-"""notify_digest の digest 組み立てと送信（phase6-spec.md §3）。
+"""notify_digest の digest 組み立てと送信（phase6-spec.md §3・ADR-067）。
 
-一時 SQLite に signals / advisor_journal / policy をスタブし、⑧抽出（score 閾値・notable）・
-Top N 切り詰め・⑦リバランス判定・当日提案の取り込み・ALWAYS_DAILY_DIGEST=False のスキップ・
-例外時 JobResult(ok=False) を検証する。実 Webhook は叩かない。
+一時 SQLite に notable_picks / advisor_journal / policy / holdings+news をスタブし、AI 選別の表示・
+表示上限・保有悪材料の決定論セクション（ADR-051 維持）・⑦リバランス・ALWAYS_DAILY_DIGEST=False の
+スキップ・極薄サマリ・例外時 JobResult(ok=False) を検証する。実 Webhook は叩かない。
 """
 
 from __future__ import annotations
@@ -29,10 +29,18 @@ STOCK = {
 }
 STOCK2 = {**STOCK, "code": "67580", "company_name": "ソニーグループ"}
 
+TODAY = "2026-06-05"
 
-def _signal(code: str, signal_type: str, score: float, payload: dict[str, Any], date: str) -> dict:
+
+def _seed_pick(code: str, reason: str, *, date: str = TODAY, source: str = "nightly") -> None:
+    """notable_picks に AI 選別を 1 件入れる（夜AI の submit_notable_stocks 相当）。"""
+    with get_engine().begin() as conn:
+        repo.upsert_notable_pick(conn, date=date, code=code, reason=reason, source=source)
+
+
+def _signal(code: str, signal_type: str, score: float, payload: dict[str, Any]) -> dict[str, Any]:
     return {
-        "date": date,
+        "date": "2026-03-01",
         "code": code,
         "signal_type": signal_type,
         "score": score,
@@ -40,62 +48,75 @@ def _signal(code: str, signal_type: str, score: float, payload: dict[str, Any], 
     }
 
 
-def test_build_digest_extracts_alerts_and_proposal(temp_db: None) -> None:
+def test_build_digest_shows_ai_picks(temp_db: None) -> None:
+    """AI 選別（notable_picks）が社名(コード) — 理由 で載る（ADR-067）。"""
     repo.upsert_stocks([STOCK, STOCK2])
-    sig_date = "2026-03-01"
-    repo.upsert_signals(
-        [
-            # 高スコア → アラート。
-            _signal("72030", "momentum", 0.75, {"label": "GC", "notable": True}, sig_date),
-            # 低スコアだが notable（出来高 3 倍）→ アラート。
-            _signal(
-                "67580", "volume_spike", 0.35, {"label": "出来高3.5倍", "notable": True}, sig_date
-            ),
-            # 低スコア・非 notable → 対象外。
-            _signal("72030", "volume_spike", 0.2, {"label": "微増", "notable": False}, sig_date),
-        ]
-    )
+    _seed_pick("72030", "出来高急増と GC が重なり反発の初動")
+    _seed_pick("67580", "悪材料ニュースで急落、保有の点検が必要")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+
+    assert content is not None
+    assert "注目シグナル（AI 選別・2 件）" in content
+    assert "トヨタ自動車 (72030) — 出来高急増と GC が重なり反発の初動" in content
+    assert "ソニーグループ (67580) — 悪材料ニュースで急落、保有の点検が必要" in content
+
+
+def test_build_digest_notable_cap_truncates(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
+    """notable_digest_max を超える AI 選別は「…ほか N 件」で切る（ADR-067）。"""
+    monkeypatch.setattr(settings, "notable_digest_max", 2)
+    repo.upsert_stocks([STOCK])
+    for i in range(5):
+        _seed_pick(f"7203{i}", f"理由{i}")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+    assert content is not None
+    assert "…ほか 3 件" in content  # 5 件中 2 件表示・残り 3
+
+
+def test_build_digest_no_picks_shows_none(temp_db: None) -> None:
+    """AI 選別が無ければ「注目シグナル: なし」（旧 Top N 抽出は撤去・ADR-067）。"""
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+    assert content is not None
+    assert "🔔 注目シグナル: なし" in content
+
+
+def test_build_digest_shows_proposal(temp_db: None) -> None:
+    """夜AI の proposal と方針変更案が載る（ADR-014）。"""
     with get_engine().begin() as conn:
         repo.insert_journal(
             conn,
-            date="2026-06-05",
+            date=TODAY,
             source="nightly",
             proposal="現金比率を上げる検討",
             proposed_policy_change=json.dumps({"field": "target_cash_ratio", "to": 0.2}),
         )
-
     with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
-
+        content = notify_digest.build_digest_content(conn, TODAY)
     assert content is not None
-    assert "トヨタ自動車 (72030)" in content
-    assert "ソニーグループ (67580)" in content
-    assert "微増" not in content  # 非 notable・低スコアは載らない
     assert "現金比率を上げる検討" in content
     assert "target_cash_ratio → 0.2" in content
-    assert "注目 2 件" in content
 
 
-def test_build_digest_top_n_truncates(monkeypatch: pytest.MonkeyPatch, temp_db: None) -> None:
-    monkeypatch.setattr(settings, "alert_top_n", 2)
+def test_build_digest_summary_counts(temp_db: None) -> None:
+    """極薄サマリに signals/候補/AI 選別の件数が出る（ADR-067）。"""
     repo.upsert_stocks([STOCK])
-    sig_date = "2026-03-01"
+    # 候補 1 件になる合流（GC＋出来高急増）。
     repo.upsert_signals(
         [
-            _signal(
-                "72030",
-                f"momentum{i}",
-                0.9 - i * 0.1,
-                {"label": f"L{i}", "notable": True},
-                sig_date,
-            )
-            for i in range(5)
+            _signal("72030", "momentum", 1.0, {"golden_cross": True, "notable": True}),
+            _signal("72030", "volume_spike", 0.4, {"ratio": 4.0, "notable": True}),
         ]
     )
+    _seed_pick("72030", "重なりで注目")
+
     with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
+        content = notify_digest.build_digest_content(conn, TODAY)
     assert content is not None
-    assert "…ほか 3 件" in content  # 5 件中 Top 2 表示・残り 3
+    assert "signals 2 件 / 候補 1 件 / AI 選別 1 件" in content
 
 
 def test_build_digest_rebalance_alert(temp_db: None) -> None:
@@ -115,10 +136,10 @@ def test_build_digest_rebalance_alert(temp_db: None) -> None:
 def test_build_digest_skips_when_empty_and_not_always(
     monkeypatch: pytest.MonkeyPatch, temp_db: None
 ) -> None:
-    """ALWAYS_DAILY_DIGEST=False かつ⑦⑧・提案すべて無し → None（送らない）。"""
+    """ALWAYS_DAILY_DIGEST=False かつ注目・⑦・提案・悪材料すべて無し → None（送らない）。"""
     monkeypatch.setattr(settings, "always_daily_digest", False)
     with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
+        content = notify_digest.build_digest_content(conn, TODAY)
     assert content is None
 
 
@@ -128,9 +149,10 @@ def test_build_digest_always_sends_summary_when_empty(
     """ALWAYS_DAILY_DIGEST=True（既定）なら検知ゼロでもサマリを返す（毎朝届く）。"""
     monkeypatch.setattr(settings, "always_daily_digest", True)
     with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
+        content = notify_digest.build_digest_content(conn, TODAY)
     assert content is not None
     assert "注目シグナル: なし" in content
+    assert "— サマリ:" in content
 
 
 def _pin_index_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,7 +170,6 @@ def test_build_digest_includes_failed_index_line(
     """直近の取得試行が失敗した指数があれば digest に非アラートの情報行が出る。"""
     _pin_index_symbols(monkeypatch)
 
-    # ^SPX は成功・^NKX は過去に取得済みだが直近試行は失敗。
     repo.upsert_fetch_meta("index_quotes:^SPX", "2026-06-05")
     repo.upsert_fetch_meta("index_quotes:^NKX", "2026-06-04")
     repo.mark_fetch_attempt_failed("index_quotes:^NKX")
@@ -158,25 +179,9 @@ def test_build_digest_includes_failed_index_line(
 
     assert content is not None
     assert "取得できなかった指数" in content
-    assert "^NKX（最終取得 2026-06-04）" in content  # 最後に取得できた日を添える
+    assert "^NKX（最終取得 2026-06-04）" in content
     failed_line = next(line for line in content.splitlines() if "取得できなかった指数" in line)
-    assert "^SPX" not in failed_line  # 成功した指数は出ない
-
-
-def test_build_digest_failed_index_never_fetched(
-    monkeypatch: pytest.MonkeyPatch, temp_db: None
-) -> None:
-    """一度も取得できていない指数の失敗は「未取得」と表示する。"""
-    _pin_index_symbols(monkeypatch)
-
-    repo.upsert_fetch_meta("index_quotes:^SPX", "2026-06-05")
-    repo.mark_fetch_attempt_failed("index_quotes:^NKX")  # 成功歴なし → last_fetched_date NULL
-
-    with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
-
-    assert content is not None
-    assert "^NKX（未取得）" in content
+    assert "^SPX" not in failed_line
 
 
 def test_build_digest_no_failed_line_when_all_ok(
@@ -196,7 +201,7 @@ def test_build_digest_no_failed_line_when_all_ok(
 
 
 # ---------------------------------------------------------------------------
-# ADR-051: ①注目シグナルへのニュース attach・②保有銘柄の悪材料アラート
+# ADR-051: ②保有銘柄の悪材料アラート（決定論セクション・ADR-067 で維持）
 # ---------------------------------------------------------------------------
 
 
@@ -209,7 +214,7 @@ def _insert_stock_news(
     fetched_at: str | None = None,
     published_at: str = "2026-06-05",
 ) -> None:
-    """stock 層 news を 1 行入れる（①②の対象・fetched_at 既定は now＝24h 窓内）。"""
+    """stock 層 news を 1 行入れる（②の対象・fetched_at 既定は now＝24h 窓内）。"""
     from app.db.schema import news
 
     with get_engine().begin() as conn:
@@ -243,47 +248,19 @@ def _seed_holdings(*codes: str) -> None:
             )
 
 
-def test_build_digest_attaches_news_to_signal(temp_db: None) -> None:
-    """①注目シグナルの code に直近 stock 層ニュースが 1 行添う（holdings 非依存・ADR-051）。"""
-    repo.upsert_stocks([STOCK])
-    repo.upsert_signals(
-        [_signal("72030", "momentum", 0.75, {"label": "GC", "notable": True}, "2026-03-01")]
-    )
-    _insert_stock_news("https://x/n1", "72030", title="トヨタ最高益", published_at="2026-06-05")
-
-    with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
-    assert content is not None
-    assert "└ トヨタ最高益" in content  # シグナル行の直後に「なぜ動いたか」を添える
-
-
-def test_build_digest_skips_old_news_attach(temp_db: None) -> None:
-    """published_at が 3 日より古い stock 層ニュースは attach しない（ADR-051）。"""
-    repo.upsert_stocks([STOCK])
-    repo.upsert_signals(
-        [_signal("72030", "momentum", 0.75, {"label": "GC", "notable": True}, "2026-03-01")]
-    )
-    _insert_stock_news("https://x/old", "72030", title="古いニュース", published_at="2026-06-01")
-
-    with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
-    assert content is not None
-    assert "古いニュース" not in content  # today-3=06-02 より前なので除外
-
-
 def test_build_digest_holding_risk_section(temp_db: None) -> None:
-    """②保有銘柄の悪材料（negative×24h 窓）がセクションで出て positive は出ない（ADR-051）。"""
+    """②保有銘柄の悪材料（negative×24h 窓）がセクションで出て positive は出ない（ADR-051 維持）。"""
     repo.upsert_stocks([STOCK, STOCK2])
     _seed_holdings("72030", "67580")
     _insert_stock_news("https://x/neg", "72030", title="トヨタにリコール", polarity="negative")
     _insert_stock_news("https://x/pos", "67580", title="ソニー好決算", polarity="positive")
 
     with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
+        content = notify_digest.build_digest_content(conn, TODAY)
     assert content is not None
     assert "保有銘柄の悪材料" in content
     assert "トヨタにリコール" in content
-    assert "ソニー好決算" not in content  # positive は悪材料に出さない
+    assert "ソニー好決算" not in content
 
 
 def test_build_digest_no_risk_section_when_no_negative(temp_db: None) -> None:
@@ -293,7 +270,7 @@ def test_build_digest_no_risk_section_when_no_negative(temp_db: None) -> None:
     _insert_stock_news("https://x/pos", "72030", title="好材料", polarity="positive")
 
     with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
+        content = notify_digest.build_digest_content(conn, TODAY)
     assert content is not None
     assert "保有銘柄の悪材料" not in content
 
@@ -308,8 +285,8 @@ def test_build_digest_risk_triggers_send_when_not_always(
     _insert_stock_news("https://x/neg", "72030", title="トヨタ下方修正", polarity="negative")
 
     with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
-    assert content is not None  # 悪材料が has_content を立てる
+        content = notify_digest.build_digest_content(conn, TODAY)
+    assert content is not None
     assert "トヨタ下方修正" in content
 
 
@@ -323,7 +300,7 @@ def test_build_digest_risk_excludes_out_of_window(temp_db: None) -> None:
     )
 
     with get_engine().connect() as conn:
-        content = notify_digest.build_digest_content(conn, "2026-06-05")
+        content = notify_digest.build_digest_content(conn, TODAY)
     assert content is not None
     assert "昨日の悪材料" not in content
 

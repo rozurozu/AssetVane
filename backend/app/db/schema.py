@@ -865,3 +865,24 @@ knowledge_cards = Table(
     Column("updated_at", String),  # ISO8601
     Index("ix_knowledge_cards_status", "status"),  # active 行の取り出しを速くする
 )
+
+# ===== ADR-067: 夜 digest 注目シグナルの AI 選別（notable_picks・0032_notable_picks） =====
+# 夜 digest の「注目シグナル」を score 閾値 Top N 抽出から「合流(confluence)ゲート＋AI 選別」へ
+# 作り直す（ADR-067）。Python が独立材料 2 次元以上の重なりで候補集合を決定論的に組み、夜の分析AI が
+# 総合的に注目すべき銘柄だけを submit_notable_stocks で選ぶ（ADR-014）。その選別結果をここに永続し、
+# 後続の notify_digest が読んで digest 本文に載せる（journal/proposals と同じ「夜AIが書き digest が
+# 読む」パターン）。source で 'nightly'（夜の自動選別）/ 'chat'（昼チャット）を区別し、digest は
+# nightly を読む。UNIQUE(date,code,source) ＋ 冪等 UPSERT で再実行でも重複させない（ADR-002）。
+# code への FK は張らない（signals と同じ生データ流儀・解決は persist 側が担う＝ADR-052 同型）。
+notable_picks = Table(
+    "notable_picks",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("date", String, nullable=False),  # 夜の UTC 日付 'YYYY-MM-DD'（journal と揃える）
+    Column("code", String, nullable=False),  # JP 5 桁（候補は JP ユニバース・ADR-067）
+    Column("reason", String),  # AI の選定理由（なぜ注目か・数値は Tool 事実由来＝ADR-014）
+    Column("source", String, nullable=False, server_default="nightly"),  # 'nightly'/'chat'
+    Column("created_at", String),  # ISO8601 UTC
+    UniqueConstraint("date", "code", "source", name="uq_notable_picks_date_code_source"),
+    Index("ix_notable_picks_date", "date"),
+)

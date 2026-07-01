@@ -26,9 +26,19 @@ from app.services.llm_config import ResolvedFace
 
 
 def test_openai_tools_phase1_only_p1_tools() -> None:
-    """openai_tools(1) は P1 Tool だけ（metrics/optimize/submit_journal を含まない）。"""
+    """openai_tools(1) は P1 Tool だけ（metrics/optimize/submit_journal を含まない）。
+
+    注目候補の合流ゲート系（get_notable_candidates / submit_notable_stocks・ADR-067）は
+    signals 世代の機能なので min_phase=1（Phase 1 から露出）。
+    """
     names = {t["function"]["name"] for t in openai_tools(1)}  # type: ignore[index]
-    assert names == {"get_indicators", "get_signals", "screen_stocks"}
+    assert names == {
+        "get_indicators",
+        "get_signals",
+        "get_notable_candidates",
+        "screen_stocks",
+        "submit_notable_stocks",
+    }
 
 
 def test_openai_tools_phase3_includes_submit_journal() -> None:
@@ -62,6 +72,9 @@ def test_registry_handlers_are_registered() -> None:
     expected = {
         "get_indicators",
         "get_signals",
+        # ADR-067: 注目候補の合流ゲート＋AI 選別（min_phase=1）。
+        "get_notable_candidates",
+        "submit_notable_stocks",
         "screen_stocks",
         "get_portfolio_metrics",
         "optimize_portfolio",

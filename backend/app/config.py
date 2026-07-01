@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     always_daily_digest: bool = True  # 検知ゼロでも毎朝サマリを送る（False で好機がある日だけ）
     # ⑧ 出来高急増（平常 3 倍）の閾値は quant が payload.notable に焼く（ADR-016）。通知層は
     # 閾値を再定義せず notable を読む（score>=alert_score_min または notable で⑧アラート）。
+    # 注目シグナルのリデザイン（ADR-067）: 合流ゲート＋AI 選別へ。手法閾値は services/notable.py の
+    # 定数（ADR-016/027）。ここは運用つまみ（候補総数バックストップ上限・digest 表示数）だけ持つ。
+    notable_candidate_cap: int = (
+        120  # 夜AI に渡す候補の総数上限（超過は件数のみ記録＝No silent caps）
+    )
+    notable_digest_max: int = 8  # digest に載せる AI 選別の上限（残りは「…ほか N 件」）
 
     # --- 夜間バッチ / cron --- Phase 1〜（spec §3.7・ADR-021・ADR-011）
     # APScheduler を FastAPI プロセスに同居させる（追加コンテナ 0）。

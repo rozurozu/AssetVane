@@ -1,16 +1,17 @@
-"""夜間バッチ: Signal Beacon 通知 digest ジョブ（phase6-spec.md §3・ADR-007/014/016/018）。
+"""夜間バッチ: Signal Beacon 通知 digest ジョブ（phase6-spec.md §3・ADR-007/014/016/018/051/067）。
 
 NIGHTLY_JOBS の**末尾**（取得 → signals → 夜の分析AI の後＝事実と提案が揃ってから）で呼ばれ、
-当日の⑦⑧＋夜AI 当日提案を **1 通の Discord digest** に束ねて送る（spec §1）。
+当日の注目・提案を **1 通の Discord digest** に束ねて送る（spec §1）。
 
 設計の芯:
-- **AI に数値を計算させない**（ADR-014/016）。⑧アラートの抽出（score 閾値・出来高急増）は Python が
-  signals の事実で判定する。出来高 3 倍判定は quant が payload.notable に焼くので通知層は再閾値化
-  せず notable を読む。提案文は Phase 3 が生成済みの advisor_journal.proposal をそのまま引用する。
-- **日付は UTC で統一**する。夜の分析AI（nightly.py）が journal を datetime.now(UTC) の日付で
-  書くため、digest もその日付で journal を引く（cron は 02:00 JST＝前日 17:00 UTC でズレるため）。
-- **冪等**（spec §3・ADR-002/018）。notify_key='digest:<UTC日付>' で 1 日 1 通。coalesce 漏れや
-  POST /batch/run 手動再実行で同日 2 回走っても 2 通目は送らない。
+- **注目シグナルは AI 選別（ADR-067）**。旧・score 閾値 Top N 抽出（`_is_alert` 系）は
+  廃した。Python が合流ゲートで候補集合を組み（services/notable.py）、夜の分析AI が
+  submit_notable_stocks で厳選した銘柄を notable_picks に永続する。digest はそれを読んで載せるだけ
+  （AI に数値を計算させない＝ADR-014／手法閾値は quant・service＝ADR-016）。
+- **保有銘柄の悪材料は決定論で必ず出す（ADR-051 維持）**。AI 選別の拾い忘れに依らない安全装置として
+  polarity='negative'・24h 窓の悪材料を独立セクションで先頭付近に置く（1900 字截断から守る）。
+- **日付は UTC で統一**する（夜の分析AI が journal/notable_picks を UTC 日付で書くため）。
+- **冪等**（spec §3・ADR-002/018）。notify_key='digest:<UTC日付>' で 1 日 1 通。
 - 例外は握って JobResult(ok=False)（runner が error 通知）。通知失敗で本処理は巻き込まない。
 """
 
@@ -19,7 +20,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
 
 from sqlalchemy import Connection
 
@@ -28,36 +28,12 @@ from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
+from app.services.notable import build_notable_candidates
 
 logger = logging.getLogger(__name__)
 
-
-def _parse_payload(raw: str | None) -> dict[str, Any]:
-    """signals.payload（JSON 文字列）を dict に。壊れていれば空 dict（落とさない）。"""
-    if not raw:
-        return {}
-    try:
-        obj = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {}
-    return obj if isinstance(obj, dict) else {}
-
-
-def _is_alert(score: float, payload: dict[str, Any]) -> bool:
-    """⑧アラート条件: 高スコア（score>=alert_score_min）または quant が notable と焼いた銘柄。
-
-    出来高 3 倍（NOTABLE_RATIO）・ゴールデンクロス等の「目印」判定は quant が payload.notable に
-    持つ（ADR-016）。通知層は閾値を再定義せず notable を読む。
-    """
-    return score >= settings.alert_score_min or bool(payload.get("notable"))
-
-
-def _format_signal_line(row: dict[str, Any]) -> str:
-    """1 アラートを 1 行に整形（社名(コード) ラベル [type] score）。"""
-    name = row.get("company_name") or row["code"]
-    payload = _parse_payload(row.get("payload"))
-    label = payload.get("label") or row["signal_type"]
-    return f"・{name} ({row['code']}) {label} [{row['signal_type']}] score {row['score']:.2f}"
+# ②保有銘柄の悪材料アラートで digest に出す最大件数（残りは「ほか N 件」・ADR-051）。
+_HOLDING_RISK_MAX = 5
 
 
 def _rebalance_line(conn: Connection, today: str) -> str | None:
@@ -108,36 +84,14 @@ def _failed_index_line(conn: Connection) -> str | None:
     return f"📉 取得できなかった指数: {', '.join(failed)}"
 
 
-# ②保有銘柄の悪材料アラートで digest に出す最大件数（残りは「ほか N 件」・ADR-051）。
-_HOLDING_RISK_MAX = 5
-# ①注目シグナルへ「なぜ動いたか」ニュースを添える際の発行日 lookback（直近 N 日・ADR-051）。
-_SIGNAL_NEWS_LOOKBACK_DAYS = 3
-
-
-def _news_attach_line(conn: Connection, code: str, today: str) -> str | None:
-    """①注目シグナルの code に直近の stock 層ニュースを 1 件添える（急騰落の自動説明・ADR-051）。
-
-    published_at が直近 _SIGNAL_NEWS_LOOKBACK_DAYS 日以内の stock 層ニュース最新 1 件の見出し
-    （無ければ summary/url）を「なぜ動いたか」の手がかりとして 1 行返す。holdings フィルタはしない
-    （保有外でも動いた理由を知りたい＝ADR-051 の①）。ニュースが無ければ None（何も添えない）。
-    値動き=quant・説明=ニュース引用で AI に数値を作らせない（ADR-014）。
-    """
-    since = (date.fromisoformat(today) - timedelta(days=_SIGNAL_NEWS_LOOKBACK_DAYS)).isoformat()
-    rows = repo.list_news(conn, level="stock", code=code, since=since, limit=1)
-    if not rows:
-        return None
-    headline = rows[0].get("title") or rows[0].get("summary") or rows[0].get("url") or ""
-    return f"　└ {headline}"
-
-
 def _holding_risk_lines(conn: Connection) -> list[str]:
-    """②保有銘柄の悪材料アラート行を組み立てる（ADR-051・能動配信）。
+    """②保有銘柄の悪材料アラート行を組み立てる（ADR-051・能動配信・決定論で維持＝ADR-067）。
 
     既定ポートフォリオ（list_portfolios の先頭・裁定 L-9）の holdings に紐づく stock 層ニュースの
     うち、polarity='negative' かつ fetched_at が直近 24h の悪材料を最大 _HOLDING_RISK_MAX 件＋
     残件数で返す。fetched_at 24h 窓で「同じ悪材料を翌晩再掲しない」を自然に実現する（ADR-051）。
     悪材料が無ければ空リスト（呼び出し側がセクションごと省略）。社名は repo の LEFT JOIN で
-    補完済み。
+    補完済み。AI 選別（notable_picks）の拾い忘れに依らない安全装置（ADR-067）。
     """
     portfolios = repo.list_portfolios(conn)
     if not portfolios:
@@ -162,25 +116,44 @@ def _holding_risk_lines(conn: Connection) -> list[str]:
     return lines
 
 
-def build_digest_content(conn: Connection, today: str) -> str | None:
-    """当日の⑦⑧＋夜AI 提案を 1 通の digest 本文に組み立てる（spec §3）。
+def _notable_lines(conn: Connection, today: str) -> tuple[list[str], int]:
+    """注目シグナル（夜AI 選別の notable_picks）を digest 行に整形する（ADR-067）。
 
-    today は UTC 日付 'YYYY-MM-DD'（journal と揃える）。⑧シグナルは最新算出日
-    （get_latest_signal_date）の signals を閾値抽出 → score 降順 Top N。ALWAYS_DAILY_DIGEST=False
-    かつ⑦⑧・提案すべて無しなら None（送信スキップ）。True（既定）なら検知ゼロでもサマリを返す。
+    source='nightly' の当日 notable_picks を起票順で読み、社名(コード) — 理由 の 1 行に整形する。
+    notable_digest_max 件まで表示し、残りは「…ほか N 件」。戻り値は (行リスト, 選別件数)。空なら
+    「注目シグナル: なし」1 行（件数 0）。生のイベント一覧は出さない（安全網は DB＋/signals）。
     """
-    # ⑧ シグナル抽出（最新算出日の signals を閾値で絞り score 降順 Top N）。
-    signal_date = repo.get_latest_signal_date(conn)
-    alerts: list[dict[str, Any]] = []
-    total_signals = 0
-    if signal_date:
-        rows = repo.list_signals_for_alert(conn, signal_date)
-        total_signals = len(rows)
-        alerts = [r for r in rows if _is_alert(r["score"], _parse_payload(r.get("payload")))]
+    picks = repo.list_notable_picks_for_date(conn, today, source="nightly")
+    if not picks:
+        return (["🔔 注目シグナル: なし"], 0)
 
-    top_n = max(1, settings.alert_top_n)
-    shown = alerts[:top_n]
-    remaining = len(alerts) - len(shown)
+    top_n = max(1, settings.notable_digest_max)
+    shown = picks[:top_n]
+    remaining = len(picks) - len(shown)
+    lines = [f"🔔 注目シグナル（AI 選別・{len(picks)} 件）"]
+    for p in shown:
+        name = p.get("company_name") or p["code"]
+        reason = (p.get("reason") or "").strip()
+        lines.append(f"・{name} ({p['code']})" + (f" — {reason}" if reason else ""))
+    if remaining > 0:
+        lines.append(f"　…ほか {remaining} 件")
+    return (lines, len(picks))
+
+
+def build_digest_content(conn: Connection, today: str) -> str | None:
+    """当日の注目（AI 選別）＋⑦＋夜AI 提案を 1 通の digest 本文に組み立てる（spec §3・ADR-067）。
+
+    today は UTC 日付 'YYYY-MM-DD'（journal/notable_picks と揃える）。本文は【決定論: 保有の悪材料
+    （ADR-051）】＋【AI 選別の注目】＋【⑦リバランス】＋【夜AI 提案】＋【極薄サマリ】。
+    ALWAYS_DAILY_DIGEST=False かつ保有悪材料・注目・⑦・提案すべて無しなら None（送信スキップ）。
+    True（既定）なら検知ゼロでもサマリを返す。
+    """
+    # 合流ゲートの counts（極薄サマリの素・AI 選別と同じ DB 状態を決定論的に読む＝ADR-067）。
+    candidates = build_notable_candidates(conn)
+    counts = candidates.get("counts") or {}
+
+    # 注目（AI 選別・notable_picks）。
+    notable_lines, n_picks = _notable_lines(conn, today)
 
     # ⑦ リバランス判定。
     rebalance = _rebalance_line(conn, today)
@@ -201,11 +174,11 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
         except (json.JSONDecodeError, TypeError):
             policy_change = None
 
-    # ②保有銘柄の悪材料（能動配信の主目的・ADR-051）。has_content に含めて「悪材料がある夜は
-    # always_daily_digest=False でも送る」を満たす。
+    # ②保有銘柄の悪材料（能動配信の主目的・ADR-051 決定論で維持）。has_content に含めて「悪材料が
+    # ある夜は always_daily_digest=False でも送る」を満たす。
     risk_lines = _holding_risk_lines(conn)
 
-    has_content = bool(shown or rebalance or proposal or risk_lines)
+    has_content = bool(n_picks or rebalance or proposal or risk_lines)
     if not has_content and not settings.always_daily_digest:
         return None  # 好機がある日だけ送る設定で、何も無い日（[OPEN-N]）
 
@@ -217,18 +190,8 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
         lines.extend(risk_lines)
         lines.append("")
 
-    if shown:
-        lines.append(f"🔔 注目シグナル（{signal_date} 時点・{len(alerts)} 件）")
-        for r in shown:
-            lines.append(_format_signal_line(r))
-            # ①「なぜ動いたか」を直近ニュースで補足する（あれば 1 行添える・ADR-051）。
-            attach = _news_attach_line(conn, r["code"], today)
-            if attach:
-                lines.append(attach)
-        if remaining > 0:
-            lines.append(f"　…ほか {remaining} 件")
-    else:
-        lines.append("🔔 注目シグナル: なし")
+    # 注目シグナル（AI 選別）。
+    lines.extend(notable_lines)
     lines.append("")
 
     if rebalance:
@@ -246,16 +209,19 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
         lines.append(failed_index)
         lines.append("")
 
-    # 当日サマリ（検知ゼロでも届く＝完了条件）。
-    lines.append(
-        f"— サマリ: signals {total_signals} 件 / 注目 {len(alerts)} 件 / "
-        f"AI 提案 {'あり' if proposal else 'なし'}"
+    # 当日サマリ（検知ゼロでも届く＝完了条件・ADR-067 の極薄サマリ）。
+    summary = (
+        f"— サマリ: signals {counts.get('signals', 0)} 件 / "
+        f"候補 {counts.get('candidates', 0)} 件 / AI 選別 {n_picks} 件"
     )
+    if counts.get("dropped"):
+        summary += f" / 候補上限で省略 {counts['dropped']} 件"
+    lines.append(summary)
     return "\n".join(lines)
 
 
 def run() -> JobResult:
-    """当日の事実と AI 提案を 1 通の Discord digest に束ねて冪等送信する（spec §3）。
+    """当日の注目と AI 提案を 1 通の Discord digest に束ねて冪等送信する（spec §3・ADR-067）。
 
     例外は握って JobResult(ok=False)（runner が error 通知）。送信失敗で本処理は巻き込まない。
     """

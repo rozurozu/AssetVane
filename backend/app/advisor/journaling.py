@@ -27,6 +27,7 @@ from app.advisor.tools.schemas import (
     AdjustCardWeightArgs,
     ProposeCardArgs,
     ProposeTradeArgs,
+    SubmitNotableStocksArgs,
     coerce_policy_change,
 )
 from app.db import repo
@@ -234,6 +235,65 @@ def persist_trade_proposals_from_tool_runs(
         )
         inserted.append(proposal_id)
 
+    return inserted
+
+
+def _extract_notable_picks(tool_runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """tool_runs から submit_notable_stocks の args を取り出す（最後の呼び出しを採用・ADR-067）。
+
+    submit_journal と同じく「最後の 1 回」を最終意思として採る。一度も呼ばれていなければ None。
+    """
+    submitted: dict[str, Any] | None = None
+    for run in tool_runs:
+        if run.get("name") == "submit_notable_stocks":
+            args = run.get("args")
+            if isinstance(args, dict):
+                submitted = args
+    return submitted
+
+
+def persist_notable_picks_from_tool_runs(
+    conn: Connection,
+    *,
+    tool_runs: list[dict[str, Any]],
+    date: str,
+    source: str = "nightly",
+) -> list[str]:
+    """tool_runs から submit_notable_stocks を拾い notable_picks を永続する（ADR-067・W2）。
+
+    戻り値: 永続した銘柄 code の一覧（未知/重複で drop した分は含まない）。
+
+    手順（persist_trade_proposals_from_tool_runs と同型）:
+    1. submit_notable_stocks の最終 args を拾う（無ければ何もしない＝[]）。
+    2. SubmitNotableStocksArgs で検証（不正なら [] で握る＝ループを落とさない・ADR-018）。
+    3. 各 pick の JP コードを stocks で解決。未知は drop（幻覚/誤記を digest に載せない）。
+    4. 同一 code は 1 度だけ（dedup）。upsert_notable_pick で冪等 UPSERT（再実行で重複しない）。
+
+    接続規約（W2）: commit はしない。呼び出し側（nightly ジョブ）が begin() 境界を所有し、
+    journal/proposal と 1 トランザクションに束ねる。source は 'nightly'（digest が読む）。
+    """
+    raw = _extract_notable_picks(tool_runs)
+    if raw is None:
+        return []
+    try:
+        parsed = SubmitNotableStocksArgs.model_validate(raw)
+    except ValidationError:
+        logger.warning("submit_notable_stocks: 引数が不正（%s）。永続せずスキップ", raw)
+        return []
+
+    inserted: list[str] = []
+    seen: set[str] = set()
+    for pick in parsed.picks:
+        code = pick.code
+        if code in seen:
+            continue
+        if repo.get_stock(conn, code) is None:
+            # 未知コード（幻覚/誤記の疑い）は digest に載せない（ADR-014/018）。
+            logger.warning("notable pick: 銘柄 %s が stocks に無い。永続せずスキップ", code)
+            continue
+        seen.add(code)
+        repo.upsert_notable_pick(conn, date=date, code=code, reason=pick.reason, source=source)
+        inserted.append(code)
     return inserted
 
 

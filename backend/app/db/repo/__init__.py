@@ -110,6 +110,14 @@ from app.db.repo.news import (
     upsert_dossier,
     upsert_news,
 )
+from app.db.repo.notable import (
+    get_recent_adj_closes_by_codes,
+    get_stocks_basic_map,
+    list_notable_picks_for_date,
+    list_recent_polarity_stock_news,
+    list_signals_with_sector_for_date,
+    upsert_notable_pick,
+)
 from app.db.repo.notifications import (
     get_journal_for_date,
     list_signals_for_alert,
@@ -320,6 +328,12 @@ __all__ = [
     "record_notification",
     "list_signals_for_alert",
     "get_journal_for_date",
+    "list_signals_with_sector_for_date",
+    "get_recent_adj_closes_by_codes",
+    "get_stocks_basic_map",
+    "list_recent_polarity_stock_news",
+    "upsert_notable_pick",
+    "list_notable_picks_for_date",
     "upsert_us_stocks",
     "list_us_stocks",
     "get_us_stock",

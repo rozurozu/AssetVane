@@ -419,3 +419,35 @@ class ProposeTradeArgs(_ToolArgs):
     action: Literal["buy", "sell"] = Field(description="売買の方向（buy=買い / sell=売り）。")
     code: str = Field(description="JP は 5 桁コード（例 72030）、US はティッカー（例 AAPL）。")
     reason: str = Field(description="ニュース起点の根拠（なぜ買い/売りかの説明・数値は含めない）。")
+
+
+class GetNotableCandidatesArgs(_ToolArgs):
+    """get_notable_candidates の引数（ADR-067・引数なし）。
+
+    合流ゲートで組んだ「今日の注目候補」を返すだけなので引数は無い（get_lead_lag と同じ空モデル）。
+    """
+
+
+class NotablePickArg(_ToolArgs):
+    """submit_notable_stocks の 1 件（ADR-067）。"""
+
+    code: str = Field(
+        description="注目銘柄の JP 5 桁コード（例 72030）。候補集合のコードから選ぶ。"
+    )
+    reason: str = Field(
+        description="なぜ注目かの短い理由（材料の重なりや文脈・数値は Tool の事実に基づく）。"
+    )
+
+
+class SubmitNotableStocksArgs(_ToolArgs):
+    """submit_notable_stocks の引数（ADR-067・夜の分析AI の注目選別受け）。
+
+    候補集合（get_notable_candidates／プロンプト注入）から「総合的に注目すべき銘柄だけ」を選び、
+    picks（code＋reason の配列）で提出する。本当に無ければ空配列でよい（毎回無理に出さない）。
+    受理側（persist）が JP コードを解決し、未知コードは drop する（ADR-014/018）。
+    """
+
+    picks: list[NotablePickArg] = Field(
+        default_factory=list,
+        description="注目銘柄の配列（各 {code, reason}）。関連度が高い順に並べる。無ければ空配列。",
+    )

@@ -26,6 +26,7 @@ from app.advisor.tools.schemas import (
     GetIndicatorsArgs,
     GetLeadLagArgs,
     GetNewsContextArgs,
+    GetNotableCandidatesArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     GetStockThemesArgs,
@@ -44,6 +45,7 @@ from app.advisor.tools.schemas import (
     SearchCardsArgs,
     SearchNewsArgs,
     SubmitJournalArgs,
+    SubmitNotableStocksArgs,
 )
 
 # 現在の投入フェーズ（段2 の dispatch が openai_tools(phase) に渡す）。
@@ -101,6 +103,19 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(GetSignalsArgs),
         handler=handlers.handle_get_signals,
+        min_phase=1,
+    ),
+    "get_notable_candidates": ToolDef(
+        name="get_notable_candidates",
+        description=(
+            "今日の『注目候補』を取得する（ADR-067）。生の signals 一覧ではなく、Python が合流"
+            "(confluence)ゲートで絞った候補＝独立材料（値動き・出来高急増・ニュース・業種リードラグ）が"
+            "2 次元以上重なった銘柄（保有/ウォッチは 1 次元・出来高極増は単独）に、点いた材料タグを"
+            "添えたもの。『今日の注目は？』『何か目立つ動きは？』と問われたとき、雑多な全 "
+            "signals を見る前にまずこれを呼ぶ（GC 単独ノイズが除かれ、重なった銘柄だけ返る）。"
+        ),
+        parameters=_schema(GetNotableCandidatesArgs),
+        handler=handlers.handle_get_notable_candidates,
         min_phase=1,
     ),
     "screen_stocks": ToolDef(
@@ -205,6 +220,19 @@ REGISTRY: dict[str, ToolDef] = {
         parameters=_schema(SubmitJournalArgs),
         handler=handlers.handle_submit_journal,
         min_phase=3,
+    ),
+    "submit_notable_stocks": ToolDef(
+        name="submit_notable_stocks",
+        description=(
+            "今夜の『注目銘柄』の選別結果を提出する（ADR-067）。get_notable_candidates／プロンプト注入で"
+            "渡された候補集合から、本当に注目すべき銘柄だけを picks（各 {code, reason}）で挙げる。"
+            "軸1（夜の分析AI）が最終ターンで 1 度呼ぶ（提出内容が朝の Discord digest に載る）。"
+            "候補の丸写しはせず、材料の重なり・文脈・保有との関係で厳選する。本当に無ければ空配列でよい"
+            "（毎回無理に出さない）。株数・目標価格などの数値は出さない（サイズ判断は別・ADR-014）。"
+        ),
+        parameters=_schema(SubmitNotableStocksArgs),
+        handler=handlers.handle_submit_notable_stocks,
+        min_phase=1,
     ),
     # --- Phase 4（Stock Dossier）---
     "get_dossier": ToolDef(

@@ -35,6 +35,7 @@ from app.advisor.tools.schemas import (
     GetIndicatorsArgs,
     GetLeadLagArgs,
     GetNewsContextArgs,
+    GetNotableCandidatesArgs,
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     GetStockThemesArgs,
@@ -52,6 +53,7 @@ from app.advisor.tools.schemas import (
     SearchCardsArgs,
     SearchNewsArgs,
     SubmitJournalArgs,
+    SubmitNotableStocksArgs,
     coerce_policy_change,
 )
 from app.db import repo
@@ -65,6 +67,7 @@ from app.reference.gics_sectors import normalize_gics_sector
 from app.services.fund_holdings import value_fund_holdings
 from app.services.knowledge_cards import search_cards_for_tool
 from app.services.news import build_news_context, search_news_corpus
+from app.services.notable import build_notable_candidates
 from app.services.policy import get_policy
 from app.services.portfolio import (
     build_price_panel,
@@ -1142,3 +1145,34 @@ async def handle_screen_by_theme(args: dict[str, object]) -> dict[str, Any]:
     except Exception as exc:
         logger.exception("handle_screen_by_theme 失敗")
         return {"error": str(exc)}
+
+
+async def handle_get_notable_candidates(args: dict[str, object]) -> dict[str, Any]:
+    """get_notable_candidates（ADR-067）。合流ゲートで組んだ「今日の注目候補」を返す。
+
+    services.notable.build_notable_candidates の橋渡し（夜AI プロンプト注入と同じ事実を返す＝
+    計算経路を一致させる・ADR-014）。候補は独立材料 2 次元以上（保有/ウォッチは 1 次元・出来高極増は
+    単独）で絞った銘柄＋点いた材料タグ。空でも error にせず candidates=[] を返す（落とさない）。
+    """
+    try:
+        GetNotableCandidatesArgs.model_validate(args)
+        with get_engine().connect() as conn:
+            return build_notable_candidates(conn)
+    except Exception as exc:
+        logger.exception("handle_get_notable_candidates 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_submit_notable_stocks(args: dict[str, object]) -> dict[str, Any]:
+    """submit_notable_stocks（ADR-067）。夜の注目選別を受ける（引数検証のみ・W2）。
+
+    submit_journal と同じ検証 only の契約＝実際の notable_picks 永続は呼び出し側（nightly）が
+    tool_runs から persist_notable_picks_from_tool_runs で行う。ここは検証して受理数を返すだけ。
+    picks 空（今夜は注目なし）も正常に受ける（毎回無理に出さない）。
+    """
+    try:
+        parsed = SubmitNotableStocksArgs.model_validate(args)
+    except Exception as exc:
+        logger.warning("handle_submit_notable_stocks: 引数が不正（%s）", args)
+        return {"error": str(exc)}
+    return {"ok": True, "n": len(parsed.picks)}
