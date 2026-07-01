@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import pytest
@@ -99,11 +100,14 @@ def test_cursor_absent_uses_backfill_start(temp_db, monkeypatch) -> None:
     result = fetch_fx_rates.run(adapter=adapter)
 
     assert result.ok is True
-    # fake ソースが呼ばれた from_ が「約 1 年前」であることを確認。
+    # fake ソースが呼ばれた from_ が backfill_years 前（今日 − backfill_years 年）であることを確認。
+    # 実行日に依存しないよう today から動的に期待値を出す（決め打ちだと年跨ぎで壊れる）。
+    today = date.today()
+    expected_start = today.replace(year=today.year - settings.backfill_years).isoformat()
     call = adapter._fake_source.calls[0]
     # (pair, from_, to)
     assert call[0] == "USDJPY"
-    assert "2025-06" in call[1]  # 1 年前ゾーン（2025-06-xx）
+    assert call[1] == expected_start  # 初期窓＝今日 − backfill_years 年（カーソル不在）
 
 
 def test_cursor_present_overlaps_last_fetched(temp_db) -> None:
