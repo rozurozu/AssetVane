@@ -35,6 +35,23 @@ def test_health(client) -> None:
     assert cost["exceeded"] is False
 
 
+def test_health_jquants_defaults_free_when_unset(client) -> None:
+    """/health は J-Quants プラン状態を返す（右上バッジの動的化・ADR-061）。
+
+    空 DB（未登録）では plan=free・delay_days=84（12週）・configured=False。
+    """
+    jq = client.get("/health").json()["jquants"]
+    assert set(jq) == {"plan", "delay_days", "configured"}
+    assert jq == {"plan": "free", "delay_days": 84, "configured": False}
+
+
+def test_health_jquants_reflects_configured_plan(client) -> None:
+    """/settings 相当（PUT /jquants/config）で light に変えると /health も遅延なしに変わる。"""
+    client.put("/jquants/config", json={"api_key": "supersecretkey", "plan": "light"})
+    jq = client.get("/health").json()["jquants"]
+    assert jq == {"plan": "light", "delay_days": 0, "configured": True}
+
+
 def test_health_phase_matches_current_phase(client) -> None:
     """/health の phase は Tool ゲートの単一の真実 CURRENT_PHASE と一致する。
 

@@ -17,8 +17,10 @@ type Health = "checking" | "ok" | "down";
 /** /health の再チェック間隔（ミリ秒・ADR-038）。down→ok の自己回復はこの周期で起きる。 */
 const HEALTH_POLL_MS = 30000;
 
-/** J-Quants Free プランの株価遅延日数（12 週＝84 日・CLAUDE.md「開発は Free プラン」前提）。 */
-const FREE_PLAN_DELAY_DAYS = 84;
+/** プラン名を表示用に先頭大文字化（"free" → "Free"）。空なら空文字。 */
+function titleCasePlan(plan: string): string {
+  return plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : "";
+}
 
 export function Topbar() {
   const [health, setHealth] = useState<Health>("checking");
@@ -33,11 +35,33 @@ export function Topbar() {
     setNow(new Date());
   }, []);
 
-  // 株価遅延の期限（〜この日まで取得済みのはず）。/health に遅延情報は無いため
-  // 「今日 − 12 週」をクライアント側で導出する（J-Quants Free プラン前提の概算・C-10）。
-  const delayLimit = now
-    ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - FREE_PLAN_DELAY_DAYS)
-    : null;
+  // 右上のプランバッジ（ADR-061）。plan/遅延日数/登録有無は /health の jquants から取る
+  // （旧・ハードコードの "Free・12週" を廃止＝DB プラン由来で動的化）。遅延日数（free=84・
+  // 有料=0）は backend の _PLAN_DELAY_DAYS 定数由来。遅延の有無で配色を変え、遅延ありのときだけ
+  // 「今日 − delay_days」を client の now 基準で導出する（表示中の曜日付き日付と整合・C-10）。
+  const jq = data?.jquants;
+  const delayDays = jq?.delay_days ?? 0;
+  const delayLimit =
+    now && delayDays > 0
+      ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - delayDays)
+      : null;
+  // 遅延あり=warning 色 / それ以外（遅延なし・未設定・確認中）=muted 色。
+  let planText: string;
+  let planDelayed: boolean;
+  if (!jq) {
+    planText = "J-Quants 確認中…"; // 初回 /health 前
+    planDelayed = false;
+  } else if (!jq.configured) {
+    planText = "J-Quants 未設定"; // api_key 未登録（/settings 誘導の含意）
+    planDelayed = false;
+  } else if (delayDays > 0) {
+    const weeks = Math.round(delayDays / 7); // free: 84/7=12（現行「株価12週遅延」を維持）
+    planText = `${titleCasePlan(jq.plan)}・株価${weeks}週遅延（〜${delayLimit ? fmtDateIso(delayLimit) : "—"}）`;
+    planDelayed = true;
+  } else {
+    planText = `${titleCasePlan(jq.plan)}・遅延なし`; // light/standard/premium
+    planDelayed = false;
+  }
 
   useEffect(() => {
     let alive = true;
@@ -94,9 +118,13 @@ export function Topbar() {
           {badge.text}
         </span>
 
-        <span className="ml-auto flex items-center gap-1.5 rounded-sm border border-hairline bg-surface-1 px-2 py-1 text-[12px] text-warning">
-          <span className="h-1.5 w-1.5 rounded-full bg-warning" />
-          Free・株価12週遅延（〜{delayLimit ? fmtDateIso(delayLimit) : "—"}）
+        <span
+          className={`ml-auto flex items-center gap-1.5 rounded-sm border border-hairline bg-surface-1 px-2 py-1 text-[12px] ${planDelayed ? "text-warning" : "text-ink-muted"}`}
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${planDelayed ? "bg-warning" : "bg-ink-muted"}`}
+          />
+          {planText}
         </span>
         <span className="num text-[13px] text-ink-muted">
           {now ? fmtDateWithWeekday(now) : "—"}

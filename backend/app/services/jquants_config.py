@@ -20,6 +20,17 @@ from app.db.engine import get_engine
 
 _DEFAULT_PLAN = "free"
 
+# プラン別の株価遅延日数（docs/jquants.md・ADR-008）。Free は 12 週遅延＝84 日、
+# 有料プラン（light/standard/premium）は遅延なし。右上バッジの表示に使う事実値で、
+# フロントにハードコードせず backend の定数から /health 経由で配る（ADR-014・ADR-061）。
+# レートの _PLAN_INTERVALS（adapters/jquants.py）と対をなす「プラン → 数値」の単一定義点。
+_PLAN_DELAY_DAYS: dict[str, int] = {
+    "free": 84,  # 12 週 = 84 日
+    "light": 0,
+    "standard": 0,
+    "premium": 0,
+}
+
 
 def resolve_jquants_config(conn: Connection) -> dict[str, Any] | None:
     """J-Quants 接続を DB から解決する（ADR-061）。
@@ -48,6 +59,24 @@ def current_plan(conn: Connection) -> str:
     if row is None:
         return _DEFAULT_PLAN
     return (row.get("plan") or "").strip().lower() or _DEFAULT_PLAN
+
+
+def plan_status(conn: Connection) -> dict[str, Any]:
+    """右上バッジ用のプラン状態 {plan, delay_days, configured}（ADR-061・ADR-014）。
+
+    plan は current_plan と同じ正規化（未登録/空は "free"）。delay_days は _PLAN_DELAY_DAYS を
+    引き、未知プラン名は最安全（遅延あり=free 相当の 84 日）に倒す。configured は api_key の有無
+    （resolve_jquants_config と同じ判定）で、未設定なら /settings 誘導表示に使う。行は 1 回読む。
+    """
+    row = repo.get_jquants_config(conn)
+    api_key = (row.get("api_key") or "").strip() if row else ""
+    plan = (row.get("plan") or "").strip().lower() if row else ""
+    plan = plan or _DEFAULT_PLAN
+    return {
+        "plan": plan,
+        "delay_days": _PLAN_DELAY_DAYS.get(plan, _PLAN_DELAY_DAYS[_DEFAULT_PLAN]),
+        "configured": bool(api_key),
+    }
 
 
 def build_jquants_adapter(conn: Connection | None = None):  # noqa: ANN201 — 戻り値は JQuantsAdapter

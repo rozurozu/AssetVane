@@ -10,7 +10,7 @@ from typing import Any
 
 from app.db import repo
 from app.db.engine import get_engine
-from app.services.jquants_config import current_plan, resolve_jquants_config
+from app.services.jquants_config import current_plan, plan_status, resolve_jquants_config
 
 
 def _set(fields: dict[str, Any]) -> None:
@@ -54,6 +54,38 @@ def test_resolve_and_current_plan_when_set(temp_db) -> None:
         cfg = resolve_jquants_config(conn)
         assert cfg == {"api_key": "abc", "plan": "light"}
         assert current_plan(conn) == "light"
+
+
+def test_plan_status_unset_defaults_free_delayed_and_unconfigured(temp_db) -> None:
+    """未登録なら plan=free・delay_days=84（12週）・configured=False（右上バッジの安全既定）。"""
+    with get_engine().connect() as conn:
+        st = plan_status(conn)
+    assert st == {"plan": "free", "delay_days": 84, "configured": False}
+
+
+def test_plan_status_free_with_key_is_delayed_and_configured(temp_db) -> None:
+    """free＋鍵ありは delay_days=84・configured=True。"""
+    _set({"api_key": "abc", "plan": "free"})
+    with get_engine().connect() as conn:
+        st = plan_status(conn)
+    assert st == {"plan": "free", "delay_days": 84, "configured": True}
+
+
+def test_plan_status_paid_plans_have_no_delay(temp_db) -> None:
+    """light/standard/premium は遅延なし（delay_days=0・docs/jquants.md）。正規化も担保。"""
+    for plan in ("light", "standard", "premium"):
+        _set({"api_key": "abc", "plan": f" {plan.upper()} "})
+        with get_engine().connect() as conn:
+            st = plan_status(conn)
+        assert st == {"plan": plan, "delay_days": 0, "configured": True}
+
+
+def test_plan_status_unknown_plan_falls_back_to_delayed(temp_db) -> None:
+    """未知プラン名は最安全（遅延あり=84）に倒す。plan 名自体はそのまま中継する。"""
+    _set({"api_key": "abc", "plan": "enterprise"})
+    with get_engine().connect() as conn:
+        st = plan_status(conn)
+    assert st == {"plan": "enterprise", "delay_days": 84, "configured": True}
 
 
 def test_get_endpoint_masks_and_defaults_free(client: Any) -> None:

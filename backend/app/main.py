@@ -42,6 +42,7 @@ from app.routers.stocks import router as stocks_router
 from app.routers.us_holdings import router as us_holdings_router
 from app.routers.us_stocks import router as us_stocks_router
 from app.routers.watchlist import router as watchlist_router
+from app.services.jquants_config import plan_status
 
 # import 時に 1 回だけログ基盤を構成する（ADR-038）。uvicorn は app import 前に自前の
 # LOGGING_CONFIG で dictConfig するため、ここで後勝ちに上書きしてテキスト形式/stdout に揃える。
@@ -161,14 +162,18 @@ def health() -> dict[str, object]:
 
     llm_cost は ADR-028 コストガードの状態（画面バナーの判定材料・spec §7.1）。当月累計は
     sum_llm_cost_month で毎回算出する派生値で専用フラグは持たない（UTC 月＝llm.py と同算式）。
-    集計失敗は死活監視を巻き込まないよう握って 0.0 とみなす（best-effort）。
+    jquants は右上バッジの動的化用のプラン状態（plan/delay_days/configured・ADR-061）。
+    いずれも集計失敗は死活監視を巻き込まないよう握って安全な既定に倒す（best-effort）。
     """
     month_total = 0.0
+    # 未登録＝Free 相当の 12 週遅延に倒す安全既定（DB 未読でも右上バッジが壊れない）。
+    jquants: dict[str, object] = {"plan": "free", "delay_days": 84, "configured": False}
     try:
         with get_engine().connect() as conn:
             month_total = repo.sum_llm_cost_month(conn, datetime.now(UTC).strftime("%Y-%m"))
+            jquants = plan_status(conn)
     except Exception:  # noqa: BLE001 — health を集計失敗で落とさない（best-effort）
-        logger.exception("llm_cost 集計に失敗（health は続行）")
+        logger.exception("llm_cost / jquants 集計に失敗（health は続行）")
     return {
         "status": "ok",
         "service": "assetvane-backend",
@@ -184,4 +189,5 @@ def health() -> dict[str, object]:
             "month_total_usd": month_total,
             "exceeded": month_total >= settings.llm_cost_limit_usd,
         },
+        "jquants": jquants,
     }

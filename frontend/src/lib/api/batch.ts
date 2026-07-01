@@ -87,6 +87,13 @@ export type LlmCostStatus = {
   exceeded: boolean; // month_total_usd >= limit_usd
 };
 
+/** J-Quants プラン状態（ADR-061・Topbar 右上バッジの動的化）。delay_days は backend の定数由来。 */
+export type JquantsStatus = {
+  plan: string; // "free" | "light" | "standard" | "premium"（未知はそのまま中継）
+  delay_days: number; // 株価遅延日数（free=84＝12週・有料は 0）
+  configured: boolean; // api_key の登録有無（false なら「未設定」表示）
+};
+
 /** `GET /health` レスポンス（疎通確認・Settings の env 詳細表示・main.py）。 */
 export type HealthResponse = {
   status?: string;
@@ -96,6 +103,7 @@ export type HealthResponse = {
   db?: string;
   env?: Record<string, EnvStatus>; // 各キーの set 状況（discord_webhook_url 等）
   llm_cost?: LlmCostStatus; // ADR-028: warn バナーの判定材料
+  jquants?: JquantsStatus; // ADR-061: 右上バッジのプラン/遅延表示
   [k: string]: unknown;
 };
 
