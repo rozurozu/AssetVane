@@ -229,3 +229,38 @@ def test_screen_valuation_filters_and_labels_market(temp_db) -> None:
     # しきい値を厳しくすると 0 件（破壊的ゲートはコードに無い＝AI が criteria を渡す）
     out2 = _run(handlers.handle_screen_valuation({"per_max": 1.0}))
     assert out2["count"] == 0
+
+
+def test_get_valuation_relays_net_cash_and_derives_ratio(temp_db) -> None:
+    """清原式ネットキャッシュ（ADR-079）。net_cash は事実・比率は read-time 導出（÷時価総額）。"""
+    _seed(temp_db)  # market_cap = 2500 × 1,000,000 = 2.5e9
+    with get_engine().begin() as conn:
+        repo.update_valuation_receivables_inventory(conn, "72030", {"net_cash": 3.0e9})
+    out = _run(handlers.handle_get_valuation({"code": "72030"}))
+    assert out["net_cash"] == 3.0e9
+    # net_cash_ratio = net_cash / market_cap = 3.0e9 / 2.5e9 = 1.2（物理列でなく subquery 導出）
+    assert abs(out["net_cash_ratio"] - 3.0e9 / 2.5e9) < 1e-9
+    assert _VERDICT_KEYS.isdisjoint(out.keys())  # verdict は持たない（解釈は LLM）
+
+
+def test_screen_valuation_filters_by_net_cash_ratio(temp_db) -> None:
+    """net_cash_ratio_min は read-time 導出列で絞れる（清原式≥1・案B の肝・ADR-079）。"""
+    _seed(temp_db)  # market_cap = 2.5e9
+    with get_engine().begin() as conn:
+        repo.update_valuation_receivables_inventory(conn, "72030", {"net_cash": 3.0e9})
+    # 比率 1.2 → net_cash_ratio_min=1.0 でヒット
+    out = _run(handlers.handle_screen_valuation({"net_cash_ratio_min": 1.0}))
+    assert out["count"] == 1
+    assert out["items"][0]["code"] == "72030"
+    assert abs(out["items"][0]["net_cash_ratio"] - 1.2) < 1e-9
+    # 1.5 以上に絞ると 0 件（1.2 < 1.5）
+    out2 = _run(handlers.handle_screen_valuation({"net_cash_ratio_min": 1.5}))
+    assert out2["count"] == 0
+
+
+def test_screen_valuation_net_cash_ratio_null_when_no_net_cash(temp_db) -> None:
+    """net_cash 未焼成なら比率は NULL＝net_cash_ratio_min に掛からない（捏造しない・ADR-079）。"""
+    _seed(temp_db)  # net_cash は焼いていない → NULL
+    out = _run(handlers.handle_screen_valuation({"net_cash_ratio_min": 0.0}))
+    # net_cash_ratio が NULL の行は `>= 0.0` に該当しないので 0 件（NULL 比較は False）
+    assert out["count"] == 0

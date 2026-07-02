@@ -23,6 +23,7 @@ _QUALITY = {
     "inventory_turnover_days": 30.0,
     "receivables_growth_yoy": 0.1,
     "inventory_growth_yoy": -0.05,
+    "net_cash": 2.5e9,  # 清原式ネットキャッシュ（ADR-079）も同じ後段ジョブが焼く＝温存対象
 }
 
 
@@ -49,6 +50,7 @@ def test_jp_valuation_upsert_preserves_receivables_inventory(temp_db) -> None:
     assert row["inventory_turnover_days"] == 30.0
     assert row["receivables_growth_yoy"] == 0.1
     assert row["inventory_growth_yoy"] == -0.05
+    assert row["net_cash"] == 2.5e9  # 清原式 net_cash も温存される（ADR-079・潰れない）
 
 
 def test_us_valuation_upsert_preserves_receivables_inventory(temp_db) -> None:
@@ -76,6 +78,7 @@ def test_us_valuation_upsert_preserves_receivables_inventory(temp_db) -> None:
     assert row["inventory_turnover_days"] == 30.0
     assert row["receivables_growth_yoy"] == 0.1
     assert row["inventory_growth_yoy"] == -0.05
+    assert row["net_cash"] == 2.5e9  # 清原式 net_cash も温存される（ADR-079・潰れない）
 
 
 def test_upsert_stocks_preserves_edinet_code(temp_db) -> None:

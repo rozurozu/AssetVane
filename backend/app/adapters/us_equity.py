@@ -454,12 +454,13 @@ class YahooUsEquitySource(UsEquitySource):
         return snapshot
 
     def fetch_balance_sheet(self, symbol: str) -> list[dict[str, Any]]:
-        """年次 balance_sheet＋income_stmt を #2 売掛/在庫の質用に正規化して返す（ADR-064 #2）。
+        """年次 balance_sheet＋income_stmt を売掛/在庫＋清原式用に正規化する（ADR-064/079）。
 
         各行 = {fiscal_year, disclosed_date, receivables, inventory, revenue, gross_profit,
-        cost_of_sales}（JP edinetdb と同形＝services.edinetdb_quality が共用）。決算日（DataFrame の
-        列）ごとに 1 行。yfinance のフィールド名は候補キーで吸収し、欠損は None（捏造しない・
-        ADR-014）。
+        cost_of_sales, current_assets, investment_securities, total_liabilities, cash}（JP edinetdb
+        と同形＝services.edinetdb_quality が共用）。決算日（DataFrame の列）ごとに 1 行。yfinance の
+        フィールド名は候補キーで吸収し、欠損は None（捏造しない・ADR-014）。US はネットキャッシュを
+        フル式で組める（Investments And Advances＝投資有価証券・ADR-079）。
         財務が空（bot 検知/未提供）なら UsEquityAdapterError（ファサードが次ソースへ）。
         """
         self._throttle.wait()
@@ -489,6 +490,22 @@ class YahooUsEquitySource(UsEquitySource):
                     "gross_profit": _df_get(income, ["Gross Profit"], col),
                     "cost_of_sales": _df_get(
                         income, ["Cost Of Revenue", "Reconciled Cost Of Revenue"], col
+                    ),
+                    # 清原式ネットキャッシュの BS 項目（ADR-079・US はフル式）
+                    "current_assets": _df_get(bs, ["Current Assets"], col),
+                    "investment_securities": _df_get(
+                        bs, ["Investments And Advances", "Long Term Investments"], col
+                    ),
+                    "total_liabilities": _df_get(
+                        bs, ["Total Liabilities Net Minority Interest"], col
+                    ),
+                    "cash": _df_get(
+                        bs,
+                        [
+                            "Cash And Cash Equivalents",
+                            "Cash Cash Equivalents And Short Term Investments",
+                        ],
+                        col,
                     ),
                 }
             )

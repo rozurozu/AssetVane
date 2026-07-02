@@ -14,6 +14,7 @@ from app.quant.valuation import (
     growth_yoy,
     inventory_turnover_days,
     market_cap,
+    net_cash,
     net_margin,
     operating_margin,
     pbr,
@@ -261,3 +262,31 @@ def test_inventory_turnover_days_basic_and_guards() -> None:
     # 在庫 None・分母 None は None
     assert inventory_turnover_days(None, 365.0) is None
     assert inventory_turnover_days(200.0, None) is None
+
+
+# --- 清原式ネットキャッシュ（ADR-079） ---
+
+
+def test_net_cash_full_formula_with_investment_securities() -> None:
+    # フル式（US）: 流動資産 + 投資有価証券×0.7 − 総負債
+    # 1000 + 200×0.7 − 500 = 640
+    assert net_cash(1000.0, 200.0, 500.0) == 640.0
+
+
+def test_net_cash_simplified_when_investment_securities_none() -> None:
+    # 簡略式（JP v1）: 投資有価証券 None は 0 扱い（項を省く）＝流動資産 − 総負債
+    # 1000 − 500 = 500。投資有価証券を切り捨てるぶん保守的（過小評価）に倒れる。
+    assert net_cash(1000.0, None, 500.0) == 500.0
+    # 投資有価証券が実 0 でも同値（None も 0 も同じ結果）
+    assert net_cash(1000.0, 0.0, 500.0) == 500.0
+
+
+def test_net_cash_negative_is_fact() -> None:
+    # 総負債が流動資産を上回る（実質ネット負債）は負の値として事実で返す（捏造しない・ROE 同型）
+    assert net_cash(300.0, None, 800.0) == -500.0
+
+
+def test_net_cash_none_when_required_inputs_missing() -> None:
+    # 流動資産・総負債のどちらか欠損なら計算不能 → None（投資有価証券だけ欠損は簡略式で計算する）
+    assert net_cash(None, 200.0, 500.0) is None
+    assert net_cash(1000.0, 200.0, None) is None

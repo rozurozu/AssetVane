@@ -9,7 +9,19 @@ from __future__ import annotations
 from app.services.edinetdb_quality import compute_quality_from_financials
 
 
-def _row(fy, recv=None, inv=None, rev=None, gp=None, cogs=None, disclosed=None):
+def _row(
+    fy,
+    recv=None,
+    inv=None,
+    rev=None,
+    gp=None,
+    cogs=None,
+    disclosed=None,
+    ca=None,
+    inv_sec=None,
+    tl=None,
+    cash=None,
+):
     return {
         "fiscal_year": fy,
         "disclosed_date": disclosed,
@@ -18,6 +30,11 @@ def _row(fy, recv=None, inv=None, rev=None, gp=None, cogs=None, disclosed=None):
         "revenue": rev,
         "gross_profit": gp,
         "cost_of_sales": cogs,
+        # 清原式ネットキャッシュの BS 項目（ADR-079）
+        "current_assets": ca,
+        "investment_securities": inv_sec,
+        "total_liabilities": tl,
+        "cash": cash,
     }
 
 
@@ -72,5 +89,44 @@ def test_none_when_no_usable_current_row() -> None:
     assert compute_quality_from_financials([]) is None
     # revenue が無い行だけ → None
     assert compute_quality_from_financials([_row(2025, recv=100.0, inv=200.0)]) is None
-    # revenue はあるが受取債権も在庫も無い（サマリのみ）→ None
+    # revenue はあるが受取債権も在庫も流動資産も総負債も無い（サマリのみ）→ None
     assert compute_quality_from_financials([_row(2025, rev=1000.0)]) is None
+
+
+# --- 清原式ネットキャッシュ（ADR-079） ---
+
+
+def test_net_cash_jp_simplified_formula() -> None:
+    # JP は投資有価証券なし（inv_sec=None）→ 簡略式 net_cash = 流動資産 − 総負債
+    rows = [_row(2025, rev=1000.0, ca=8000.0, tl=3000.0, disclosed="2025-06-18")]
+    q = compute_quality_from_financials(rows)
+    assert q is not None
+    assert q["net_cash"] == 8000.0 - 3000.0
+
+
+def test_net_cash_us_full_formula_with_investment_securities() -> None:
+    # US はフル式 net_cash = 流動資産 + 投資有価証券×0.7 − 総負債
+    rows = [_row(2025, rev=1000.0, ca=8000.0, inv_sec=2000.0, tl=3000.0)]
+    q = compute_quality_from_financials(rows)
+    assert q is not None
+    assert q["net_cash"] == 8000.0 + 2000.0 * 0.7 - 3000.0
+
+
+def test_net_cash_captured_even_without_receivables_inventory() -> None:
+    # 受取債権/在庫が無くても BS（流動資産/総負債）があれば net_cash を拾う（ADR-079・guard 緩和）。
+    # #2 列は None のまま（既存挙動を壊さない）。
+    rows = [_row(2025, rev=1000.0, ca=5000.0, tl=1000.0)]
+    q = compute_quality_from_financials(rows)
+    assert q is not None
+    assert q["net_cash"] == 4000.0
+    assert q["receivables_turnover_days"] is None
+    assert q["inventory_turnover_days"] is None
+
+
+def test_net_cash_none_when_bs_missing_but_recv_present() -> None:
+    # 受取債権だけあり BS が無い → #2 は出るが net_cash は None（捏造しない）
+    rows = [_row(2025, recv=100.0, rev=1000.0)]
+    q = compute_quality_from_financials(rows)
+    assert q is not None
+    assert q["net_cash"] is None
+    assert q["receivables_turnover_days"] is not None

@@ -44,15 +44,23 @@ def compute_quality_from_financials(rows: list[dict[str, Any]]) -> dict[str, Any
     cost_of_sales）。当期＝revenue がある最大 fiscal_year・YoY 基準＝その前年（fiscal_year−1）
     。前年行が
     無ければ YoY は None（>1 年差の増減率は誤解を招くため exact −1 のみ・growth_yoy と同方針）。
-    当期が取れない／受取債権も在庫も無いなら None（焼くものが無い）。戻り値は valuation_snapshots の
-    #2 列（4 つ）＋ 監査用 fin_disclosed_date。
+    当期が取れない／受取債権も在庫も流動資産も総負債も無いなら None（焼くものが無い）。戻り値は
+    valuation_snapshots の #2 列（4 つ）＋ 清原式 net_cash（ADR-079）＋ 監査用 fin_disclosed_date。
     """
     typed = [r for r in rows if isinstance(r.get("fiscal_year"), int)]
     with_rev = [r for r in typed if r.get("revenue") is not None]
     if not with_rev:
         return None
     curr = max(with_rev, key=lambda r: r["fiscal_year"])
-    if curr.get("receivables") is None and curr.get("inventory") is None:
+    # 受取債権・在庫・流動資産・総負債のいずれも無ければ焼くものが無い（net_cash も #2 も出ない）。
+    # BS だけある銘柄（受取債権/在庫は空でも流動資産/総負債はある）で net_cash を拾えるよう緩めた
+    # （ADR-079。#2 列は None のままで既存挙動を壊さない＝元々 None だった行を None で埋めるだけ）。
+    if (
+        curr.get("receivables") is None
+        and curr.get("inventory") is None
+        and curr.get("current_assets") is None
+        and curr.get("total_liabilities") is None
+    ):
         return None
 
     prev_year = curr["fiscal_year"] - 1
@@ -69,6 +77,13 @@ def compute_quality_from_financials(rows: list[dict[str, Any]]) -> dict[str, Any
         ),
         "inventory_growth_yoy": valuation.growth_yoy(
             inventory, prev.get("inventory") if prev else None
+        ),
+        # 清原式ネットキャッシュ（ADR-079）。JP は investment_securities=None→簡略式、US はフル式。
+        # 比率（÷時価総額）は焼かず read-time で導出する（repo の subquery）。
+        "net_cash": valuation.net_cash(
+            curr.get("current_assets"),
+            curr.get("investment_securities"),
+            curr.get("total_liabilities"),
         ),
         "fin_disclosed_date": curr.get("disclosed_date"),
     }

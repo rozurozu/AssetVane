@@ -16,12 +16,14 @@ from app.db.schema import (
     us_valuation_snapshots,
 )
 
-# 売掛/在庫の質の更新対象列（ADR-064 #2・JP valuation_snapshots と対称）。
+# 財務の質の更新対象列（ADR-064 #2＋ADR-079・JP valuation_snapshots と対称）。net_cash（清原式）も
+# 同じ yfinance balance_sheet 経路で焼くため相乗り。net_cash_ratio は read-time 導出で列にしない。
 _US_RECV_INV_COLUMNS = (
     "receivables_turnover_days",
     "inventory_turnover_days",
     "receivables_growth_yoy",
     "inventory_growth_yoy",
+    "net_cash",
 )
 
 
@@ -214,6 +216,8 @@ _US_SCREEN_RANGE_FIELDS = (
     "op_growth_yoy",
     "profit_growth_yoy",
     "eps_growth_yoy",
+    "net_cash",  # 清原式ネットキャッシュ絶対額（ADR-079）
+    "net_cash_ratio",  # net_cash / market_cap（read-time 導出列・ADR-079）
 )
 # sort_by に許す列名（外側サブクエリの列）。安全な allowlist（_SCREEN_SORT_COLS 同型・米株名）。
 _US_SCREEN_SORT_COLS = {
@@ -228,6 +232,8 @@ _US_SCREEN_SORT_COLS = {
     "op_growth_yoy",
     "profit_growth_yoy",
     "eps_growth_yoy",
+    "net_cash",
+    "net_cash_ratio",
     "gics_sector_pctile",
     "market_cap_rank",
     "symbol",
@@ -254,6 +260,10 @@ def _us_valuation_inner_subquery():
     market_cap_rank = (
         func.row_number().over(order_by=v.c.market_cap.desc()).label("market_cap_rank")
     )
+    # 清原式ネットキャッシュ比率は read-time 導出（ADR-079・JP valuation.py 版と同型）。net_cash は
+    # BS 由来で四半期ごと、market_cap は日次で動くので比率は物理列に焼かず都度割る。SQLite は
+    # market_cap 0/NULL で除算結果 NULL＝quant ガードと一致。JSON 境界の Decimal 化回避で Float 化。
+    net_cash_ratio = type_coerce(v.c.net_cash / v.c.market_cap, Float()).label("net_cash_ratio")
     return (
         select(
             v.c.symbol,
@@ -281,6 +291,8 @@ def _us_valuation_inner_subquery():
             v.c.inventory_turnover_days,
             v.c.receivables_growth_yoy,
             v.c.inventory_growth_yoy,
+            v.c.net_cash,
+            net_cash_ratio,
             gics_sector_pctile,
             market_cap_rank,
         )

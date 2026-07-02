@@ -70,6 +70,10 @@ def test_updates_snapshot_for_watchlist_code(temp_db, monkeypatch) -> None:
             "revenue": 1100.0,
             "gross_profit": 330.0,
             "cost_of_sales": None,
+            # 清原式ネットキャッシュの BS 項目（JP は投資有価証券なし＝簡略式・ADR-079）
+            "current_assets": 8000.0,
+            "total_liabilities": 3000.0,
+            "cash": 500.0,
         },
     ]
     fake = _FakeAdapter(fins)
@@ -87,6 +91,8 @@ def test_updates_snapshot_for_watchlist_code(temp_db, monkeypatch) -> None:
     assert snap["receivables_growth_yoy"] is not None
     assert abs(snap["receivables_growth_yoy"] - 0.5) < 1e-9
     assert snap["inventory_turnover_days"] is not None
+    # 清原式ネットキャッシュ（JP 簡略式）: 8000 − 3000 = 5000（投資有価証券項なし・ADR-079）
+    assert snap["net_cash"] == 5000.0
     assert stock["edinet_code"] == "E99999"  # 解決した edinet_code がキャッシュされた
 
 

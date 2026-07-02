@@ -44,6 +44,36 @@ def test_no_drift() -> None:
     assert drift["orphan"] == []
 
 
+def test_strategy_card_loads_with_kind() -> None:
+    """kind=strategy の手法カード（清原式）が読め、kind を持つ（ADR-079）。"""
+    card = method_cards.get_method_card("net_cash_value")
+    assert card is not None
+    assert card["kind"] == "strategy"
+    assert "ネットキャッシュ" in card["body"]
+
+
+def test_signal_cards_default_kind_signal() -> None:
+    """kind 未記載の既存カードは kind=signal 既定になる（後方互換・ADR-079）。"""
+    card = method_cards.get_method_card("momentum")
+    assert card is not None
+    assert card["kind"] == "signal"
+
+
+def test_strategy_card_not_flagged_as_orphan() -> None:
+    """strategy 種は signal に紐づかないのでドリフト検査の orphan にならない（ADR-079）。"""
+    drift = method_cards.validate_method_cards(_KNOWN)
+    assert "net_cash_value" not in drift["orphan"]
+    assert drift["orphan"] == []
+
+
+def test_catalog_tags_strategy_cards() -> None:
+    """カタログは strategy 種に [strategy] タグを付けて能動 screen 手法だと示す（ADR-079）。"""
+    catalog = method_cards.catalog_text()
+    assert "net_cash_value [strategy]:" in catalog
+    # signal 種はタグ無しのまま（後方互換）
+    assert "- momentum:" in catalog
+
+
 def test_catalog_text_lists_cards() -> None:
     """Tool description 用カタログに独自手法が並ぶ（常時露出のメタ）。"""
     catalog = method_cards.catalog_text()

@@ -55,11 +55,17 @@ def _to_float(value: Any) -> float | None:
 
 
 def _normalize_financial(raw: dict[str, Any]) -> dict[str, Any]:
-    """edinetdb.jp の財務 1 行を #2 が要る内部列名へ正規化する（ADR-010 の境界）。
+    """edinetdb.jp の財務 1 行を #2/#清原式 が要る内部列名へ正規化する（ADR-010 の境界）。
 
     外部キー名（trade_receivables/inventories/...）→ 内部名（receivables/inventory/...）の対応を
     このアダプタに閉じる。cost_of_sales は近年の行に無いことがあるため、無ければ None を返し
     （services が revenue − gross_profit で補う）。欠損列はすべて None（捏造しない）。
+
+    清原式ネットキャッシュ（ADR-079）用に current_assets（流動資産合計）/total_liabilities（負債
+    合計）/cash（現預金・補助）も抽出する。edinetdb.jp には投資有価証券の専用フィールドが無いため
+    investment_securities は取らない＝JP は簡略式（quant.net_cash が None を 0 扱い＝保守的）。
+    ※実キー名は公開仕様（edinetdb.jp/docs/api）ベース。取れない銘柄は None に倒れ net_cash も None
+    になるだけで安全（初回実取得でキー名を要確認・tasks/net-cash-fullization-todo.md）。
     """
     fy = raw.get("fiscal_year")
     return {
@@ -71,6 +77,10 @@ def _normalize_financial(raw: dict[str, Any]) -> dict[str, Any]:
         "revenue": _to_float(raw.get("revenue")),
         "gross_profit": _to_float(raw.get("gross_profit")),
         "cost_of_sales": _to_float(raw.get("cost_of_sales")),
+        # 清原式ネットキャッシュの BS 項目（ADR-079・JP は投資有価証券なし＝簡略式）
+        "current_assets": _to_float(raw.get("current_assets")),
+        "total_liabilities": _to_float(raw.get("total_liabilities")),
+        "cash": _to_float(raw.get("cash")),
     }
 
 

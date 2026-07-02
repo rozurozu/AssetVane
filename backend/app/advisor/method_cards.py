@@ -1,13 +1,18 @@
-"""手法カードのローダ — advisor/method_cards/<signal_type>.md を起動時に読む（ADR-075）。
+"""手法カードのローダ — advisor/method_cards/<key>.md を起動時に読む（ADR-075・ADR-079 で一般化）。
 
-設計の真実: docs/decisions.md ADR-075（手法カードはリポジトリ所有・signal_type キー）。
+設計の真実: docs/decisions.md ADR-075（手法カードはリポジトリ所有）・ADR-079（kind で一般化）。
 
 - **リポジトリ所有の第 4 知識源**（CORE／POLICY／knowledge_cards に続く）。アプリ/AI からは
   追加・編集できない（手法追加はコード変更を伴う）＝git・code review で入れる（ADR-015 同型）。
-- 各 md は frontmatter（signal_type / summary）＋本文。起動時に 1 度だけ dict へ読む。
+- 各 md は frontmatter（kind / signal_type or slug / summary）＋本文。起動時に 1 度 dict へ読む。
+- **kind は 2 種**（ADR-079）:
+  - `signal`（既定）＝signals に焼く signal_type の解釈。名＝signal_type・ドリフト検査対象。
+  - `strategy`＝signal を持たない手法（例: 清原式ネットキャッシュの screen 運用）。ファイル名＝手法
+    スラッグ。signal と 1:1 対応しないのでドリフト検査（orphan/missing）の対象外。
 - 注入は skill 型 progressive disclosure＝get_method_card の description に summary を常時露出し、
-  本文は get_method_card(signal_type) を呼んだ時だけ返す（決定論注入はしない＝ADR-062）。
-- ドリフト検査 validate_method_cards で「登録 signal_type とファイル」の書き忘れ/孤児を検出。
+  本文は get_method_card(key) を呼んだ時だけ返す（決定論注入はしない＝ADR-062）。
+- ドリフト検査 validate_method_cards は **signal 種のみ**「登録 signal_type とファイル」の
+  書き忘れ/孤児を検出（strategy 種は signal に紐づかないので除外＝ADR-079）。
 """
 
 from __future__ import annotations
@@ -39,15 +44,21 @@ def _parse_card(text: str) -> tuple[dict[str, str], str]:
 
 
 def _load() -> dict[str, dict[str, str]]:
-    """method_cards/*.md を読み {signal_type: {signal_type, summary, body}} を返す。"""
+    """method_cards/*.md を読み {key: {signal_type, kind, summary, body}} を返す（ADR-079）。
+
+    key は signal 種＝signal_type、strategy 種＝ファイル名スラッグ（frontmatter に signal_type
+    が無ければ path.stem を使う）。後方互換のため辞書フィールド名は "signal_type" のまま
+    （signal 種は signal_type・strategy 種はスラッグを保持）。kind は既定 "signal"。
+    """
     cards: dict[str, dict[str, str]] = {}
     if not _CARDS_DIR.is_dir():
         return cards
     for path in sorted(_CARDS_DIR.glob("*.md")):
         meta, body = _parse_card(path.read_text(encoding="utf-8"))
-        signal_type = meta.get("signal_type") or path.stem
-        cards[signal_type] = {
-            "signal_type": signal_type,
+        key = meta.get("signal_type") or path.stem
+        cards[key] = {
+            "signal_type": key,
+            "kind": meta.get("kind", "signal"),
             "summary": meta.get("summary", ""),
             "body": body,
         }
@@ -59,9 +70,9 @@ _CARDS = _load()
 
 
 def method_card_index() -> list[dict[str, str]]:
-    """全カードの {signal_type, summary} を signal_type 昇順で返す（Tool カタログ用）。"""
+    """全カードの {signal_type, kind, summary} を signal_type 昇順で返す（Tool カタログ用）。"""
     return [
-        {"signal_type": c["signal_type"], "summary": c["summary"]}
+        {"signal_type": c["signal_type"], "kind": c.get("kind", "signal"), "summary": c["summary"]}
         for c in sorted(_CARDS.values(), key=lambda c: c["signal_type"])
     ]
 
@@ -72,14 +83,24 @@ def get_method_card(signal_type: str) -> dict[str, str] | None:
 
 
 def catalog_text() -> str:
-    """Tool description に常時露出するカタログ（`- signal_type: summary` の複数行・ADR-075）。"""
-    return "\n".join(f"- {c['signal_type']}: {c['summary']}" for c in method_card_index())
+    """Tool description に常時露出するカタログ（複数行・ADR-075/079）。
+
+    signal 種は `- key: summary`、strategy 種は `- key [strategy]: summary`（signal を見た流れで
+    引く手法か、能動的に screen で使う手法かを LLM が 1 行で見分けられるように）。
+    """
+    lines = []
+    for c in method_card_index():
+        tag = " [strategy]" if c.get("kind") == "strategy" else ""
+        lines.append(f"- {c['signal_type']}{tag}: {c['summary']}")
+    return "\n".join(lines)
 
 
 def validate_method_cards(known_signal_types: set[str]) -> dict[str, list[str]]:
-    """ドリフト検査。known にカード無し(missing)／カードが known に無い(orphan) を返す。"""
-    have = set(_CARDS)
+    """ドリフト検査（signal 種のみ・ADR-079）。known にカード無し(missing)／カードが known に無い
+    (orphan) を返す。strategy 種は signal に紐づかないので対象外（orphan 誤検出を防ぐ）。
+    """
+    have_signal = {k for k, c in _CARDS.items() if c.get("kind", "signal") == "signal"}
     return {
-        "missing": sorted(known_signal_types - have),
-        "orphan": sorted(have - known_signal_types),
+        "missing": sorted(known_signal_types - have_signal),
+        "orphan": sorted(have_signal - known_signal_types),
     }

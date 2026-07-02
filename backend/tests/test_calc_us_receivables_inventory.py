@@ -20,8 +20,18 @@ def _fake_financials() -> tuple[pd.DataFrame, pd.DataFrame]:
     """yfinance 形（index=項目名・columns=決算日・新しい順）の BS/PL を作る。"""
     cols = [pd.Timestamp("2025-09-30"), pd.Timestamp("2024-09-30")]
     bs = pd.DataFrame(
-        {cols[0]: [150.0, 260.0], cols[1]: [100.0, 200.0]},
-        index=["Receivables", "Inventory"],
+        {
+            cols[0]: [150.0, 260.0, 8000.0, 2000.0, 3000.0, 500.0],
+            cols[1]: [100.0, 200.0, 7000.0, 1800.0, 2800.0, 400.0],
+        },
+        index=[
+            "Receivables",
+            "Inventory",
+            "Current Assets",
+            "Investments And Advances",
+            "Total Liabilities Net Minority Interest",
+            "Cash And Cash Equivalents",
+        ],
     )
     income = pd.DataFrame(
         {cols[0]: [1100.0, 770.0], cols[1]: [1000.0, 700.0]},
@@ -40,6 +50,11 @@ def test_fetch_balance_sheet_normalizes_rows() -> None:
     assert latest["revenue"] == 1100.0
     assert latest["cost_of_sales"] == 770.0
     assert latest["disclosed_date"] == "2025-09-30"
+    # 清原式ネットキャッシュの BS 項目も正規化される（ADR-079・US はフル式）
+    assert latest["current_assets"] == 8000.0
+    assert latest["investment_securities"] == 2000.0
+    assert latest["total_liabilities"] == 3000.0
+    assert latest["cash"] == 500.0
 
 
 class _FakeUsAdapter:
@@ -82,6 +97,10 @@ def test_us_job_updates_snapshot_for_holding(temp_db, monkeypatch) -> None:
             "revenue": 1100.0,
             "gross_profit": None,
             "cost_of_sales": 770.0,
+            "current_assets": 8000.0,
+            "investment_securities": 2000.0,
+            "total_liabilities": 3000.0,
+            "cash": 500.0,
         },
     ]
     monkeypatch.setattr(
@@ -97,6 +116,8 @@ def test_us_job_updates_snapshot_for_holding(temp_db, monkeypatch) -> None:
     assert snap is not None
     assert abs(snap["receivables_growth_yoy"] - 0.5) < 1e-9
     assert snap["inventory_turnover_days"] is not None
+    # 清原式ネットキャッシュ（US フル式）が焼かれる: 8000 + 2000×0.7 − 3000 = 6400（ADR-079）
+    assert snap["net_cash"] == 6400.0
 
 
 def test_us_job_skips_when_no_holdings(temp_db) -> None:

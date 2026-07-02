@@ -15,6 +15,7 @@ from typing import Any
 
 from app.advisor.tools import handlers
 from app.db import repo
+from app.db.engine import get_engine
 
 # verdict（判定）を Tool が漏らしていないかの監査キー（ADR-014）。
 _VERDICT_KEYS = {"verdict", "is_cheap", "is_undervalued", "判定", "割安", "rating"}
@@ -149,3 +150,27 @@ def test_screen_us_valuation_empty_when_threshold_strict(temp_db) -> None:
     assert out["market"] == "US"
     assert out["currency"] == "USD"
     assert out["count"] == 0
+
+
+def test_get_us_valuation_relays_net_cash_and_derives_ratio(temp_db) -> None:
+    """清原式ネットキャッシュ（ADR-079・US）。net_cash は焼いた事実、比率は read-time 導出。"""
+    _seed(temp_db)  # CHEAPT の market_cap = 500e8 = 5.0e10
+    with get_engine().begin() as conn:
+        repo.update_us_valuation_receivables_inventory(conn, "CHEAPT", {"net_cash": 6.0e10})
+    out = _run(handlers.handle_get_us_valuation({"symbol": "CHEAPT"}))
+    assert out["net_cash"] == 6.0e10
+    assert abs(out["net_cash_ratio"] - 6.0e10 / 5.0e10) < 1e-9  # 1.2
+    assert _VERDICT_KEYS.isdisjoint(out.keys())
+
+
+def test_screen_us_valuation_filters_by_net_cash_ratio(temp_db) -> None:
+    """net_cash_ratio_min で米株も絞れる（read-time 導出列・ADR-079）。"""
+    _seed(temp_db)
+    with get_engine().begin() as conn:
+        repo.update_us_valuation_receivables_inventory(conn, "CHEAPT", {"net_cash": 6.0e10})
+    out = _run(handlers.handle_screen_us_valuation({"net_cash_ratio_min": 1.0}))
+    assert out["count"] == 1
+    assert out["items"][0]["symbol"] == "CHEAPT"
+    assert abs(out["items"][0]["net_cash_ratio"] - 1.2) < 1e-9
+    out2 = _run(handlers.handle_screen_us_valuation({"net_cash_ratio_min": 1.5}))
+    assert out2["count"] == 0

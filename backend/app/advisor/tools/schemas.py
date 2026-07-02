@@ -142,11 +142,15 @@ class ScreenValuationArgs(_ToolArgs):
     revenue_growth_yoy_min: float | None = None  # 0..1 基準の比率
     profit_growth_yoy_min: float | None = None
     market_cap_min: float | None = None  # 円
+    market_cap_max: float | None = None  # 円（清原式の小型株＝500 億円未満 等の上限に使う）
+    # 清原式ネットキャッシュ（ADR-079）。net_cash_ratio_min≥1 で「時価総額を手元現金が上回る」割安。
+    net_cash_ratio_min: float | None = None  # net_cash / 時価総額（≥1 が清原式の目安）
+    net_cash_min: float | None = None  # ネットキャッシュ絶対額の下限（>0 で実質無借金に絞る等）
     sector33_code: str | None = None
     per_sector_pctile_max: float | None = None  # 業種内で安い割合（0..1）
     market_cap_rank_max: int | None = None  # 時価総額 上位 N
     exclude_etf: bool | None = None
-    sort_by: str | None = None  # per/pbr/roe/market_cap/dividend_yield/*_growth_yoy 等
+    sort_by: str | None = None  # per/pbr/roe/market_cap/dividend_yield/net_cash_ratio 等
     sort_dir: Literal["asc", "desc"] | None = None
     limit: int | None = None
 
@@ -184,11 +188,15 @@ class ScreenUsValuationArgs(_ToolArgs):
     revenue_growth_yoy_min: float | None = None  # 0..1 基準の比率
     profit_growth_yoy_min: float | None = None
     market_cap_min: float | None = None  # USD
+    market_cap_max: float | None = None  # USD（清原式の小型株上限に使う）
+    # 清原式ネットキャッシュ（ADR-079・US はフル式）。net_cash_ratio_min≥1 で割安。
+    net_cash_ratio_min: float | None = None  # net_cash / 時価総額（≥1 が清原式の目安）
+    net_cash_min: float | None = None  # ネットキャッシュ絶対額の下限（USD）
     gics_sector: str | None = None  # Yahoo .info.sector（GICS 相当の文字列・ADR-055）
     gics_sector_pctile_max: float | None = None  # 業種内で安い割合（0..1）
     market_cap_rank_max: int | None = None  # 時価総額 上位 N
     exclude_etf: bool | None = None
-    sort_by: str | None = None  # per/pbr/roe/market_cap/dividend_yield/*_growth_yoy 等
+    sort_by: str | None = None  # per/pbr/roe/market_cap/dividend_yield/net_cash_ratio 等
     sort_dir: Literal["asc", "desc"] | None = None
     limit: int | None = None
 
@@ -278,11 +286,12 @@ class SearchCardsArgs(_ToolArgs):
 
 
 class GetMethodCardArgs(_ToolArgs):
-    """get_method_card の引数（ADR-075・手法カードのオンデマンド取得）。
+    """get_method_card の引数（ADR-075・ADR-079・手法カードのオンデマンド取得）。
 
     シグナル/手法の正典的な解釈（何を測る・スコアの読み方・限界）をリポジトリの手法カードから返す。
-    `signal_type` を渡すと本文を、省略すると登録カードの一覧（signal_type＋summary）を返す。
-    独自手法（lead_lag / ai_alpha / stealth_accum 等）を解釈する前に呼ぶ。
+    `signal_type` を渡すと本文を、省略すると登録カードの一覧（キー＋kind＋summary）を返す。
+    渡すキーは signal 種＝signal_type（lead_lag / ai_alpha / stealth_accum 等を解釈する前に）、
+    strategy 種＝手法スラッグ（例: 清原式ネットキャッシュの `net_cash_value`・能動 screen の前に）。
     """
 
     signal_type: str | None = None

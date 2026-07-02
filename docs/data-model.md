@@ -270,10 +270,12 @@ UNIQUE `(portfolio_id, isin)`。
 | `op_forecast_revision`/`profit_forecast_revision` | REAL | 会社予想 直近修正（進行中FY 予想の最新÷前−1＝＋上方/−下方。[ADR-063](decisions.md) #4・0029）|
 | `receivables_turnover_days`/`inventory_turnover_days` | REAL | 売掛/在庫の質＝DSO（受取債権/売上×365）・DIO（在庫/売上原価×365）。JP 源は edinetdb.jp（[ADR-064](decisions.md) #2・0031）|
 | `receivables_growth_yoy`/`inventory_growth_yoy` | REAL | 受取債権・棚卸資産 YoY（対売上の乖離＝押し込み/滞留の疑いは `revenue_growth_yoy` と突合して LLM が解釈。[ADR-064](decisions.md) #2・0031）|
+| `net_cash` | REAL | 清原式ネットキャッシュ（流動資産＋投資有価証券×0.7−総負債・BS 由来の絶対額・負値=実質ネット負債。JP は投資有価証券欠落で簡略式＝保守側。[ADR-079](decisions.md)・0038）|
 | `fin_disclosed_date` | TEXT | 採用財務の開示日（監査） |
 | `updated_at` | TEXT | この行を焼いた時刻 ISO8601 |
 
 - 採用規律: PER/PBR は最新FY行の実績 EPS/BPS、配当/株数は最新開示行（`services/valuation.py`）。指標は計算不能なら NULL（[ADR-014](decisions.md) 捏造しない）。
+- **ネットキャッシュ比率（`net_cash_ratio`）は物理列に持たず read-time 導出**（screen/get の subquery で `net_cash / market_cap`。時価総額は日次で動くが `net_cash` は四半期ごと＝`per_sector_pctile`/`market_cap_rank` と同じ read-time 方式・[ADR-079](decisions.md)）。`screen_valuation` の `net_cash_ratio_min` で絞れる。
 - **日本株専用**。米株は別スナップショット `us_valuation_snapshots`・`/us-stocks`（通貨/GICS の境界・Phase 7(B-1) 実装済み・[ADR-055](decisions.md)）。
 
 ### `screening_filters` — 保存スクリーニング条件（[ADR-031](decisions.md)）
@@ -326,10 +328,11 @@ UNIQUE `(portfolio_id, isin)`。
 | `revenue_growth_yoy`/`op_growth_yoy`/`profit_growth_yoy`/`eps_growth_yoy` | REAL | YoY 成長率。**`op_growth_yoy`/`eps_growth_yoy` は `.info` に素が無く None**（捏造しない）|
 | `receivables_turnover_days`/`inventory_turnover_days` | REAL | 売掛/在庫の質＝DSO/DIO。源は yfinance `balance_sheet`＋`income_stmt`（[ADR-064](decisions.md) #2・0031・JP と対称）|
 | `receivables_growth_yoy`/`inventory_growth_yoy` | REAL | 受取債権・棚卸資産 YoY（対売上乖離は LLM が解釈。[ADR-064](decisions.md) #2・0031）|
+| `net_cash` | REAL | 清原式ネットキャッシュ（US はフル式＝投資有価証券×0.7 込み・yfinance `balance_sheet`。[ADR-079](decisions.md)・0038）|
 | `fin_disclosed_date` | TEXT | 採用財務の基準日（監査）|
 | `updated_at` | TEXT | この行を焼いた時刻 ISO8601 |
 
-- **指標は計算不能なら NULL**（[ADR-014](decisions.md) 捏造しない）。市場内ランク（`gics_sector_pctile`・`market_cap_rank`）は読み取り時の window 算出で、この表には保存しない。
+- **指標は計算不能なら NULL**（[ADR-014](decisions.md) 捏造しない）。市場内ランク（`gics_sector_pctile`・`market_cap_rank`）と**ネットキャッシュ比率（`net_cash_ratio`＝net_cash/market_cap）**は読み取り時の算出で、この表には保存しない（[ADR-079](decisions.md)）。`screen_us_valuation` の `net_cash_ratio_min` で絞れる。
 
 ### FX・米株保有（Phase 7(B-2)・[ADR-057](decisions.md)）
 

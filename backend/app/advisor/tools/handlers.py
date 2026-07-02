@@ -389,6 +389,11 @@ async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
             "inventory_turnover_days": row.get("inventory_turnover_days"),
             "receivables_growth_yoy": row.get("receivables_growth_yoy"),
             "inventory_growth_yoy": row.get("inventory_growth_yoy"),
+            # 清原式ネットキャッシュ（ADR-079）。net_cash=絶対額（負値=実質ネット負債）、比率=÷時価
+            # 総額（read-time 導出・≥1 で「時価総額を手元現金が上回る」割安）。JP は簡略式で保守側。
+            # 割安の良し悪し（経営者の意志・株主還元）は LLM が解釈する（事実のみ・ADR-014）。
+            "net_cash": row.get("net_cash"),
+            "net_cash_ratio": row.get("net_cash_ratio"),
             "last_restatement_at": last_restatement_at,
         }
     except Exception as exc:
@@ -477,6 +482,10 @@ async def handle_get_us_valuation(args: dict[str, object]) -> dict[str, Any]:
             "inventory_turnover_days": row.get("inventory_turnover_days"),
             "receivables_growth_yoy": row.get("receivables_growth_yoy"),
             "inventory_growth_yoy": row.get("inventory_growth_yoy"),
+            # 清原式ネットキャッシュ（ADR-079・US はフル式＝投資有価証券×0.7 込み）。比率は
+            # read-time 導出（÷時価総額・≥1 で割安）。良し悪しは LLM が解釈（事実のみ・ADR-014）。
+            "net_cash": row.get("net_cash"),
+            "net_cash_ratio": row.get("net_cash_ratio"),
         }
     except Exception as exc:
         logger.exception("handle_get_us_valuation 失敗")

@@ -222,10 +222,13 @@ REGISTRY: dict[str, ToolDef] = {
         name="screen_valuation",
         description=(
             "バリュエーション/ファンダ条件で全銘柄を絞り込み、候補を指標付きで列挙する"
-            "（per/pbr/roe/利益率/配当利回り/YoY 成長率のレンジ・業種・時価総額順位など）。"
+            "（per/pbr/roe/利益率/配当利回り/YoY 成長率のレンジ・業種・時価総額順位・"
+            "net_cash_ratio_min など）。"
             "『割安な銘柄を探して』『高 ROE で割安を探して』等の候補探しのときに呼ぶ。"
             "しきい値は手法カードの作法に基づき自分で criteria に渡す（例: 割安≈PER<15 や PBR<1 を"
-            "起点に、成長率・業種で調整）。日本株のみ・ランクは市場内（market:JP）。"
+            "起点に、成長率・業種で調整）。清原式ネットキャッシュ株は net_cash_ratio_min≥1・"
+            "market_cap_max・per_max で（作法は get_method_card('net_cash_value')）。"
+            "日本株のみ・ランクは市場内（market:JP）。"
         ),
         parameters=_schema(ScreenValuationArgs),
         handler=handlers.handle_screen_valuation,
@@ -444,10 +447,13 @@ REGISTRY: dict[str, ToolDef] = {
         name="screen_us_valuation",
         description=(
             "バリュエーション/ファンダ条件で**米国株**を絞り込み、候補を指標付きで列挙する"
-            "（per/pbr/roe/利益率/配当利回り/YoY 成長率のレンジ・GICS 業種・時価総額順位など）。"
+            "（per/pbr/roe/利益率/配当利回り/YoY 成長率のレンジ・GICS 業種・時価総額順位・"
+            "net_cash_ratio_min など）。"
             "『割安な米国株を探して』『高 ROE で割安を探して』等の候補探しのときに呼ぶ。"
             "しきい値は手法カードの作法に基づき自分で criteria に渡す（例: 割安≈PER<15 や PBR<1 を"
-            "起点に、成長率・業種で調整）。米国株のバリュエーション/ファンダ事実取得（USD・GICS）・"
+            "起点に、成長率・業種で調整）。清原式ネットキャッシュは net_cash_ratio_min≥1・"
+            "market_cap_max・per_max で（作法は get_method_card('net_cash_value')）。"
+            "米国株のバリュエーション/ファンダ事実取得（USD・GICS）・"
             "ランクは市場内（market:US・currency:USD）。日本株は screen_valuation（JPY）。"
         ),
         parameters=_schema(ScreenUsValuationArgs),

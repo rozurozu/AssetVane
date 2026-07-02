@@ -211,6 +211,36 @@ def inventory_turnover_days(inventory: float | None, cogs: float | None) -> floa
     return inventory / cogs * _DAYS_IN_YEAR
 
 
+# --- 清原式ネットキャッシュ（ADR-079） ---
+
+# 投資有価証券は簿価と時価/税のブレを見て 70% に割り引いて評価する（清原達郎『わが投資術』）。
+_INVESTMENT_SECURITIES_HAIRCUT = 0.7
+
+
+def net_cash(
+    current_assets: float | None,
+    investment_securities: float | None,
+    total_liabilities: float | None,
+) -> float | None:
+    """清原式ネットキャッシュ = 流動資産 ＋ 投資有価証券×0.7 − 総負債（ADR-079）。
+
+    固定資産は維持費がかかるため評価せず、1 年内に現金化できる流動資産＋割り引いた投資有価証券から
+    全負債を引いた「実質の手元資金」。比率（÷時価総額）は read-time で導出する（`net_cash` 自体は BS
+    由来で四半期ごとにしか動かないので物理列に焼く・鮮度は ADR-079/071）。
+
+    - 流動資産・総負債のどちらかが None なら計算不能で None（捏造しない・ADR-014）。
+    - 投資有価証券が None のときは項を 0 とする＝**簡略式（流動資産 − 総負債）**。JP v1 はデータ源
+      （edinetdb.jp）に投資有価証券の専用項目が無いためこの経路（投資有価証券を切り捨てるぶん
+      保守的に過小評価へ倒れる・full 化は tasks/net-cash-fullization-todo.md）。US はフル式。
+    - 総負債が流動資産を上回る（実質ネット負債）は負値として事実で返す（ROE と同じ規律）。
+      割安の良し悪し（比率≥1 が買いか等）は LLM が解釈する（ADR-014）。
+    """
+    if current_assets is None or total_liabilities is None:
+        return None
+    inv = 0.0 if investment_securities is None else investment_securities
+    return current_assets + inv * _INVESTMENT_SECURITIES_HAIRCUT - total_liabilities
+
+
 def compute_valuation(
     close: float | None,
     eps: float | None,

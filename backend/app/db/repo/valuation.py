@@ -181,6 +181,8 @@ _SCREEN_RANGE_FIELDS = (
     "op_growth_yoy",
     "profit_growth_yoy",
     "eps_growth_yoy",
+    "net_cash",  # 清原式ネットキャッシュ絶対額（ADR-079）
+    "net_cash_ratio",  # net_cash / market_cap（read-time 導出列・清原式は net_cash_ratio_min≥1）
 )
 # sort_by に許す列名（外側サブクエリの列）。安全な allowlist。
 _SCREEN_SORT_COLS = {
@@ -195,6 +197,8 @@ _SCREEN_SORT_COLS = {
     "op_growth_yoy",
     "profit_growth_yoy",
     "eps_growth_yoy",
+    "net_cash",
+    "net_cash_ratio",
     "per_sector_pctile",
     "market_cap_rank",
     "code",
@@ -220,6 +224,12 @@ def _valuation_inner_subquery():
     market_cap_rank = (
         func.row_number().over(order_by=v.c.market_cap.desc()).label("market_cap_rank")
     )
+    # 清原式ネットキャッシュ比率は read-time 導出（ADR-079）。net_cash は BS 由来で四半期ごとにしか
+    # 動かないが market_cap は日次で動くので、比率は物理列に焼かず最新 market_cap と都度割る
+    # （per_sector_pctile/market_cap_rank と同じ read-time 方式・鮮度は market_cap 側に従う）。
+    # SQLite は market_cap が 0/NULL のとき除算結果を NULL にする＝quant のガード（None）と一致。
+    # JSON 境界での Decimal 化を避けるため Float 化する（ADR-014・per_sector_pctile と同型）。
+    net_cash_ratio = type_coerce(v.c.net_cash / v.c.market_cap, Float()).label("net_cash_ratio")
     return (
         select(
             v.c.code,
@@ -251,6 +261,8 @@ def _valuation_inner_subquery():
             v.c.inventory_turnover_days,
             v.c.receivables_growth_yoy,
             v.c.inventory_growth_yoy,
+            v.c.net_cash,
+            net_cash_ratio,
             per_sector_pctile,
             market_cap_rank,
         )
@@ -460,12 +472,15 @@ def list_all_holding_codes(conn: Connection) -> list[str]:
     return list(rows)
 
 
-# 売掛/在庫の質の更新対象列（ADR-064 #2）。calc_valuation が焼いた既存行を後段ジョブが UPDATE する。
+# 財務の質の更新対象列（ADR-064 #2＋ADR-079）。calc_valuation が焼いた行を後段ジョブが cadence で
+# UPDATE する。net_cash（清原式・ADR-079）も同じ edinetdb.jp/yfinance 経路で焼くため相乗りさせる。
+# net_cash_ratio は物理列でなく read-time 導出なのでここには入れない（ADR-079）。
 _RECV_INV_COLUMNS = (
     "receivables_turnover_days",
     "inventory_turnover_days",
     "receivables_growth_yoy",
     "inventory_growth_yoy",
+    "net_cash",
 )
 
 
