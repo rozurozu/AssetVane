@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from app.advisor import service
-from app.advisor.llm import LLMResponse, ToolCall
+from app.advisor.llm import CostGuardError, LLMResponse, ToolCall
 from app.advisor.tools.registry import ToolDef
 from app.db import repo
 from app.db.engine import get_engine
@@ -185,6 +185,59 @@ def test_max_rounds_cutoff_chat_keeps_placeholder(monkeypatch: pytest.MonkeyPatc
         )
     )
     assert "打ち切り" in reply  # chat は定型文で UX を保つ
+
+
+# ---------------------------------------------------------------------------
+# run_turn_cancellable（送信中キャンセル・ADR-072）
+# ---------------------------------------------------------------------------
+
+
+def test_run_turn_cancellable_returns_result_when_connected() -> None:
+    """接続維持（is_disconnected=False）なら coro の結果をそのまま返す。"""
+
+    async def _fast() -> tuple[str, list[dict[str, object]]]:
+        return "最終応答", [{"name": "get_signals", "args": {}}]
+
+    async def _connected() -> bool:
+        return False
+
+    result = _run(service.run_turn_cancellable(_fast(), is_disconnected=_connected))
+    assert result == ("最終応答", [{"name": "get_signals", "args": {}}])
+
+
+def test_run_turn_cancellable_cancels_on_disconnect() -> None:
+    """切断検知（is_disconnected=True）で coro を cancel し None を返す（永続化スキップの合図）。"""
+    cancelled = {"v": False}
+
+    async def _slow() -> tuple[str, list[dict[str, object]]]:
+        try:
+            await asyncio.sleep(5)  # LLM 応答待ちを模す（切断で中断されるはず）
+            return "届かない", []
+        except asyncio.CancelledError:
+            cancelled["v"] = True
+            raise
+
+    async def _disconnected() -> bool:
+        return True
+
+    result = _run(
+        service.run_turn_cancellable(_slow(), is_disconnected=_disconnected, poll_seconds=0.01)
+    )
+    assert result is None  # 切断 → 呼び出し側は末尾の永続化をスキップする
+    assert cancelled["v"] is True  # coro（LLM ループ）は確かに cancel された
+
+
+def test_run_turn_cancellable_propagates_exception() -> None:
+    """coro が投げた例外は握らず再送出する（router の既存 except 分岐が効くように）。"""
+
+    async def _boom() -> tuple[str, list[dict[str, object]]]:
+        raise CostGuardError("月額上限超過")
+
+    async def _connected() -> bool:
+        return False
+
+    with pytest.raises(CostGuardError):
+        _run(service.run_turn_cancellable(_boom(), is_disconnected=_connected))
 
 
 # ---------------------------------------------------------------------------

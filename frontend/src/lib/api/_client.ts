@@ -69,11 +69,14 @@ export async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T>
 
 // POST / PUT / DELETE ヘルパ（getJSON と同じエラー処理・ADR-005）。
 // Content-Type: application/json を付与し、レスポンス body を T として返す。
-export async function postJSON<T>(path: string, body: unknown): Promise<T> {
+// signal は AbortController で送信を中断するため（チャット送信中キャンセル・ADR-072）。
+// abort 時は fetchOrUnreachable が AbortError を ApiError(status=0) に翻訳する（41-42 行）。
+export async function postJSON<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const r = await fetchOrUnreachable(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!r.ok) throw await toApiError(r);
   return r.json() as Promise<T>;

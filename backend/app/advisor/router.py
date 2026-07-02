@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from openai import OpenAIError
 from pydantic import BaseModel
 
@@ -27,6 +27,7 @@ from app.advisor.journaling import (
 )
 from app.advisor.llm import CostGuardError
 from app.advisor.prompt_builder import Message, ScreenContext, build_messages
+from app.advisor.service import run_turn_cancellable
 from app.advisor.tools.registry import CURRENT_PHASE
 from app.db import repo
 from app.db.engine import get_engine
@@ -68,8 +69,14 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest) -> ChatResponse:
-    """相談チャット。POLICY/文脈/画面コンテキストを組み、Tool ループで応答を返す（spec §6.3）。"""
+async def chat(req: ChatRequest, request: Request) -> ChatResponse:
+    """相談チャット。POLICY/文脈/画面コンテキストを組み、Tool ループで応答を返す（spec §6.3）。
+
+    送信中キャンセル（ADR-072）: run_turn（LLM ループ）を run_turn_cancellable でタスク化し、
+    frontend の中止（fetch abort）→ クライアント切断を request.is_disconnected で検知したら
+    LLM 呼び出しごと打ち切る。切断時は末尾の永続化（journal/proposals/cards）に到達しないので
+    中途半端な起票は残らない（副作用は末尾集約＝下記）。
+    """
     # POLICY（DEFAULT マージ済み）と直近 journal は読み取り接続で引く（ADR-005）。
     with get_engine().connect() as conn:
         policy = policy_service.get_policy(conn)
@@ -81,9 +88,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     # FocusRef は type=stock/signal のとき code を持つ（market は運ばない＝code 一致で衝突
     # しない・②）。
     focus = req.context.focus if req.context else None
-    focus_code = (
-        focus.code if focus and focus.type in ("stock", "signal") and focus.code else None
-    )
+    focus_code = focus.code if focus and focus.type in ("stock", "signal") and focus.code else None
     messages = build_messages(
         core_prompt=CORE,
         policy=policy,
@@ -104,7 +109,11 @@ async def chat(req: ChatRequest) -> ChatResponse:
         ) from exc
 
     try:
-        reply, tool_runs = await run_turn(messages, phase=CURRENT_PHASE, source="chat")
+        # 送信中キャンセル（ADR-072）: 切断監視つきで run_turn を走らせる。切断検知なら None。
+        result = await run_turn_cancellable(
+            run_turn(messages, phase=CURRENT_PHASE, source="chat"),
+            is_disconnected=request.is_disconnected,
+        )
     except CostGuardError as exc:
         # 月額コスト上限超過（block）。frontend が detail を吹き出しに出す（spec §7.1・ADR-028）。
         raise HTTPException(
@@ -119,6 +128,13 @@ async def chat(req: ChatRequest) -> ChatResponse:
             status_code=502,
             detail=f"LLM への接続に失敗しました（provider / base_url / codex login を確認）: {exc}",
         ) from exc
+
+    if result is None:
+        # クライアント切断（中止）。副作用（journal/proposals/cards）は下の末尾トランザクションに
+        # 集約されており、ここに到達しないので未実行のまま＝中途半端な起票は残らない（ADR-072）。
+        # クライアントは既に切断済みで body は破棄されるため、空応答を返して掃除だけする。
+        return ChatResponse(reply="")
+    reply, tool_runs = result
 
     response_tool_runs: list[ToolRun] = []
     for run in tool_runs:

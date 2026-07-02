@@ -155,9 +155,11 @@ export function rejectProposal(id: number, outcome?: string): Promise<ResolveRes
   return postJSON<ResolveResult>(`/proposals/${id}/reject`, { outcome: outcome ?? null });
 }
 
-/** 相談チャット（軸2・非ストリーミング・spec §6.3）。messages 全送信＋画面 context（数値なし）。 */
-export function sendChat(req: ChatRequest): Promise<ChatResponse> {
-  return postJSON<ChatResponse>("/chat", req);
+/** 相談チャット（軸2・非ストリーミング・spec §6.3）。messages 全送信＋画面 context（数値なし）。
+ * signal は送信中キャンセル用（ADR-072）。abort すると backend はクライアント切断を検知して
+ * LLM 呼び出しごと打ち切る（副作用は末尾集約なので中途半端な起票は残らない）。 */
+export function sendChat(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
+  return postJSON<ChatResponse>("/chat", req, signal);
 }
 
 /** SSE ストリーミング版の口だけ予約（spec §4.2・Phase 3 は非ストリーミング）。

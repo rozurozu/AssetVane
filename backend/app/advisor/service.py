@@ -13,8 +13,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Literal
@@ -140,6 +143,43 @@ async def run_tool_loop(
         return fallback, tool_runs
 
     return resp.content or "", tool_runs
+
+
+async def run_turn_cancellable(
+    coro: Awaitable[tuple[str, list[dict[str, object]]]],
+    *,
+    is_disconnected: Callable[[], Awaitable[bool]],
+    poll_seconds: float = 0.25,
+) -> tuple[str, list[dict[str, object]]] | None:
+    """coro（run_turn）を実行しつつクライアント切断を監視する（送信中キャンセル・ADR-072）。
+
+    チャットの LLM ループ（run_turn）はタスク化して走らせ、poll_seconds ごとに is_disconnected を
+    見る。切断を検知したらタスクを cancel し（CancelledError が httpx の in-flight リクエストへ伝播
+    して LLM 呼び出し自体を止める）、None を返す。呼び出し側（router）は None のとき末尾の永続化
+    （journal/proposals/cards）をスキップする＝副作用は末尾集約なので中途半端な起票は残らない。
+
+    - coro が正常終了/例外送出したら、監視より先にそれを拾って返す/再送出する（既存の
+      CostGuardError/OpenAIError 分岐が router 側で効くように、例外は握らない）。
+    - is_disconnected は callable で受け、service 層に web フレームワーク依存を持ち込まない
+      （router が Starlette の request.is_disconnected を渡す）。
+    """
+    task = asyncio.ensure_future(coro)
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=poll_seconds)
+            if task in done:
+                return task.result()  # 例外はここで再送出（握らない）
+            if await is_disconnected():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                return None
+    except BaseException:
+        # 監視側が cancel される等の予期せぬ伝播でも LLM タスクを取り残さない。
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        raise
 
 
 # ---------------------------------------------------------------------------

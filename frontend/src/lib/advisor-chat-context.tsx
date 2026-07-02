@@ -13,7 +13,7 @@
 import { type ChatMessage, type ChatResponse, type ToolRun, sendChat } from "@/lib/api";
 import { pathnameToContext } from "@/lib/chat-context";
 import { usePathname } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 // assistant バブルは tool_runs を併せ持つ（user は持たない）。
 export type Msg = ChatMessage & { tool_runs?: ToolRun[] };
@@ -26,6 +26,9 @@ type AdvisorChatValue = {
   busy: boolean;
   lastCardIds: number[]; // 直近ターンで propose_card が起票した draft の id（ADR-065）
   sendText: (text: string) => Promise<ChatResponse | null>;
+  // 送信中キャンセル（ADR-072）: 進行中の fetch を abort し、直前 user 発話をスレッドから取り除く。
+  // 戻り値は取り除いた発話の文面（呼び出し側が入力欄に戻して編集再送できる・null=中止対象なし）。
+  cancel: () => string | null;
   promoteToJournal: () => Promise<void>;
   clearChat: () => void;
 };
@@ -38,6 +41,9 @@ export function AdvisorChatProvider({ children }: { children: React.ReactNode })
   const [busy, setBusy] = useState(false);
   const [lastCardIds, setLastCardIds] = useState<number[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  // 送信中キャンセル（ADR-072）。abortRef=進行中送信の AbortController、pendingUserRef=その user 発話。
+  const abortRef = useRef<AbortController | null>(null);
+  const pendingUserRef = useRef<string | null>(null);
 
   // localStorage から会話を復元（マウント後 1 回・ADR-029）。
   useEffect(() => {
@@ -68,15 +74,22 @@ export function AdvisorChatProvider({ children }: { children: React.ReactNode })
       setMessages(next);
       setLastCardIds([]); // 新しい送信で前ターンの起票通知をクリア（最新ターンのみ表示）
       setBusy(true);
+      // 送信中キャンセル（ADR-072）: この送信専用の AbortController と、戻す用の user 発話を保持。
+      const controller = new AbortController();
+      abortRef.current = controller;
+      pendingUserRef.current = t;
       try {
         const payloadMessages: ChatMessage[] = next.map((m) => ({
           role: m.role,
           content: m.content,
         }));
-        const data = await sendChat({
-          messages: payloadMessages,
-          context: pathnameToContext(pathname),
-        });
+        const data = await sendChat(
+          {
+            messages: payloadMessages,
+            context: pathnameToContext(pathname),
+          },
+          controller.signal,
+        );
         setMessages((m) => [
           ...m,
           { role: "assistant", content: data.reply, tool_runs: data.tool_runs },
@@ -85,6 +98,9 @@ export function AdvisorChatProvider({ children }: { children: React.ReactNode })
         if (data.card_ids && data.card_ids.length > 0) setLastCardIds(data.card_ids);
         return data;
       } catch (e) {
+        // ユーザーが中止したとき（cancel が abort 済み）は⚠バブルを出さない。発話の取り除きと
+        // 入力欄への復元は cancel が済ませている（ADR-072）。
+        if (controller.signal.aborted) return null;
         const msg = e instanceof Error ? e.message : String(e);
         setMessages((m) => [
           ...m,
@@ -92,11 +108,24 @@ export function AdvisorChatProvider({ children }: { children: React.ReactNode })
         ]);
         return null;
       } finally {
+        if (abortRef.current === controller) abortRef.current = null;
         setBusy(false);
       }
     },
     [busy, messages, pathname],
   );
+
+  // 送信中キャンセル（ADR-072）: 進行中 fetch を abort し、直前の user 発話をスレッドから取り除く。
+  // 取り除いた文面を返し、呼び出し側（ChatConversation）が入力欄に戻して編集再送できるようにする。
+  const cancel = useCallback((): string | null => {
+    const c = abortRef.current;
+    if (!c) return null; // 進行中送信なし（既に応答到達等）は何もしない
+    const restored = pendingUserRef.current;
+    // 末尾が user 発話のとき（応答未着）だけ取り除く。競合で応答が先着していたら消さない。
+    setMessages((m) => (m[m.length - 1]?.role === "user" ? m.slice(0, -1) : m));
+    c.abort(); // fetch 中断 → sendText の catch が signal.aborted で握る（⚠バブルを出さない）
+    return restored;
+  }, []);
 
   // 会話を journal に残す（承認後のみ＝黙って自動保存しない・ADR-029/014）。
   // 応答 ChatResponse.journal_id（number=成功 / null=未昇格）を読んで成否をインライン表示する。
@@ -126,7 +155,7 @@ export function AdvisorChatProvider({ children }: { children: React.ReactNode })
 
   return (
     <AdvisorChatContext.Provider
-      value={{ messages, busy, lastCardIds, sendText, promoteToJournal, clearChat }}
+      value={{ messages, busy, lastCardIds, sendText, cancel, promoteToJournal, clearChat }}
     >
       {children}
     </AdvisorChatContext.Provider>

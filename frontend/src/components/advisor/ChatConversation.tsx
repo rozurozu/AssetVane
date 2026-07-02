@@ -20,7 +20,8 @@ type Props = {
 };
 
 export function ChatConversation({ showContextHint = true }: Props) {
-  const { messages, busy, lastCardIds, sendText, promoteToJournal, clearChat } = useAdvisorChat();
+  const { messages, busy, lastCardIds, sendText, cancel, promoteToJournal, clearChat } =
+    useAdvisorChat();
   const pathname = usePathname();
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -37,6 +38,12 @@ export function ChatConversation({ showContextHint = true }: Props) {
     setInput(""); // 送信が成立するときだけクリア（busy/空のとき入力を消さない）
     void sendText(t);
   }, [input, busy, sendText]);
+
+  // 送信中キャンセル（ADR-072）。進行中送信を中止し、直前の発話を入力欄に戻して編集再送できる。
+  const handleCancel = useCallback(() => {
+    const restored = cancel();
+    if (restored != null) setInput(restored);
+  }, [cancel]);
 
   const ctxLabel = contextLabel(pathnameToContext(pathname));
 
@@ -123,13 +130,18 @@ export function ChatConversation({ showContextHint = true }: Props) {
           placeholder="この画面について質問…（例: 短期で攻める方針を相談したい）"
           className="field-sizing-content max-h-[105px] min-h-[34px] flex-1 resize-none overflow-y-auto rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-[13px] text-ink leading-[1.4] outline-none focus:border-accent disabled:opacity-60"
         />
+        {/* busy 中は送信ボタンを「■ 中止」に化けさせる（ChatGPT 型・単一コントロール＝ADR-072）。 */}
         <button
           type="button"
-          onClick={send}
-          disabled={busy || !input.trim()}
-          className="h-[34px] w-[34px] rounded-md bg-accent text-white disabled:opacity-50"
+          onClick={busy ? handleCancel : send}
+          disabled={!busy && !input.trim()}
+          aria-label={busy ? "送信を中止" : "送信"}
+          title={busy ? "送信を中止して編集し直す" : "送信"}
+          className={`h-[34px] w-[34px] rounded-md text-white disabled:opacity-50 ${
+            busy ? "bg-down" : "bg-accent"
+          }`}
         >
-          ➤
+          {busy ? "■" : "➤"}
         </button>
       </div>
     </div>
