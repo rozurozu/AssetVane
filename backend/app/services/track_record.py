@@ -63,6 +63,7 @@ def _score_one(
     conn: Connection,
     prices_cache: dict[tuple[str, str], list[dict[str, Any]]],
     bench_cache: dict[str, list[dict[str, Any]]],
+    final_keys: set[tuple[str, int, int]],
     *,
     origin_kind: str,
     origin_id: int,
@@ -72,14 +73,21 @@ def _score_one(
     market: str,
     entry_date: str,
 ) -> tuple[int, int]:
-    """1 提案 × 全 horizon を採点し UPSERT する（戻り値 = (upserted, finalized) 件数）。"""
+    """1 提案 × 未 final の horizon を採点し UPSERT する（戻り値 = (upserted, finalized) 件数）。
+
+    final 済みの (origin_kind, origin_id, horizon) は再採点しない（ADR-077・採点入口の有界化）。
+    残り horizon が 0 本なら価格系列すら取らず即 return し、重い価格取得＋採点を丸ごと回避する。
+    """
+    remaining = [h for h in _HORIZONS if (origin_kind, origin_id, h) not in final_keys]
+    if not remaining:
+        return 0, 0  # 全 horizon final 済み → 価格取得もせず丸ごとスキップ
     prices = _prices_for(conn, prices_cache, market, code)
     benchmark = _benchmark_for(conn, bench_cache, market)
     benchmark_symbol = _BENCHMARK_SYMBOL[market]
 
     upserted = 0
     finalized = 0
-    for horizon in _HORIZONS:
+    for horizon in remaining:
         out = compute_horizon_outcome(prices, benchmark, entry_date=entry_date, horizon=horizon)
         hit = classify_hit(kind, out["excess_return"], out["realized_return"])
         repo.upsert_proposal_outcome(
@@ -113,8 +121,14 @@ def score_pending_outcomes(conn: Connection) -> dict[str, int]:
     """全 buy/sell 提案＋notable を市場結果で採点し proposal_outcomes を冪等 UPSERT（ADR-077）。
 
     接続規約（W2）: commit はしない。呼び出し側（score_proposal_outcomes ジョブ）が
-    `with get_engine().begin()` で境界を所有する。戻り値は件数サマリ（upserted/finalized）。
+    `with get_engine().begin()` で境界を所有する。戻り値は件数サマリ（upserted/finalized）＝
+    「今晩実際に採点した件数」（final スキップ分は数えない＝毎晩の実処理量が見える）。
+
+    採点入口の有界化（ADR-077）: 既 final の (origin_kind, origin_id, horizon) は再採点しない。
+    冒頭で既 final キー集合を 1 回引き、pending（horizon 未経過）だけを採点することで、母集団を
+    horizon 未経過分に有界化する（提案が溜まっても毎晩の処理量が青天井にならない・結果値は不変）。
     """
+    final_keys = repo.list_finalized_outcome_keys(conn)
     prices_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
     bench_cache: dict[str, list[dict[str, Any]]] = {}
     upserted = 0
@@ -138,6 +152,7 @@ def score_pending_outcomes(conn: Connection) -> dict[str, int]:
             conn,
             prices_cache,
             bench_cache,
+            final_keys,
             origin_kind="proposal",
             origin_id=int(row["id"]),
             source=row.get("source") or "chat",  # journal 由来 NULL は chat に倒す（ADR-077）
@@ -154,6 +169,7 @@ def score_pending_outcomes(conn: Connection) -> dict[str, int]:
             conn,
             prices_cache,
             bench_cache,
+            final_keys,
             origin_kind="notable",
             origin_id=int(pick["id"]),
             source=pick.get("source") or "nightly",

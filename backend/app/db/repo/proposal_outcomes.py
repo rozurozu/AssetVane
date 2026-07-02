@@ -69,6 +69,24 @@ def list_scorable_notable_picks(conn: Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
+def list_finalized_outcome_keys(conn: Connection) -> set[tuple[str, int, int]]:
+    """final 済みキー (origin_kind, origin_id, horizon) を返す（ADR-077・採点入口の有界化）。
+
+    score_pending_outcomes が「毎晩 final を再採点しない」ために既 final キーを引く。過去の終値は
+    不変ゆえ final 再採点は無駄で、pending（horizon 未経過）だけ採点すれば母集団が有界化する
+    （ix_proposal_outcomes_status が効く）。結果値は不変の安全な最適化。
+    """
+    stmt = select(
+        proposal_outcomes.c.origin_kind,
+        proposal_outcomes.c.origin_id,
+        proposal_outcomes.c.horizon,
+    ).where(proposal_outcomes.c.status == "final")
+    return {
+        (r["origin_kind"], int(r["origin_id"]), int(r["horizon"]))
+        for r in conn.execute(stmt).mappings()
+    }
+
+
 # --- 採点結果の冪等 UPSERT（W2） ---
 
 

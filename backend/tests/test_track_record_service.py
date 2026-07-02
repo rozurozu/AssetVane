@@ -240,3 +240,137 @@ def test_get_track_record_empty_is_safe(temp_db):
     assert tr["summary"] == []
     assert tr["recent"] == []
     assert tr["pending_count"] == 0
+
+
+# --- 採点入口の有界化（ADR-077・final スキップ） ---
+
+
+def _seed_jp_buy(conn, code: str, bars: list[tuple[str, float]], index: list[tuple[str, float]]):
+    """JP buy 提案 1 件＋価格/ベンチ系列を seed する（有界化テストの共通下ごしらえ）。"""
+    conn.execute(schema.stocks.insert().values(code=code, company_name="トヨタ"))
+    _seed_quotes(conn, schema.daily_quotes, "code", code, bars)
+    _seed_index(conn, "^TPX", index)
+    repo.insert_proposal(
+        conn,
+        created_date="2026-01-05",
+        kind="buy",
+        body=f'{{"code": "{code}", "company_name": "トヨタ", "market": "JP"}}',
+        status="pending",
+    )
+
+
+def test_finalized_outcome_is_not_rescored(temp_db, monkeypatch):
+    """final 済みの outcome は再採点されない（scored_at 不変・upserted に数えない＝有界化）。"""
+    monkeypatch.setattr(track_record, "_HORIZONS", (2,))
+    with get_engine().begin() as conn:
+        _seed_jp_buy(
+            conn,
+            "7203",
+            [("2026-01-05", 100.0), ("2026-01-06", 110.0), ("2026-01-07", 120.0)],
+            [("2026-01-05", 200.0), ("2026-01-06", 202.0), ("2026-01-07", 210.0)],
+        )
+        counts1 = track_record.score_pending_outcomes(conn)
+
+    rows = _outcomes()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "final"  # horizon=2 の到達バーが在る → 初回で final
+    assert counts1["finalized"] == 1
+    scored_at_1 = rows[0]["scored_at"]
+
+    # 2 回目: final は再採点しない → scored_at 不変・upserted/finalized に含まれない。
+    with get_engine().begin() as conn:
+        counts2 = track_record.score_pending_outcomes(conn)
+    rows = _outcomes()
+    assert len(rows) == 1
+    assert rows[0]["scored_at"] == scored_at_1  # UPSERT されていない
+    assert counts2["upserted"] == 0
+    assert counts2["finalized"] == 0
+
+
+def test_horizon_level_skip_final_but_rescore_pending(temp_db, monkeypatch):
+    """20=final・60=pending が並存するとき final horizon だけスキップし pending だけ再採点する。"""
+    monkeypatch.setattr(track_record, "_HORIZONS", (2, 4))
+    with get_engine().begin() as conn:
+        # 3 バー: horizon=2 は到達（final）・horizon=4 は未到達（pending）。
+        _seed_jp_buy(
+            conn,
+            "7203",
+            [("2026-01-05", 100.0), ("2026-01-06", 110.0), ("2026-01-07", 120.0)],
+            [("2026-01-05", 200.0), ("2026-01-06", 202.0), ("2026-01-07", 210.0)],
+        )
+        track_record.score_pending_outcomes(conn)
+
+    by_h = {r["horizon"]: r for r in _outcomes()}
+    assert by_h[2]["status"] == "final"
+    assert by_h[4]["status"] == "pending"
+    final_scored_at = by_h[2]["scored_at"]
+
+    # 2 回目: horizon=4 の到達バー（起点 index+4＝2026-01-09）を足す。
+    with get_engine().begin() as conn:
+        _seed_quotes(
+            conn,
+            schema.daily_quotes,
+            "code",
+            "7203",
+            [("2026-01-08", 130.0), ("2026-01-09", 140.0)],
+        )
+        _seed_index(conn, "^TPX", [("2026-01-08", 212.0), ("2026-01-09", 220.0)])
+        counts2 = track_record.score_pending_outcomes(conn)
+
+    by_h = {r["horizon"]: r for r in _outcomes()}
+    assert by_h[2]["scored_at"] == final_scored_at  # final は再採点されず不変
+    assert by_h[4]["status"] == "final"  # pending だった horizon=4 が今回 final 化
+    assert counts2["upserted"] == 1  # horizon=4 の 1 行だけ採点
+    assert counts2["finalized"] == 1
+
+
+def test_all_horizons_final_skips_price_fetch(temp_db, monkeypatch):
+    """全 horizon final の提案は価格系列を取得せず丸ごとスキップ（価格を消しても壊れない）。"""
+    monkeypatch.setattr(track_record, "_HORIZONS", (2,))
+    with get_engine().begin() as conn:
+        _seed_jp_buy(
+            conn,
+            "7203",
+            [("2026-01-05", 100.0), ("2026-01-06", 110.0), ("2026-01-07", 120.0)],
+            [("2026-01-05", 200.0), ("2026-01-06", 202.0), ("2026-01-07", 210.0)],
+        )
+        track_record.score_pending_outcomes(conn)
+
+    assert _outcomes()[0]["status"] == "final"
+
+    # 価格/ベンチを全消去しても final はスキップされ価格取得を回避 → 再採点で壊れず status 不変。
+    with get_engine().begin() as conn:
+        conn.execute(schema.daily_quotes.delete())
+        conn.execute(schema.index_quotes.delete())
+        counts = track_record.score_pending_outcomes(conn)
+
+    assert counts["upserted"] == 0
+    assert (
+        _outcomes()[0]["status"] == "final"
+    )  # pending へ逆戻りしない（価格を引き直していない証拠）
+
+
+def test_pending_is_rescored_every_night(temp_db, monkeypatch):
+    """pending の outcome は毎晩採点対象に残る（有界化が pending を巻き込まない回帰防止）。"""
+    monkeypatch.setattr(track_record, "_HORIZONS", (2,))
+    with get_engine().begin() as conn:
+        # 2 バーのみ → horizon=2 の到達バーが無く pending。
+        _seed_jp_buy(
+            conn,
+            "7203",
+            [("2026-01-05", 100.0), ("2026-01-06", 110.0)],
+            [("2026-01-05", 200.0), ("2026-01-06", 202.0)],
+        )
+        track_record.score_pending_outcomes(conn)
+
+    assert _outcomes()[0]["status"] == "pending"
+
+    # 到達バーを足して 2 回目 → pending は再採点され final 化する（スキップされない）。
+    with get_engine().begin() as conn:
+        _seed_quotes(conn, schema.daily_quotes, "code", "7203", [("2026-01-07", 120.0)])
+        _seed_index(conn, "^TPX", [("2026-01-07", 210.0)])
+        counts = track_record.score_pending_outcomes(conn)
+
+    assert _outcomes()[0]["status"] == "final"
+    assert counts["upserted"] == 1
+    assert counts["finalized"] == 1
