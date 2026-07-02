@@ -19,7 +19,6 @@ import {
   getEmbedding,
   getFaces,
   getProviders,
-  testCodex,
   testEmbedding,
   testProvider,
   updateEmbedding,
@@ -38,14 +37,13 @@ const FACE_LABELS: Record<string, string> = {
   triage: "カード審査（知識カードの振り分け）",
 };
 
-// reasoning_effort の選択肢（固定 enum・ADR-059）。"" = 既定（openai は送らない / codex は env）。
+// reasoning_effort の選択肢（固定 enum・ADR-059）。"" = 既定（openai は送らない）。
 const REASONING_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "（既定）" },
   { value: "minimal", label: "minimal" },
   { value: "low", label: "low" },
   { value: "medium", label: "medium" },
   { value: "high", label: "high" },
-  { value: "xhigh", label: "xhigh" },
 ];
 
 const btnCls =
@@ -352,7 +350,7 @@ function FaceRow({
   providers: Provider[];
   onChanged: () => void;
 }) {
-  // provider セレクト値: "" = 未設定(null) / "0" = codex / "<id>" = provider。
+  // provider セレクト値: "" = 未設定(null) / "<id>" = provider。
   const [sel, setSel] = useState<string>(face.provider_id === null ? "" : String(face.provider_id));
   const [model, setModel] = useState(face.model);
   const [reasoning, setReasoning] = useState(face.reasoning_effort);
@@ -374,12 +372,10 @@ function FaceRow({
     }
   }
 
-  // model 入力の placeholder を選択中 provider に応じて出す（codex / プリセット / 汎用）。
+  // model 入力の placeholder を選択中 provider に応じて出す（プリセット / 汎用）。
   const selProvider = providers.find((p) => String(p.id) === sel);
   const modelPlaceholder =
-    sel === "0"
-      ? "gpt-5.5（空なら CODEX_MODEL）"
-      : (presetByLabel(selProvider?.name)?.modelHint ?? "gpt-5.5 / claude-opus-4-8 / fugu-ultra …");
+    presetByLabel(selProvider?.name)?.modelHint ?? "gpt-5.5 / claude-opus-4-8 / fugu-ultra …";
 
   return (
     <div className="rounded-md border border-hairline bg-surface-2 p-2.5">
@@ -394,7 +390,6 @@ function FaceRow({
           <span className={labelCls}>provider</span>
           <select className={inputCls} value={sel} onChange={(e) => setSel(e.target.value)}>
             <option value="">（未設定）</option>
-            <option value="0">codex（鍵なし・ChatGPT サブスク）</option>
             {providers.map((p) => (
               <option key={p.id} value={String(p.id)}>
                 {p.name}
@@ -403,7 +398,7 @@ function FaceRow({
           </select>
         </div>
         <div>
-          <span className={labelCls}>model（codex は空で既定可・それ以外は必須）</span>
+          <span className={labelCls}>model（必須）</span>
           <input
             className={inputCls}
             placeholder={modelPlaceholder}
@@ -431,49 +426,6 @@ function FaceRow({
           {busy ? "保存中…" : "保存"}
         </button>
         {note && <span className="text-[12px] text-ink-muted">{note}</span>}
-      </div>
-    </div>
-  );
-}
-
-/** codex の状態カード（疎通テストのみ・設定は面別で・ADR-059）。 */
-function CodexStatusCard() {
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-
-  async function onTest() {
-    setBusy(true);
-    setNote(null);
-    try {
-      const r = await testCodex();
-      setNote(r.ok ? `● 使用可 ${r.detail}` : `⚠ 使用不可 ${r.detail}`);
-    } catch (e) {
-      setNote(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="rounded-md border border-hairline bg-surface-2 p-2.5">
-      <div className="mb-1.5 flex items-center gap-2">
-        <span className="text-ink-muted">{PROVIDER_ICONS.openai}</span>
-        <span className="font-medium text-[13px]">codex（ChatGPT サブスク・鍵不要）</span>
-      </div>
-      <p className="mb-2 text-[12px] text-ink-muted">
-        鍵は要らない（要 codex login）。model・reasoning effort は下の「面別 LLM 割当」で provider
-        に codex を選んで設定する。下のボタンで使用可否（ログイン・app-server
-        起動）を確認できるのだ。
-      </p>
-      <div className="flex items-center gap-2">
-        <button type="button" className={btnCls} onClick={onTest} disabled={busy}>
-          {busy ? "確認中…" : "疎通テスト"}
-        </button>
-        {note ? (
-          <span className="text-[12px] text-ink-muted">{note}</span>
-        ) : (
-          <span className="text-[11px] text-ink-subtle">○ 未確認</span>
-        )}
       </div>
     </div>
   );
@@ -658,8 +610,7 @@ export function LlmSettings() {
           主要 provider をあらかじめ並べてある。使うものを開いて API
           キーを入れて保存するのだ。OpenAI 互換 API（OpenAI / Claude / Sakana / OpenRouter /
           ローカル LLM）。キーは backend の DB に保存 （v1 は平文・LAN 内前提＝ADR-058）・GET
-          ではマスクして返す。model は下の「面別 LLM 割当」で 指定する（codex
-          は鍵不要・面のセレクトで選ぶ）。
+          ではマスクして返す。model は下の「面別 LLM 割当」で指定する。
         </p>
         <StatusBlock loading={loading} error={error}>
           {providers && (
@@ -690,8 +641,6 @@ export function LlmSettings() {
                   <AddCustomForm onChanged={refresh} />
                 </div>
               </details>
-              {/* codex は鍵なし組み込みで一覧に出ないため、状態カードを並べる（ADR-059）。 */}
-              <CodexStatusCard />
             </div>
           )}
         </StatusBlock>
@@ -700,7 +649,7 @@ export function LlmSettings() {
       <Card title="面別 LLM 割当">
         <p className="mb-2 text-[12px] text-ink-muted">
           用途（面）ごとに provider と model を割り当てる。例: チャットは Claude Opus 4.8、夜間AI は
-          codex、タグ付けは安い高速モデル、のように使い分けられる（ADR-058）。model
+          安価な強モデル、タグ付けは安い高速モデル、のように使い分けられる（ADR-058）。model
           はここで指定する。
         </p>
         <StatusBlock loading={loading} error={error}>

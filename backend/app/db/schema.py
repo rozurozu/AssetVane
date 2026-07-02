@@ -739,11 +739,10 @@ edinet_restatements = Table(
 #
 # LLM 接続の正本を env（起動時固定）から DB へ移し、/settings の WebUI から複数 provider を
 # 登録し、面（chat/nightly/dossier/tagger）ごとに provider と model を割り当てられるようにする
-# （ADR-058・ADR-012 の延長）。OpenAI 互換 1 本で全 provider を吸収し、真に特殊なのは codex のみ
-# （codex はここに行を持たない＝鍵なし組み込み・provider_id=0 を解決層がセンチネルとして扱う）。
+# （ADR-058・ADR-012 の延長）。OpenAI 互換 1 本で全 provider を吸収する
+# （codex 経路は ADR-073 で撤去）。
 
 # 鍵あり provider のレジストリ（OpenAI 互換 {base_url, api_key, model} で全部吸収・ADR-012）。
-# codex はここに行を持たない（鍵なし・組み込み固定の仮想 provider＝services/llm_config が合成）。
 # api_key は平文（ADR-001 単一ユーザー・認証なし・LAN 内が前提。将来は暗号化＝ADR-058 に明記）。
 llm_providers = Table(
     "llm_providers",
@@ -761,17 +760,17 @@ llm_providers = Table(
 )
 
 # 面（face）→ {provider, model} の割当（chat/nightly/dossier/tagger の 4 行運用・ADR-058 確定3）。
-# provider_id は NULL=未設定 / 0=codex（組み込み固定） / >0=llm_providers.id。FK は張らない
+# provider_id は NULL=未設定 / >0=llm_providers.id。FK は張らない
 # （SQLite で FK 無効運用・整合は services/router が守る＝ADR-058 確定7）。model は自由入力文字列
 # （v1 は reasoning_effort 等の細目を持たない＝確定5）。シードなし（行が無い面＝未設定＝確定4）。
 llm_face_config = Table(
     "llm_face_config",
     metadata,
     Column("face", String, primary_key=True),  # 'chat'/'nightly'/'dossier'/'tagger'
-    Column("provider_id", Integer),  # NULL=未設定 / 0=codex / >0=llm_providers.id
+    Column("provider_id", Integer),  # NULL=未設定 / >0=llm_providers.id
     Column("model", String, nullable=False, server_default=""),  # 自由入力（空なら provider 既定）
-    # 推論努力（ADR-059・0023）。空=既定（openai は送らない・codex は env codex_reasoning_effort）。
-    # 値域は minimal/low/medium/high/xhigh（openai→chat.completions・codex→thread config）。
+    # 推論努力（ADR-059・0023）。空=既定（openai は送らない）。
+    # 値域は minimal/low/medium/high（openai→chat.completions）。
     Column("reasoning_effort", String),
     Column("updated_at", String),  # ISO8601
 )

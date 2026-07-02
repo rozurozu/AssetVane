@@ -13,13 +13,11 @@ const nextConfig: NextConfig = {
   experimental: {
     // 下の rewrites プロキシの「上流（backend）応答待ち」上限（ms）。Next は既定で 30s に切る
     // （next 内部 proxy-request.js: `proxyTimeout || 30_000`）。AI Advisor の `POST /chat` は
-    // provider="codex"（ADR-012/032）だと codex app-server 起動＋MCP 越しの Tool 往復＋クラウド
-    // 強モデル推論で 30s を普通に超える。30s で切られると上流 backend:8000 への socket が
-    // ECONNRESET（"socket hang up"）され、backend が 200 を返していてもブラウザには素の
-    // HTTP 500（"Internal Server Error"）が返り「Advisor に繋がらなかった」になる。backend の
-    // codex 1 ターン上限（codex_timeout_seconds=180s）より余裕を持たせ、長い相談ターンを切らない
-    // （これより遅いときは backend 自身が CodexEngineError→502 で返す）。openai provider のときは
-    // 30s 未満で収まっていたため顕在化していなかった。
+    // クラウド強モデル推論＋Tool ループの往復で 30s を普通に超える。30s で切られると上流
+    // backend:8000 への socket が ECONNRESET（"socket hang up"）され、backend が 200 を返して
+    // いてもブラウザには素の HTTP 500（"Internal Server Error"）が返り「Advisor に繋がらなかった」
+    // になる。backend の LLM タイムアウト（llm_timeout_seconds・リトライ込み）より余裕を持たせ、
+    // 長い相談ターンを切らない（これより遅いときは backend 自身が 502 で返す）。
     proxyTimeout: 200_000,
   },
 

@@ -334,7 +334,7 @@ interface UsTransactionOut {
 
 ## 10. LLM 設定（プロバイダ複数登録・面別 provider/model・[ADR-058](decisions.md)）
 
-`/settings` から LLM の provider を複数登録し、面（chat/nightly/dossier/tagger/triage）ごとに provider と model を割り当てる（`triage`＝知識カード審査・[ADR-062](decisions.md)）。`api_key` は GET では必ずマスク（末尾4桁）で返し、更新は **write-only**（空送信は据え置き）。codex は鍵なし組み込みで provider 一覧には出ず、面の割当で `provider_id=0` として選ぶ。
+`/settings` から LLM の provider を複数登録し、面（chat/nightly/dossier/tagger/triage）ごとに provider と model を割り当てる（`triage`＝知識カード審査・[ADR-062](decisions.md)）。`api_key` は GET では必ずマスク（末尾4桁）で返し、更新は **write-only**（空送信は据え置き）。provider は OpenAI 互換のみ（codex 経路は [ADR-073](decisions.md) で撤去）。
 
 | メソッド | パス | 説明 |
 |---|---|---|
@@ -344,16 +344,15 @@ interface UsTransactionOut {
 | DELETE | `/llm/providers/{id}` | 削除（面が使用中なら 409） |
 | POST | `/llm/providers/{id}/test` | `/v1/models` 疎通テスト（`{ok, detail}`・失敗も 200） |
 | GET | `/llm/faces` | 全面の割当（`{face, provider_id, provider_name, model, reasoning_effort, configured}`・全面を必ず返す＝chat/nightly/dossier/tagger/triage） |
-| PUT | `/llm/faces/{face}` | 割当更新（`{provider_id, model, reasoning_effort}`・`provider_id=0` で codex・`null` で未設定・未知 provider は 422） |
-| POST | `/llm/codex/test` | codex 使用可否を実ターン 1 発で確認（`{ok, detail}`・失敗も 200・ADR-059） |
+| PUT | `/llm/faces/{face}` | 割当更新（`{provider_id, model, reasoning_effort}`・`null` で未設定・`>0` で登録 provider・0/未知 provider は 422） |
 | GET | `/llm/embedding` | embedding 接続の現在値（`{base_url, api_key_masked, has_api_key, model, dim, configured}`・ADR-059） |
 | PUT | `/llm/embedding` | embedding 更新（`{base_url?, api_key?, model?, dim?}`・api_key 空送信は据え置き） |
 | POST | `/llm/embedding/test` | embedding に 1 件投げて疎通（`{ok, detail}`・未設定/失敗も 200） |
 
-- **`reasoning_effort`**（ADR-059）: 空=既定 / `minimal` / `low` / `medium` / `high` / `xhigh`。openai 面は `chat.completions` の reasoning_effort、codex 面は thread config に渡る。非対応 model に設定すると provider が 400→チャットは 502（自動縮退しない）。
+- **`reasoning_effort`**（ADR-059）: 空=既定 / `minimal` / `low` / `medium` / `high`。openai 面は `chat.completions` の reasoning_effort に渡る。非対応 model に設定すると provider が 400→チャットは 502（自動縮退しない）。
 
 - **`ProviderOut`**: `{id, name, base_url, api_key_masked, has_api_key, default_model}`。生の `api_key` は返さない。
-- **`FaceConfig`**: `provider_id`＝`null`(未設定)/`0`(codex)/`>0`(provider)。`configured`＝`resolve_face` が通るか（=その面の LLM が動くか）。
+- **`FaceConfig`**: `provider_id`＝`null`(未設定)/`>0`(provider)。`configured`＝`resolve_face` が通るか（=その面の LLM が動くか）。
 - 未設定面は [ADR-018](decisions.md)：チャットは `POST /chat` が 503、夜間/ドシエは通知付き skip、タグ付けは沈黙 skip。
 
 ## 11. J-Quants 設定（api_key・契約プラン・[ADR-061](decisions.md)）

@@ -11,10 +11,7 @@ description: AI Advisor の Tool（app/advisor/tools/ の registry/schemas/handl
 
 Tool は **LLM が「この関数をこの引数で呼びたい」と要求 → Python の handler が repo/quant で事実（数字）を計算 → dict を返し、それを JSON 化して LLM が解釈・提案する** 関数。**LLM 自身は計算しない**（ADR-014）。handler は「引数 → repo/quant → dict」の薄い橋渡しで、ロジック・数値計算は持たない（計算は [[backend-service-quant-pattern]]、クエリは [[backend-repo-pattern]] に出す）。
 
-呼び出し経路は 2 系統あり、**同じ `REGISTRY` を共有する**（provider 差で挙動をぶらさない）:
-
-- **openai 互換 provider** … `service.run_tool_loop` が `REGISTRY[name].handler(args)` を呼び、結果を `json.dumps` して LLM に返す。
-- **codex provider** … MCP サーバー（`mcp_server.py`）が同じ handler を呼び、**mcp フレームワークが JSON 化**して返す。
+呼び出しは **`service.run_tool_loop` が `REGISTRY[name].handler(args)` を呼び、結果を `json.dumps` して LLM に返す**（provider は OpenAI 互換のみ・codex 経路は ADR-073 で撤去）。
 
 ## 3 ファイル分業と追加の 3 点セット
 
@@ -53,7 +50,7 @@ async def handle_get_xxx(args: dict[str, object]) -> dict[str, Any]:
 **handler の返り値（ネストした dict/list の値も含む）は json 標準がシリアライズできる素の型に限る** ＝ `int` / `float` / `str` / `bool` / `None` / `dict` / `list`。
 
 - ❌ `Decimal` / `date` / `datetime` / numpy scalar（`numpy.int64` 等）を **生で返さない**。
-- **理由**: 返り値は 2 経路とも JSON 化される ― openai は `run_tool_loop` の `json.dumps`、codex は mcp フレームワーク。**どちらも `Decimal` 非対応で 500 になる**（実障害あり）。openai 経路には最終防波堤 `_tool_result_default`（`json.dumps(..., default=...)`）があるが、**MCP 経路はフレームワーク内 JSON 化なので防波堤で救えない** ― だから防波堤に寄りかからず、返す型を素で正しくする。
+- **理由**: 返り値は `run_tool_loop` の `json.dumps` で JSON 化される。**`Decimal` は非対応で 500 になる**（実障害あり）。最終防波堤 `_tool_result_default`（`json.dumps(..., default=...)`）はあるが、それに寄りかからず**返す型を素で正しくする**（出所を断つのが本命）。
 - **特に `func.percent_rank()` 等の window 関数・集約は SQLAlchemy が `Decimal` を返す**。これは **repo で `type_coerce(expr, Float())` して Float 化するのが正しい断ち方**（＝[[backend-repo-pattern]]）。handler 側で `float(...)` に包んで誤魔化さない（`None` 混入で落ちる・出所が濁る）。
 - 日付は repo 側で ISO 文字列にして返すか、handler で `.isoformat()` する（生 `date`/`datetime` を返さない）。
 

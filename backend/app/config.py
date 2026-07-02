@@ -58,21 +58,6 @@ class Settings(BaseSettings):
     # 機能オフ（resolve_embedding_config が None を返す・ADR-006/018）。
     embedding_timeout_seconds: float = 30.0  # embeddings API のタイムアウト（秒）
 
-    # --- codex app-server（provider="codex" のとき使う） ---
-    # codex CLI を常駐 app-server（stdio JSON-RPC）として駆動し、自前 Tool は MCP 越しに呼ばせる
-    # （plans / ADR-012）。exec は MCP がキャンセルされる既知不具合のため app-server を使う。
-    codex_bin: str = "codex"  # 実行ファイル（PATH 上の名前 or 絶対パス）。`codex app-server` を起動
-    codex_model: str = "gpt-5.5"  # thread/start の model（codex 側の強モデル）
-    # 推論努力レベル＝thread/start の config.model_reasoning_effort（ReasoningEffort enum）。
-    # none/minimal/low/medium/high/xhigh のいずれか。空文字なら codex/モデル既定に任せる。
-    codex_reasoning_effort: str = ""
-    # thread/start の sandbox。Advisor は書かない（書き込みは MCP Tool＝FastAPI）。
-    codex_sandbox: str = "read-only"
-    codex_mcp_url: str = "http://localhost:8000/mcp"  # FastAPI 内 MCP の URL（codex が接続する）
-    codex_startup_timeout_seconds: float = 20.0  # app-server ハンドシェイク（initialize）の待ち上限
-    codex_timeout_seconds: float = 180.0  # 1 turn の上限（内部 Tool ループ込みで余裕を持つ）
-    codex_max_retries: int = 2  # 一過性失敗（serverOverloaded 等）の指数バックオフ再試行回数
-
     # --- API サーバ ---
     # CORS 設定は廃止（ADR-037）。ブラウザは Next 同一オリジンの /api だけを叩き、Next の
     # rewrites が裏で backend へ素通しするため、許可オリジンを backend に持たせる必要が無くなった。

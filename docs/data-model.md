@@ -591,7 +591,7 @@ AI アドバイザーの第 3 の知識源（CORE/POLICY に続く・[ADR-015](d
 
 ### LLM プロバイダ・面別設定 — `llm_providers`／`llm_face_config`（[ADR-058](decisions.md)・`0022_llm_providers`）
 
-LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settings` で編集する。OpenAI 互換 1 本で全 provider を吸収し、真に特殊なのは codex（鍵なし組み込み＝行を持たず `provider_id=0` で表す）だけ。api_key は平文（[ADR-001](decisions.md)・将来は暗号化予定）で、API の GET では必ずマスクして返す。
+LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settings` で編集する。OpenAI 互換 1 本で全 provider を吸収する（codex 経路は [ADR-073](decisions.md) で撤去）。api_key は平文（[ADR-001](decisions.md)・将来は暗号化予定）で、API の GET では必ずマスクして返す。
 
 **`llm_providers`**（鍵あり provider のレジストリ・複数行）
 
@@ -609,12 +609,12 @@ LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settin
 | カラム | 型 | 説明 |
 |---|---|---|
 | `face` | TEXT PK | `chat`/`nightly`/`dossier`/`tagger` |
-| `provider_id` | INTEGER | NULL=未設定 / 0=codex（組み込み） / >0=`llm_providers.id`（FK は張らない） |
-| `model` | TEXT | 自由入力（空なら provider 既定 / codex 既定） |
-| `reasoning_effort` | TEXT | 空=既定 / minimal / low / medium / high / xhigh（ADR-059・0023） |
+| `provider_id` | INTEGER | NULL=未設定 / >0=`llm_providers.id`（FK は張らない） |
+| `model` | TEXT | 自由入力（空なら provider 既定） |
+| `reasoning_effort` | TEXT | 空=既定 / minimal / low / medium / high（ADR-059・0023） |
 | `updated_at` | TEXT | ISO8601 |
 
-> シードしない（行が無い面＝未設定）。未設定面は [ADR-018](decisions.md) 準拠で chat=503・nightly/dossier=通知付き skip・tagger=沈黙 skip。provider 削除は使用中の面があれば 409。`reasoning_effort` は openai 面なら `chat.completions` の reasoning_effort、codex 面なら thread config に渡す（空なら openai は送らず・codex は env `codex_reasoning_effort` にフォールバック・[ADR-059](decisions.md)）。
+> シードしない（行が無い面＝未設定）。未設定面は [ADR-018](decisions.md) 準拠で chat=503・nightly/dossier=通知付き skip・tagger=沈黙 skip。provider 削除は使用中の面があれば 409。`reasoning_effort` は openai 面の `chat.completions` に渡す（空なら送らない・[ADR-059](decisions.md)）。旧 codex 経路（`provider_id=0`）は [ADR-073](decisions.md) で撤去し、既存の 0 は `0034` で NULL に正規化した。
 
 **`embedding_config`**（意味検索の埋め込み接続・単一行運用・[ADR-059](decisions.md)・`0023`）
 

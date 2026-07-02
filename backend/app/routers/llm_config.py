@@ -5,8 +5,8 @@
 `/settings` の WebUI から複数 provider を登録し、面（chat/nightly/dossier/tagger）ごとに
 provider と model を割り当てる。HTTP 入出力だけの薄い層で、解決ロジックは services/llm_config、
 クエリは db/repo/llm_config が持つ（ADR-005/014）。秘密の api_key は GET では必ずマスクし、更新は
-write-only（空送信は据え置き＝ADR-058 確定6）。codex は鍵なし組み込みで providers CRUD の対象外
-（面の割当で provider_id=0 として選ぶ）。
+write-only（空送信は据え置き＝ADR-058 確定6）。provider は OpenAI 互換のみ（codex 経路は
+ADR-073 で撤去）。
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from pydantic import BaseModel
 from sqlalchemy import Connection
 
 from app.advisor.llm import get_client
-from app.config import settings
 from app.db import repo
 from app.db.engine import get_conn, get_engine
 from app.services.llm_config import FACES, describe_faces
@@ -55,15 +54,15 @@ class ProviderUpdate(BaseModel):
 
 class FaceOut(BaseModel):
     face: str
-    provider_id: int | None  # None=未設定 / 0=codex / >0=llm_providers.id
-    provider_name: str | None  # codex は "codex"・宙づりは None
+    provider_id: int | None  # None=未設定 / >0=llm_providers.id
+    provider_name: str | None  # 宙づりは None
     model: str
-    reasoning_effort: str  # 空=既定 / minimal / low / medium / high / xhigh（ADR-059）
+    reasoning_effort: str  # 空=既定 / minimal / low / medium / high（ADR-059）
     configured: bool  # resolve_face が通るか（=その面の LLM が動くか）
 
 
 class FaceUpdate(BaseModel):
-    provider_id: int | None  # 0=codex / None=未設定に戻す / >0=登録 provider
+    provider_id: int | None  # None=未設定に戻す / >0=登録 provider
     model: str = ""
     reasoning_effort: str = ""  # 空=既定（ADR-059）
 
@@ -210,15 +209,15 @@ def update_face(
     body: FaceUpdate,
     face: str = Path(...),
 ) -> FaceOut:
-    """面の provider/model 割当を更新する（provider_id=0 で codex・ADR-058）。"""
+    """面の provider/model 割当を更新する（None=未設定 / >0=登録 provider・ADR-058/068）。"""
     if face not in FACES:
         raise HTTPException(
             status_code=404, detail=f"未知の面: {face}（{', '.join(FACES)} のいずれか）"
         )
     with get_engine().begin() as conn:
-        # provider_id>0 は実在 provider を指すこと（codex=0・未設定=None は許す）。
-        if body.provider_id is not None and body.provider_id > 0:
-            if repo.get_provider(conn, body.provider_id) is None:
+        # provider_id は None（未設定に戻す）か実在 provider の id（>0）のみ許す（ADR-073）。
+        if body.provider_id is not None:
+            if body.provider_id <= 0 or repo.get_provider(conn, body.provider_id) is None:
                 raise HTTPException(
                     status_code=422, detail=f"provider(id={body.provider_id}) が存在しません。"
                 )
@@ -254,30 +253,6 @@ async def test_provider(provider_id: int = Path(..., ge=1)) -> ProviderTestRespo
         return ProviderTestResponse(ok=True, detail=f"疎通 OK（モデル {n} 件）")
     except OpenAIError as exc:
         return ProviderTestResponse(ok=False, detail=f"疎通失敗: {exc}")
-
-
-# ===== codex 状態（疎通テストのみ・設定は面別・ADR-059） =====
-
-
-@router.post("/llm/codex/test", response_model=ProviderTestResponse)
-async def test_codex() -> ProviderTestResponse:
-    """codex が使用可能か（ChatGPT login・app-server 起動）を実ターン 1 発で確認する（ADR-059）。
-
-    最小の単発生成を試す（ChatGPT サブスク経由＝USD コスト無し）。失敗（未ログイン・バイナリ不在・
-    app-server 起動不可）も例外にせず ok=false で返す（Web UI が表示）。reasoning/model は面別で
-    設定するため、ここでは codex 既定 model で疎通だけ見る。
-    """
-    from app.advisor import codex_engine
-
-    messages: list[dict[str, object]] = [{"role": "user", "content": "ping"}]
-    try:
-        text = await codex_engine.generate_once(messages, source="chat", model=settings.codex_model)
-        snippet = (text or "").strip().replace("\n", " ")[:40]
-        return ProviderTestResponse(ok=True, detail=f"使用可（応答: {snippet}…）")
-    except codex_engine.CodexEngineError as exc:
-        return ProviderTestResponse(
-            ok=False, detail=f"使用不可（codex login / バイナリ確認）: {exc}"
-        )
 
 
 # ===== embedding 接続（意味検索・単一行・ADR-059） =====

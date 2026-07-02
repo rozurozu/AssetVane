@@ -24,9 +24,6 @@ services:
       - ./data:/data
       # Phase 5 の推論モデル（別 PC 産 .pkl・git 管理外・ADR-006）。今は空でよい。
       - ./backend/models:/app/models
-      # codex provider（ADR-032）用。/opt/assetvane/.codex に置いた auth.json を共有する。
-      # codex がリフレッシュで書き換えるため read-write。初回供給手順は docs/deploy.md 参照。
-      - ./.codex:/root/.codex
     # ログは stdout/stderr に寄せ、Pi の永続化は docker json-file のローテーションで賄う（ADR-038）。
     # ラズパイの SD I/O・寿命がボトルネックなので（ADR-017）無制限にログを溜めない。
     # max-size 10m × max-file 5 ＝ 1 サービスあたり最大 50MB で頭打ち（古いものから破棄）。

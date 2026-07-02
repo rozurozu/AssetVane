@@ -335,6 +335,8 @@
 
 ## ADR-032: codex 接続は MCP＋`codex app-server`（API/codex を面別切替・自動フォールバックなし）
 
+> **⚠️ Superseded by [ADR-073](#adr-073-codex-接続の撤去adr-032-を-superseded).** codex を AI Advisor の LLM プロバイダとして使う経路は 2026-07-02 に全撤去した（コード・env・Dockerfile 同梱バイナリ・`/mcp`・`/llm/codex/test` を削除）。以下は当時の記録として残す。現行は OpenAI 互換 provider 一本（[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)）。
+
 - **状況**: AI Advisor は OpenAI 互換 API（OpenRouter・[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)）固定だった。**コスト削減**のため codex CLI でも動かしたい（codex は ChatGPT サブスク認証＝API キー不要・限界費用ゼロ。このマシンは `~/.codex/auth.json` で login 済み）。ただし「今まで通り API でも動く」を必ず残す。codex は外部定義の function tool を注入する口を持たず、自前 Tool を渡す正規ルートは MCP のみ。
 - **決定**:
   - **自前 Tool は MCP サーバ化**。FastAPI プロセス内に streamable HTTP の `/mcp` を立て、既存 `REGISTRY` を `openai_tools(phase)` と同集合で公開（`app/advisor/mcp_server.py`）。handler は FastAPI 内で動き **DB に触れるのは FastAPI だけ（[ADR-005](#adr-005-db-に触れるのは-fastapi-だけ)）** を保つ。codex は別プロセスで HTTP 越しに呼ぶだけ。
@@ -856,6 +858,8 @@
 
 ## ADR-058: LLM プロバイダ・面別 provider/model 設定を env から DB＋WebUI（/settings）へ移管する
 
+> **注記（[ADR-073](#adr-073-codex-接続の撤去adr-032-を-superseded)）**: 本 ADR の「LLM 設定を DB+WebUI へ移管」という決定は現行のまま。ただし codex に関する記述（`provider_id=0` センチネル・残す env に `CODEX_*`・実装ファイルの `codex_engine.py`）は ADR-068 で撤去済み。provider は OpenAI 互換のみ。
+
 - **状況/問題**: LLM 設定は `config.py` の pydantic `BaseSettings`（env 由来・起動時固定 singleton）に閉じ込められ、(1) `llm.py` の `_client = AsyncOpenAI(...)` がモジュールロード時の単一 singleton で base_url/api_key を実行時に差し替えられない、(2) model は `settings.llm_model` の全面共通 1 値で面（chat/nightly/dossier）ごとに変えられない、(3) provider は `LLM_PROVIDER_*` で openai/codex を面別選択できるだけで、複数の OpenAI 互換 provider（OpenAI 直 / Claude / ローカル / Sakana）を同時登録して面別に割り当てられない、という制約があった。「この面は GPT-5、この面は Claude Opus 4.8、この面は Sakana fugu」のように面ごとに provider と model を**同時に**割り当てたい。
 - **決定**:
   - **正本を DB に移す**。新テーブル `llm_providers`（鍵あり provider のレジストリ・複数行）と `llm_face_config`（面→{provider_id, model} の 4 行運用）を追加（`0022_llm_providers`）。provider/api_key/base_url/model と面別割当は `/settings` の WebUI から編集する。env の `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`/`LLM_PROVIDER_CHAT|NIGHTLY|DOSSIER` は**廃止**しデッドコードを残さない（残すのは接続パラメータ `LLM_TIMEOUT_SECONDS`/`LLM_MAX_RETRIES`/`LLM_RETRY_BASE_SECONDS`、コストガード `LLM_COST_*`、codex プロセス設定 `CODEX_*`、embedding `EMBEDDING_*`）。
@@ -880,6 +884,8 @@
 - **関連**: [ADR-012](#adr-012-llm-はアダプタで抽象化しenv-で-openrouter--ollama-を差し替える)（OpenAI 互換 1 本・base_url/model/api_key 差替）・[ADR-032](#adr-032-codex-接続は-mcpcodex-app-serverapicodex-を面別切替自動フォールバックなし)（codex 面別切替・`provider_for` の env 機構を本 ADR が DB＋WebUI へ置換）・[ADR-013](#adr-013-投資方針-policy-は単一を育てる複数ペルソナや版管理は作らない)（DB 保存して UI 編集の前例＝policy）・[ADR-005](#adr-005-db-に触れる-os-プロセスは-fastapi-だけにする)（DB は FastAPI だけ）・[ADR-001](#adr-001-単一ユーザー前提で作る)（平文・LAN 内前提）・[ADR-018](#adr-018-llm-障害時はフォールバックで縮退し夜間は通知して当日をスキップする)（未設定面のフォールバック）・[ADR-028](#adr-028-llm-月額コストガードレールを-warn-既定-block-でかける)（コストガードの限界）・[data-model.md](data-model.md)・[api.md](api.md)・[architecture.md](architecture.md)。
 
 ## ADR-059: 面別 reasoning_effort ＋ codex 状態確認 ＋ embedding 接続の DB+WebUI 化（ADR-058 拡張）
+
+> **注記（[ADR-073](#adr-073-codex-接続の撤去adr-032-を-superseded)）**: 本 ADR のうち「codex 状態確認」（`POST /llm/codex/test`）と codex 面の reasoning env フォールバックは ADR-068 で撤去済み。面別 reasoning_effort（openai）と embedding 接続の DB+WebUI 化は現行。reasoning の値域は minimal/low/medium/high（xhigh は codex 固有だったため撤去）。
 
 - **状況/問題**: [ADR-058](#adr-058-llm-プロバイダ面別-providermodel-設定を-env-から-dbwebuisettings-へ移管する) で v1 として先送りした 2 点（面別 reasoning_effort・embedding の WebUI 化）と、ユーザー要望（codex が使用可能かを `/settings` で確認したい）を実装する。reasoning_effort は当時「面の粒度は provider+model のみ」とし、embedding は env 据え置き、codex は鍵なし組み込みで provider 一覧に出ない、という状態だった。
 - **決定**:
@@ -1093,3 +1099,16 @@
 - **代替案**: **最初の N 秒だけ中止可**→タイマー管理が増え、窓を過ぎた長い応答を止められず、末尾集約で中途半端が起きない以上メリット薄＝却下。**Starlette の自動キャンセルに依存**→非ストリーミングかつ `receive()` 非読取では発火しない定番の落とし穴＝明示ポーリング採用。**codex 面も強制 cancel**→常駐 JSON-RPC シングルトンの要求/応答対応がずれ得るうえ codex は廃止予定＝据え置き。**永続化ブロックも `asyncio.shield` で保護**→監視を `run_turn` 限定にした時点で永続化は監視外＝過剰なので入れない。
 - **段階**: 実装済み（2026-07-02・ATDD＝受け入れテスト先行）。`service.run_turn_cancellable`＋受け入れテスト（`test_advisor_service`＝接続維持で結果を返す／切断で None かつ coro が cancel される／例外を再送出の 3 本）・`chat` ハンドラ配線・frontend の `postJSON`/`sendChat` の `signal` 引き回し・`AdvisorChatProvider` の `cancel`・`ChatConversation` の中止ボタン化。backend pytest／ruff／pyright green、frontend biome／`tsc --noEmit` green。**dev サーバでの手動 E2E（中止で発話が入力欄に戻る・中止後に journal/proposals に新規行が増えない・OpenRouter 側で in-flight が続かない）は次回運用時に確認**（migration なし）。
 - **関連**: [ADR-024](#adr-024-ai-advisor-チャットを全ページ常駐にするフローティング)（会話は frontend 保持・ステートレスゆえ再送は messages 再 POST で完結）・[ADR-065](#adr-065-ai-advisor-に専用大画面ページ-advisor-を追加し会話状態を共有するopen-i-撤回adr-024-補強知識ノートの壁打ち導線)（会話状態は Context 共有＝どの窓から中止しても効く）・[ADR-014](#adr-014-ai-は計算しないtool-calling-原則rag-は後付け)（失われるのは LLM の解釈テキストのみ・事実は Tool で再取得可）・[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)（対話チャットは通知しない・障害は HTTP コードで返す）・[ADR-020](#adr-020-個別銘柄ドシエ定性ファンダ調査-1銘柄1レポートを更新し続ける)（investigate_stock の dossier は冪等キャッシュ）。
+
+## ADR-073: codex 接続の撤去（ADR-032 を Superseded）
+
+- **状況**: [ADR-032](#adr-032-codex-接続は-mcpcodex-app-serverapicodex-を面別切替自動フォールバックなし) で、コスト削減のため AI Advisor の LLM を codex（`codex app-server` を FastAPI プロセス内に常駐させ自前 Tool を `/mcp` 越しに呼ばせる・`/settings` で面に `provider_id=0` として割当）でも動かせるようにした。だが実運用では、(1) ChatGPT サブスクの login トークンは無人 cron での継続に制約があり夜間面（nightly）は結局 openai 推奨で codex を寄せられなかった、(2) app-server 常駐シングルトン＋MCP 経路は openai 経路（`llm.py`/`service.run_tool_loop`）と二系統の障害処理・テスト・JSON 化を抱える保守コスト源で、[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可) の「本番＝クラウド強モデル前提」から見て割に合わなかった。**codex を LLM プロバイダとして使わない、という設計判断をした。**
+- **決定**:
+  - **codex を LLM プロバイダ経路として全撤去する**。`app/advisor/codex_engine.py`（app-server JSON-RPC シングルトン）と `app/advisor/mcp_server.py`（REGISTRY を codex に渡す MCP サーバ）をファイルごと削除。`engine.py` の provider 分岐（`if face.provider == "codex"`）・`services/llm_config.py` の `CODEX_PROVIDER_ID=0` センチネルと解決分岐・`routers/llm_config.py` の `POST /llm/codex/test`・`main.py` の `mount_mcp`/`session_manager_lifespan`/`codex_engine.shutdown`・`advisor/router.py` の `CodexEngineError` 分岐を除去。`config.py` の `codex_*` 8 フィールド・`.env(.example)` の `CODEX_*`・`Dockerfile` の codex バイナリ同梱（`ARG TARGETARCH`・musl 取得・`curl`）・compose の `.codex` マウントも削除。provider は **OpenAI 互換一本**に戻す（[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)）。
+  - **面の provider_id=0 センチネルを撤去**。`update_face` は `provider_id` を NULL（未設定）か実在 provider の id（>0）のみ許し、0 は 422 で弾く。既存 `llm_face_config` の `provider_id=0` は migration `0034_drop_codex_face_sentinel` で NULL に正規化（DDL 変更なし・挙動は移行前後で不変＝0 も NULL も未設定扱い＝[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)）。
+  - **reasoning_effort の値域から codex 固有の `xhigh` を外す**（openai は minimal/low/medium/high）。`reasoning_effort` 列自体は openai 面が使うので存続。
+  - **開発ツールとしての Codex CLI は撤去対象外**（`.codex/skills` symlink・`AGENTS.md`・設計相談での Codex 利用）。これは開発のやり方であり LLM プロバイダとは別系統。
+- **理由**: LLM を本番＝クラウド強モデル前提（ADR-012）に一本化する方が、障害処理・テスト・Tool の JSON 化・起動配線が単純になり、[ADR-005](#adr-005-db-に触れるのは-fastapi-だけ)（DB は FastAPI だけ）/[ADR-014](#adr-014-ai-に数値を計算させない)（AI は計算しない）の規律も openai 経路だけで保てる。codex はコスト削減の後付け経路であり、無人運用の制約で当初の狙い（夜間も codex）を満たせなかった以上、二系統を抱え続ける利が無い。デッドコードを残さない方針にも合う。
+- **代替案**: (A) codex 経路を残して「死に経路」として据え置く → 二系統の保守コストとテスト固定（openai 縛り）が残り、デッドコード方針に反する＝却下。(B) 面の provider_id=0 をコードだけ無効化し migration を打たない → ステールなセンチネル 0 がデータに残る＝データ衛生のため migration を採用。
+- **影響/段階**: **実装済み（2026-07-02）**。backend（`codex_engine.py`/`mcp_server.py` 削除・分岐/配線/config/env/Dockerfile 撤去・`0034` migration・関連テスト削除/更新）・frontend（`testCodex`・`CodexStatusCard`・provider セレクトの codex option・`xhigh` を撤去）・docs（本 ADR で ADR-032 を Superseded・ADR-058/059 に注記・api.md/data-model.md/architecture.md/deploy.md/README.md/CLAUDE.md から codex を除去）・skills（advisor-tool-pattern/testing-strategy から codex 記述を除去）。backend pytest／変更分の ruff／pyright green、frontend biome／`tsc --noEmit` green。ローカル `backend/.env` の `CODEX_*` は手掃除（`config.py` は `extra="ignore"` なので残っても無害）。
+- **関連**: [ADR-032](#adr-032-codex-接続は-mcpcodex-app-serverapicodex-を面別切替自動フォールバックなし)（本 ADR が Superseded）・[ADR-012](#adr-012-llm-はアダプタで抽象化openrouter-既定ローカルへ差替可)（クラウド強モデル前提へ回帰）・[ADR-058](#adr-058-llm-プロバイダ面別-providermodel-設定を-env-から-dbwebuisettings-へ移管する)（codex は一要素として撤去・DB+WebUI 化は現行）・ADR-059（codex 状態確認と reasoning フォールバックを撤去・embedding/openai reasoning は現行）・[ADR-018](#adr-018-無人運用の障害時方針失敗を黙って放置しない)（未設定面のフォールバックは不変）・[data-model.md](data-model.md)・[api.md](api.md)。

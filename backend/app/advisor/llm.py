@@ -6,7 +6,7 @@ ADR-012/058: LLM 接続は共通インターフェースのアダプタで抽象
 面（chat/nightly/dossier/tagger）ごとに DB から解決され（engine が resolve_face で渡す）、provider
 エントリ（base_url, api_key）ごとにクライアントをキャッシュ生成する。OpenAI 互換 1 本で
 OpenRouter / OpenAI 直 / Ollama / Sakana 等をすべて吸収し（`/v1/chat/completions`）provider 分岐は
-不要。真に特殊な codex だけは codex_engine が別経路で扱う。
+不要（codex 経路は ADR-073 で撤去）。
 
 ここは「messages（＋tools）を送って応答（テキスト or tool_calls）を返すだけ」のバカ運搬役に
 徹する。プロンプト組み立て（CORE/POLICY/Tool/文脈の差し込み）も Tool の dispatch も上位の責務

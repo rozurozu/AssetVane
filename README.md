@@ -142,27 +142,9 @@ npm run dev
 
 ### 4. LLM プロバイダ・面別 model を設定する（[ADR-058](docs/decisions.md)）
 
-LLM の provider・API キー・base_url・model と**面別割当**は **`/settings` の WebUI で登録・編集**する（DB 保存）。OpenAI 互換 API を複数登録でき（OpenRouter / OpenAI 直 / ローカル LLM / Sakana 等）、**面（chat/nightly/dossier/tagger）ごとに provider と model を割り当てられる**（例: チャットは Claude Opus 4.8、夜間AI は codex、タグ付けは安い高速モデル）。
+LLM の provider・API キー・base_url・model と**面別割当**は **`/settings` の WebUI で登録・編集**する（DB 保存）。OpenAI 互換 API を複数登録でき（OpenRouter / OpenAI 直 / ローカル LLM / Sakana 等）、**面（chat/nightly/dossier/tagger）ごとに provider と model を割り当てられる**（例: チャットは Claude Opus 4.8、夜間AI は安価な強モデル、タグ付けは安い高速モデル）。provider は OpenAI 互換のみ（codex 経路は [ADR-073](docs/decisions.md) で撤去）。
 
-> ⚠️ **migration 後、初回は `/settings` で provider を登録するまで鍵あり面の LLM は動かない**（chat は 503・夜間/ドシエは通知付き skip・タグ付けは沈黙 skip）。codex は鍵なし組み込みなので最初から使える。
-
-**（任意）AI を codex で動かす（API 課金を避ける）**: codex は ChatGPT サブスク認証で動くため **LLM の API 従量課金を避けられる**（限界費用ゼロ）。
-
-```bash
-# 1) 一度だけ codex に ChatGPT でログイン（API キー不要。~/.codex/auth.json に保存される）。
-#    Docker 利用時はホストに codex を入れなくてよい（イメージに同梱・後述）。コンテナ内で:
-#      docker compose exec backend codex login
-#    ホストに codex CLI があるなら、ホストで叩いても同じ（auth.json をマウントで共有する）:
-codex login
-
-# 2) /settings の「面別 LLM 割当」で対象面の provider に「codex」を選ぶ（model は空なら CODEX_MODEL）。
-#    codex のプロセス設定だけ backend/.env に残す:
-CODEX_MODEL=gpt-5.5            # codex 側の強モデル（面の model が空のとき使う）
-```
-
-仕組み: codex は `codex app-server`（stdio JSON-RPC）として **FastAPI プロセス内に常駐**し、自前 Tool は FastAPI 内の **MCP サーバ（`/mcp`）越し**に呼ぶ（DB に触れるのは FastAPI だけ＝[ADR-005](docs/decisions.md)）。**要 codex-cli 0.136.0 以上**（app-server は experimental protocol）。codex が失敗しても **API へ自動フォールバックしない**（chat は 502・夜間は通知＝[ADR-018](docs/decisions.md)）。
-
-> 🐳 **Docker で使う場合**: codex CLI（rust-v0.137.0・Node 不要の musl バイナリ）は **backend イメージに同梱済み**なので**ホストに codex を入れる必要はない**（[ADR-032](docs/decisions.md)）。必要なのは login 済みの `~/.codex/auth.json` だけで、dev は `compose.yaml` が `${HOME}/.codex` を、本番ラズパイは `compose.prod.yaml` が `/opt/assetvane/.codex` を `/root/.codex` にマウントして読む（codex がリフレッシュで書き換えるため read-write）。本番への auth.json 供給は [docs/deploy.md](docs/deploy.md) を参照。ホスト直起動（前項）で codex を使う場合のみ、ホストに codex CLI を入れて `CODEX_BIN` に絶対パスを指定する。
+> ⚠️ **migration 後、初回は `/settings` で provider を登録するまで LLM は動かない**（chat は 503・夜間/ドシエは通知付き skip・タグ付けは沈黙 skip）。シードしないので初回は手動登録が要る。
 
 ---
 

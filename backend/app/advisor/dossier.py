@@ -226,7 +226,7 @@ async def summarize_dossier(
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 
-    # provider（openai/codex）は engine が source="dossier" から解決する（plans・ADR-012）。
+    # provider（OpenAI 互換）は engine が source="dossier" から解決する（ADR-058）。
     # engine は service→registry→handlers→dossier の import 鎖の先にあるため、ここは関数内で
     # 遅延 import して循環 import を断つ（dossier は Tool registry に取り込まれる低レイヤ）。
     from app.advisor.engine import generate_once

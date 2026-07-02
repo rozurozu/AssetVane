@@ -3,9 +3,9 @@
 設計の真実: docs/decisions.md ADR-058・docs/data-model.md「LLM プロバイダ・面別設定」節。
 
 provider（鍵あり・複数行）と face_config（chat/nightly/dossier/tagger の 4 行運用）を扱う。
-codex は llm_providers に行を持たない（鍵なし組み込み・provider_id=0 を services/llm_config が
-センチネルとして解決）。本モジュールは生の dict を返すだけで、未設定面の意味づけ・例外・マスクは
-services/llm_config と router の責務（backend-repo / backend-router）。
+provider は OpenAI 互換のみ（codex 経路は ADR-073 で撤去）。本モジュールは生の dict を返すだけで、
+未設定面の意味づけ・例外・マスクは services/llm_config と router の責務
+（backend-repo / backend-router）。
 
 [書き込みのトランザクション規律] write 関数は引数の `conn` 上で execute するだけで commit しない
 （W2・advisor.py と同じ）。呼び出し側（router）が `with get_engine().begin() as conn:` で境界を
@@ -116,9 +116,10 @@ def upsert_face(
     model: str,
     reasoning_effort: str | None = None,
 ) -> None:
-    """面の割当を upsert する（PK=face・provider_id=0 で codex・W2・commit しない・ADR-058/059）。
+    """面の割当を upsert する（PK=face・W2・commit しない・ADR-058/059）。
 
-    reasoning_effort は空/None=既定（openai は送らない・codex は env フォールバック・ADR-059）。
+    provider_id は NULL（未設定）か登録 provider の id（>0）。reasoning_effort は空/None=既定
+    （openai は送らない・ADR-059）。
     """
     now = datetime.now(UTC).isoformat()
     stmt = sqlite_insert(llm_face_config).values(

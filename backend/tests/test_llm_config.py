@@ -1,9 +1,9 @@
 """LLM プロバイダ・面別設定の resolve_face と router を検証する（ADR-058）。
 
 DB は temp_db / client（一時 SQLite・conftest が openai provider 1 行＋4 面を seed）。検証対象:
-- resolve_face: openai 解決 / codex(provider_id=0) / 未設定→例外 / 宙づり→例外 / model 既定。
+- resolve_face: openai 解決 / 未設定→例外 / 宙づり→例外 / model 既定。
 - router: GET マスク・POST 重複 409・PUT write-only（空キー据え置き）・DELETE 使用中 409・
-  PUT /llm/faces で codex 割当。
+  PUT /llm/faces（provider_id=0 は 422・ADR-073）。
 ネットには出ない（疎通テスト endpoint は叩かない）。
 """
 
@@ -31,18 +31,6 @@ def test_resolve_face_openai(temp_db: None) -> None:
     assert rf.base_url == "https://test.invalid/v1"
     assert rf.api_key == "test-key"
     assert rf.model == "test-model"
-
-
-def test_resolve_face_codex(temp_db: None) -> None:
-    """provider_id=0 は codex（base_url/api_key=None・model は face.model）に解決される。"""
-    with get_engine().begin() as conn:
-        repo.upsert_face(conn, face="nightly", provider_id=0, model="gpt-5.5")
-    with get_engine().connect() as conn:
-        rf = llm_config.resolve_face(conn, "nightly")
-    assert rf.provider == "codex"
-    assert rf.base_url is None
-    assert rf.api_key is None
-    assert rf.model == "gpt-5.5"
 
 
 def test_resolve_face_unconfigured_raises(temp_db: None) -> None:
@@ -130,15 +118,10 @@ def test_delete_provider_in_use_409(client: Any) -> None:
     assert res.status_code == 409
 
 
-def test_assign_face_to_codex(client: Any) -> None:
-    """PUT /llm/faces/{face} に provider_id=0 で codex を割り当てられる。"""
+def test_assign_face_provider_id_zero_422(client: Any) -> None:
+    """provider_id=0（旧 codex センチネル）は撤去済みで 422 で弾く（ADR-073）。"""
     res = client.put("/llm/faces/chat", json={"provider_id": 0, "model": "gpt-5.5"})
-    assert res.status_code == 200
-    body = res.json()
-    assert body["provider_id"] == 0
-    assert body["provider_name"] == "codex"
-    assert body["model"] == "gpt-5.5"
-    assert body["configured"] is True
+    assert res.status_code == 422
 
 
 def test_assign_face_unknown_provider_422(client: Any) -> None:
@@ -162,31 +145,17 @@ def test_resolve_face_reasoning_openai(temp_db: None) -> None:
     assert rf.reasoning_effort == "high"
 
 
-def test_resolve_face_reasoning_codex_env_fallback(
-    temp_db: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """codex 面の reasoning は face 空なら env codex_reasoning_effort へ降りる（ADR-059）。"""
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "codex_reasoning_effort", "medium")
-    with get_engine().begin() as conn:
-        repo.upsert_face(conn, face="nightly", provider_id=0, model="", reasoning_effort=None)
-    with get_engine().connect() as conn:
-        rf = llm_config.resolve_face(conn, "nightly")
-    assert rf.provider == "codex"
-    assert rf.reasoning_effort == "medium"  # env フォールバック
-
-
 def test_update_face_persists_reasoning(client: Any) -> None:
     """PUT /llm/faces で reasoning_effort を保存でき、GET で返る。"""
+    pid = client.get("/llm/providers").json()[0]["id"]
     res = client.put(
         "/llm/faces/dossier",
-        json={"provider_id": 0, "model": "gpt-5.5", "reasoning_effort": "xhigh"},
+        json={"provider_id": pid, "model": "gpt-x", "reasoning_effort": "high"},
     )
     assert res.status_code == 200
-    assert res.json()["reasoning_effort"] == "xhigh"
+    assert res.json()["reasoning_effort"] == "high"
     faces = {f["face"]: f for f in client.get("/llm/faces").json()}
-    assert faces["dossier"]["reasoning_effort"] == "xhigh"
+    assert faces["dossier"]["reasoning_effort"] == "high"
 
 
 # ===== embedding 接続（ADR-059） =====

@@ -3,7 +3,7 @@ import { del, getJSON, postJSON, putJSON } from "./_client";
 // LLM プロバイダ複数登録・面別 provider/model 設定（ADR-058・docs/api.md「LLM 設定」）。
 // 型は backend Pydantic（routers/llm_config.py）と 1:1。api_key は GET では生で来ず常にマスク済み。
 
-/** 登録済み provider（鍵あり・OpenAI 互換）。codex はここに現れない（鍵なし組み込み）。 */
+/** 登録済み provider（鍵あり・OpenAI 互換）。 */
 export type Provider = {
   id: number;
   name: string;
@@ -16,14 +16,14 @@ export type Provider = {
 /** 面（chat/nightly/dossier/tagger）の現在割当。 */
 export type FaceConfig = {
   face: string;
-  provider_id: number | null; // null=未設定 / 0=codex / >0=Provider.id
-  provider_name: string | null; // codex は "codex"・宙づりは null
+  provider_id: number | null; // null=未設定 / >0=Provider.id
+  provider_name: string | null; // 宙づりは null
   model: string;
-  reasoning_effort: string; // 空=既定 / minimal / low / medium / high / xhigh（ADR-059）
+  reasoning_effort: string; // 空=既定 / minimal / low / medium / high（ADR-059）
   configured: boolean; // resolve_face が通るか（=その面の LLM が動くか）
 };
 
-/** 疎通テストの結果（200＋フラグ・provider/codex/embedding 共通）。 */
+/** 疎通テストの結果（200＋フラグ・provider/embedding 共通）。 */
 export type ProviderTestResult = {
   ok: boolean;
   detail: string;
@@ -82,17 +82,12 @@ export function getFaces(signal?: AbortSignal): Promise<FaceConfig[]> {
   return getJSON<FaceConfig[]>("/llm/faces", signal);
 }
 
-/** 面の provider/model/reasoning 割当を更新（provider_id=0 で codex・null で未設定）。 */
+/** 面の provider/model/reasoning 割当を更新（null で未設定 / >0 で登録 provider）。 */
 export function updateFace(
   face: string,
   body: { provider_id: number | null; model: string; reasoning_effort: string },
 ): Promise<FaceConfig> {
   return putJSON<FaceConfig>(`/llm/faces/${encodeURIComponent(face)}`, body);
-}
-
-/** codex（ChatGPT サブスク）が使用可能か実ターン 1 発で確認（ADR-059）。 */
-export function testCodex(): Promise<ProviderTestResult> {
-  return postJSON<ProviderTestResult>("/llm/codex/test", {});
 }
 
 /** embedding 接続の現在値（api_key はマスク済み・ADR-059）。 */

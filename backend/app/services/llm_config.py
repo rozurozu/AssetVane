@@ -4,8 +4,8 @@
 （LLM 障害/未設定時のフォールバック）。
 
 面（chat/nightly/dossier/tagger/triage）→ {provider, base_url, api_key, model} を DB から解決する。
-repo（生クエリ）と engine/llm（呼び出し）の橋渡しで、未設定面の意味づけと例外を担う。codex は
-llm_providers に行を持たない（鍵なし組み込み）ため provider_id=0 をセンチネルとして解決する。
+repo（生クエリ）と engine/llm（呼び出し）の橋渡しで、未設定面の意味づけと例外を担う。provider は
+OpenAI 互換のみ（codex 経路は ADR-073 で撤去）。
 """
 
 from __future__ import annotations
@@ -15,15 +15,11 @@ from typing import Any
 
 from sqlalchemy import Connection
 
-from app.config import settings
 from app.db import repo
 
 # engine が source として渡す面（ADR-058 確定3）。tagger は theme_tagger/news_polarity、
 # triage は知識カードの AI 審査（card_triage・ADR-062）が使う（低頻度・結果が重いので独立面）。
 FACES: tuple[str, ...] = ("chat", "nightly", "dossier", "tagger", "triage")
-
-# codex の仮想 provider_id（鍵なし組み込み・llm_providers に行を持たない＝ADR-058 確定1）。
-CODEX_PROVIDER_ID = 0
 
 
 class FaceNotConfiguredError(RuntimeError):
@@ -36,24 +32,23 @@ class FaceNotConfiguredError(RuntimeError):
 
 @dataclass(frozen=True)
 class ResolvedFace:
-    """面の解決結果（engine が provider 経路の振り分けと呼び出しに使う）。"""
+    """面の解決結果（engine が provider 経路の呼び出しに使う）。"""
 
     face: str
-    provider: str  # "codex"（組み込み） / "openai"（OpenAI 互換・鍵あり）
-    base_url: str | None  # codex のとき None
-    api_key: str | None  # codex のとき None（鍵なし）
-    model: str  # 実際に使う model（face.model 空なら provider 既定 or codex 既定）
-    # 推論努力（空=既定。codex は env フォールバック適用後の値・ADR-059）。resolve_face は常に明示
-    # 渡しするが、既定 "" を置いて呼び出し側（テスト等）の構築を楽にする。
+    provider: str  # "openai"（OpenAI 互換・鍵あり。codex 経路は ADR-073 で撤去）
+    base_url: str  # provider の base_url
+    api_key: str  # provider の api_key（空可＝ローカル LLM）
+    model: str  # 実際に使う model（face.model 空なら provider 既定）
+    # 推論努力（空=既定・ADR-059）。resolve_face は常に明示渡しするが、既定 "" を置いて
+    # 呼び出し側（テスト等）の構築を楽にする。
     reasoning_effort: str = ""
 
 
 def resolve_face(conn: Connection, face: str) -> ResolvedFace:
     """面 → ResolvedFace を解決する（ADR-058）。未設定/宙づり/model 欠落は例外。
 
-    provider_id: NULL=未設定 / 0=codex / >0=llm_providers.id。codex は model 空なら
-    settings.codex_model にフォールバック。鍵あり provider は model 空なら provider.default_model
-    にフォールバックし、両方空なら FaceNotConfiguredError（model を確定できない）。
+    provider_id: NULL=未設定 / >0=llm_providers.id。model 空なら provider.default_model に
+    フォールバックし、両方空なら FaceNotConfiguredError（model を確定できない）。
     """
     if face not in FACES:
         raise FaceNotConfiguredError(f"未知の面: {face}")
@@ -65,17 +60,6 @@ def resolve_face(conn: Connection, face: str) -> ResolvedFace:
     provider_id = int(row["provider_id"])
     model = (row["model"] or "").strip()
     reasoning = (row.get("reasoning_effort") or "").strip()
-
-    if provider_id == CODEX_PROVIDER_ID:
-        # codex の reasoning は face 空なら env codex_reasoning_effort にフォールバック（ADR-059）。
-        return ResolvedFace(
-            face=face,
-            provider="codex",
-            base_url=None,
-            api_key=None,
-            model=model or settings.codex_model,
-            reasoning_effort=reasoning or settings.codex_reasoning_effort,
-        )
 
     prov = repo.get_provider(conn, provider_id)
     if prov is None:
@@ -103,8 +87,8 @@ def resolve_face(conn: Connection, face: str) -> ResolvedFace:
 def describe_faces(conn: Connection) -> list[dict[str, Any]]:
     """全面の現在割当を表示用にまとめる（GET /llm/faces・ADR-058）。
 
-    provider_name は codex なら "codex"、鍵あり provider なら名前（宙づりは None）。configured は
-    resolve_face が通るか（=その面の LLM が動くか）。未設定面も行として全件必ず返す。
+    provider_name は割当 provider の名前（未設定・宙づりは None）。configured は resolve_face が
+    通るか（=その面の LLM が動くか）。未設定面も行として全件必ず返す。
     """
     provider_names = {p["id"]: p["name"] for p in repo.list_providers(conn)}
     rows = {r["face"]: r for r in repo.list_faces(conn)}
@@ -114,9 +98,8 @@ def describe_faces(conn: Connection) -> list[dict[str, Any]]:
         provider_id = row["provider_id"] if row else None
         model = (row["model"] if row else "") or ""
         reasoning = (row.get("reasoning_effort") if row else "") or ""
-        if provider_id == CODEX_PROVIDER_ID:
-            provider_name: str | None = "codex"
-        elif provider_id is not None:
+        provider_name: str | None
+        if provider_id is not None:
             provider_name = provider_names.get(provider_id)
         else:
             provider_name = None

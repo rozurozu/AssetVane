@@ -42,9 +42,8 @@ def _tool_result_default(o: object) -> object:
 
     handler の返り値は JSON-safe な素の型に限るのが規約（[[advisor-tool-pattern]]）で、Decimal を
     生む出所（repo の window 関数 percent_rank 等）は [[backend-repo-pattern]] で Float 化して断つ。
-    本関数はその規約が破れても openai 経路（run_tool_loop の json.dumps）が 500 で落ちないための
-    保険。codex/MCP 経路は mcp フレームワーク内で JSON 化されるためここは通らない（＝出所を断つ
-    のが本命）。既知型は素直に正規化し、未知型は str に倒しつつ warning で顕在化する
+    本関数はその規約が破れても run_tool_loop の json.dumps が 500 で落ちないための保険（＝出所を
+    断つのが本命）。既知型は素直に正規化し、未知型は str に倒しつつ warning で顕在化する
     （握りつぶさない）。
     """
     if isinstance(o, Decimal):

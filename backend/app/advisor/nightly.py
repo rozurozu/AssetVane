@@ -115,7 +115,7 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
         recent_journal=recent,
     )
 
-    # provider（openai/codex）は engine が source="nightly" から解決する（plans・ADR-012）。
+    # provider（OpenAI 互換）は engine が source="nightly" から解決する（ADR-058）。
     # LLM 失敗（②ハード失敗）は握らず上位（run_advisor ジョブ）へ伝播させる（ADR-018）。
     reply, tool_runs = await run_turn(messages, phase=CURRENT_PHASE, source="nightly")
 

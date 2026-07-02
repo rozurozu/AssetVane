@@ -16,8 +16,8 @@ from app.db import engine as db_engine
 
 # テスト用 LLM 面設定の seed 値（ADR-058）。本番はシードしない（確定4）が、テストは LLM 経路を
 # openai（モック可能）に固定するためダミー provider＋4 面を入れる。これがないと resolve_face が
-# FaceNotConfiguredError で落ち、/chat は 503・nightly 等は skip になる。codex subprocess を避ける
-# 狙いは旧 llm_provider_* monkeypatch と同じ（.env 非依存・ネットに出ない）。
+# FaceNotConfiguredError で落ち、/chat は 503・nightly 等は skip になる（.env 非依存・ネットに
+# 出ない＝旧 llm_provider_* monkeypatch の後継）。
 _SEED_PROVIDER_NAME = "test-openai"
 _SEED_BASE_URL = "https://test.invalid/v1"
 _SEED_MODEL = "test-model"
@@ -102,8 +102,8 @@ def client(tmp_path, monkeypatch) -> Iterator[object]:
     "table already exists" で落ちるため。本番と同じ alembic 経路でスキーマを得る。
 
     LLM 面設定は seed_llm_config で openai に固定する（ADR-058）。これがないと resolve_face が
-    FaceNotConfiguredError で落ち、`/chat` が 503 になる。codex_engine の実 subprocess 起動も避ける
-    （旧 llm_provider_*=openai monkeypatch の後継・.env 非依存・ネットに出ない）。
+    FaceNotConfiguredError で落ち、`/chat` が 503 になる（旧 llm_provider_*=openai monkeypatch の
+    後継・.env 非依存・ネットに出ない）。
     """
     db_file = tmp_path / "test.db"
     monkeypatch.setattr(settings, "database_path", str(db_file))
