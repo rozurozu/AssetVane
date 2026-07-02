@@ -409,8 +409,8 @@ valuation_snapshots = Table(
     Column("receivables_growth_yoy", Float),  # 受取債権 YoY（同源 trade_receivables の前年比）
     Column("inventory_growth_yoy", Float),  # 棚卸資産 YoY（同源 inventories の前年比）
     # 清原式ネットキャッシュ（ADR-079）。net_cash=流動資産+投資有価証券×0.7−総負債（BS 由来の絶対
-    # 額・JP v1 は簡略式＝投資有価証券項を省く）。比率（÷時価総額）は物理列にせず read-time で導出
-    # する（時価総額は日次・本列は四半期ごと・per_sector_pctile/market_cap_rank と同じ read-time）。
+    # 額・JP も edinetdb.jp の investment_securities でフル式＝ADR-079 追補・欠落時のみ簡略式）。
+    # 比率（÷時価総額）は物理列にせず read-time 導出（時価総額は日次・本列は四半期・鮮度バグ回避）。
     Column("net_cash", Float),  # 清原式ネットキャッシュ（絶対額・負値=実質ネット負債）
     Column("fin_disclosed_date", String),  # 採用した財務の開示日（監査・どの決算を使ったか）
     Column("updated_at", String),  # ISO8601（この行を焼いた時刻）

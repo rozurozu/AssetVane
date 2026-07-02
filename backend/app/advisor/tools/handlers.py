@@ -390,7 +390,7 @@ async def handle_get_valuation(args: dict[str, object]) -> dict[str, Any]:
             "receivables_growth_yoy": row.get("receivables_growth_yoy"),
             "inventory_growth_yoy": row.get("inventory_growth_yoy"),
             # 清原式ネットキャッシュ（ADR-079）。net_cash=絶対額（負値=実質ネット負債）、比率=÷時価
-            # 総額（read-time 導出・≥1 で「時価総額を手元現金が上回る」割安）。JP は簡略式で保守側。
+            # 総額（read-time 導出・≥1 が割安の目安）。JP もフル式・欠落時のみ簡略式。
             # 割安の良し悪し（経営者の意志・株主還元）は LLM が解釈する（事実のみ・ADR-014）。
             "net_cash": row.get("net_cash"),
             "net_cash_ratio": row.get("net_cash_ratio"),

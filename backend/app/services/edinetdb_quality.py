@@ -78,8 +78,8 @@ def compute_quality_from_financials(rows: list[dict[str, Any]]) -> dict[str, Any
         "inventory_growth_yoy": valuation.growth_yoy(
             inventory, prev.get("inventory") if prev else None
         ),
-        # 清原式ネットキャッシュ（ADR-079）。JP は investment_securities=None→簡略式、US はフル式。
-        # 比率（÷時価総額）は焼かず read-time で導出する（repo の subquery）。
+        # 清原式ネットキャッシュ（ADR-079・full 化）。JP/US とも investment_securities があれば
+        # フル式、欠落時のみ簡略式（保守側）へ。比率（÷時価総額）は焼かず read-time 導出（repo）。
         "net_cash": valuation.net_cash(
             curr.get("current_assets"),
             curr.get("investment_securities"),

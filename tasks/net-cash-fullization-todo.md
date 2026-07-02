@@ -1,23 +1,34 @@
-# TODO: ネットキャッシュ比率 JP の full 化（投資有価証券×70%）
+# DONE: ネットキャッシュ比率 JP の full 化（投資有価証券×70%）
 
-作成: 2026-07-02 / 起票理由: ADR-079（清原式ネットキャッシュ・screen 拡張）の v1 は JP を**簡略式**で出したため、full 式化を直近 PR で行う。
+作成: 2026-07-02 / 完了: 2026-07-02（ADR-079 追補）
 
-## 背景
-清原達郎式のネットキャッシュ比率:
+## 結論（当初前提の誤りを上書き）
 
-    ネットキャッシュ = 流動資産 ＋（投資有価証券 × 70%）− 総負債
-    比率 = ネットキャッシュ ÷ 時価総額
+当初は「edinetdb.jp に投資有価証券の専用フィールドが無い → 公式 EDINET の完全 XBRL（`jppfs_cor:InvestmentSecurities`）を
+別 PR で抽出する」計画だった。**この前提は誤りだった**。
 
-- **US（yfinance）は v1 から full 式**（`Investments And Advances` を投資有価証券として取得済み）。
-- **JP（edinetdb.jp）は v1 で簡略式**＝`流動資産 − 総負債`（投資有価証券項を省略）。理由: edinetdb.jp に「投資有価証券」の専用フィールドが無い（近縁の `cross_shareholding_*` は政策保有株＝部分集合にすぎず過少）。簡略式は投資有価証券を切り捨てるぶん**保守的**（ネットキャッシュを過小評価）に倒れる。
+裏取りの結果、edinetdb.jp の OpenAPI（`https://edinetdb.jp/v1/openapi.yaml`・147 フィールド）に
+**`investment_securities`（投資有価証券・円）が実在**していた（ほか `short_term_securities`・
+`investments_and_other_assets` もある）。現アダプタ `adapters/edinetdb._normalize_financial` が
+そのキーを読んでいなかっただけ。
 
-## 直近 PR でやること（full 化）
-1. **データ源**: 公式 EDINET（`edinet_api_key` 系統・`adapters/edinet.py`）の type=5 CSV ZIP（完全 XBRL）から標準タクソノミ要素 `jppfs_cor:InvestmentSecurities`（JP で唯一の投資有価証券専用要素）を抽出する経路を足す。
-   - コスト大: XBRL 数値パース・連結/個別コンテキスト選択・IFRS 要素名差・提出日クロール型。本環境の `edinet_api_key` は未設定の疑い（config.py:183 が default 空）＝**鍵の用意も前提**。
-2. **フォールバック設計**: edinetdb.jp（流動資産/総負債/現預金）＋ 公式 EDINET（投資有価証券）の合流。dossier 優先 2 段ガード（ADR-056）と同型で「公式 EDINET が取れた行だけ full 式に格上げ、取れなければ簡略式のまま」。
-3. **quant**: `quant/valuation.py` の `net_cash(...)` は既に investment_securities 引数を持つ設計にしておく（v1 では JP は None を渡す）。full 化は「JP でも実値を渡す」だけで済むようにする。
-4. **ADR**: ADR-079 の残課題を消し込み、full 化の判断を追記。
+よって **公式 EDINET の XBRL パーサも 401 疑いの公式キーも一切不要**で、`calc_receivables_inventory` が
+既に叩く**同じ `/financials` レスポンス**から 1 キー抽出するだけで JP もフル式になった（追加フェッチ ゼロ）。
 
-## 完了条件
-- JP でも投資有価証券×70% を含む full 式で `net_cash_ratio` が焼かれる。
-- 簡略式との差分（保守バイアス解消）が代表銘柄で確認できる。
+## 実体（達成内容）
+
+- 写像は **`investment_securities`（非流動）のみ ×0.7**。`short_term_securities`（有価証券・流動）は既に
+  `current_assets` に含まれ二重計上になるため足さない。`investments_and_other_assets`（親項目・長期貸付金/
+  敷金/繰延税金資産を含む）は過大評価になるため使わない（US の `Investments And Advances`＝非流動と対称）。
+- 欠落（IFRS 銘柄・古い年）時のみ簡略式（流動資産 − 総負債・保守側）に自然フォールバック。
+- コード変更は `adapters/edinetdb._normalize_financial` に `investment_securities` を追加（1 行）＋
+  docstring/コメント更新のみ。quant/service/物理列 `net_cash`/`net_cash_ratio` の read-time 導出/screen/Tool は
+  既にフル式対応済みで無改変。migration 不要（`net_cash` 列は 0038 で既存）。
+- ATDD: `tests/test_edinetdb.py`（正規化で投資有価証券を写像・欠落は None）＋
+  `tests/test_edinetdb_quality.py`（フル式/欠落フォールバック）で先行検証。
+
+## 運用時に残る確認（コード完了・実データは次回運用で裏取り）
+
+- 実データ焼き込み差分（代表銘柄で簡略式→フル式）と単位裏取りは dev 実機プローブで確認する
+  （`build_edinetdb_adapter` で `/financials` を 1 回叩き、`investment_securities` が当期 annual 行に入り
+  `current_assets`/`total_liabilities` と同一単位＝円であること）。取れなければ None → 簡略式で安全。

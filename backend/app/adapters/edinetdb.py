@@ -61,11 +61,14 @@ def _normalize_financial(raw: dict[str, Any]) -> dict[str, Any]:
     このアダプタに閉じる。cost_of_sales は近年の行に無いことがあるため、無ければ None を返し
     （services が revenue − gross_profit で補う）。欠損列はすべて None（捏造しない）。
 
-    清原式ネットキャッシュ（ADR-079）用に current_assets（流動資産合計）/total_liabilities（負債
-    合計）/cash（現預金・補助）も抽出する。edinetdb.jp には投資有価証券の専用フィールドが無いため
-    investment_securities は取らない＝JP は簡略式（quant.net_cash が None を 0 扱い＝保守的）。
-    ※実キー名は公開仕様（edinetdb.jp/docs/api）ベース。取れない銘柄は None に倒れ net_cash も None
-    になるだけで安全（初回実取得でキー名を要確認・tasks/net-cash-fullization-todo.md）。
+    清原式ネットキャッシュ（ADR-079）用に current_assets（流動資産合計）/investment_securities
+    （投資有価証券・非流動）/total_liabilities（負債合計）/cash（現預金・補助）も抽出する。
+    edinetdb.jp の OpenAPI（/v1/openapi.yaml）に `investment_securities` が実在するため JP もフル式
+    （流動資産＋投資有価証券×0.7−総負債）で焼ける（当初の「専用フィールド無し＝簡略式」前提を
+    上書き・ADR-079 追補）。short_term_securities（有価証券・流動）は既に current_assets に含まれる
+    ため足さない（二重計上回避）。investment_securities が欠落（IFRS 銘柄・古い年）なら None →
+    quant.net_cash が項を 0 扱いで簡略式（保守側）に倒れ安全（捏造しない・ADR-014）。
+    ※実キー名は公開仕様（edinetdb.jp/docs/api・OpenAPI）ベース。取れない銘柄は None に倒れるだけ。
     """
     fy = raw.get("fiscal_year")
     return {
@@ -77,8 +80,9 @@ def _normalize_financial(raw: dict[str, Any]) -> dict[str, Any]:
         "revenue": _to_float(raw.get("revenue")),
         "gross_profit": _to_float(raw.get("gross_profit")),
         "cost_of_sales": _to_float(raw.get("cost_of_sales")),
-        # 清原式ネットキャッシュの BS 項目（ADR-079・JP は投資有価証券なし＝簡略式）
+        # 清原式ネットキャッシュの BS 項目（ADR-079・full 化＝JP も投資有価証券×0.7 込みフル式）
         "current_assets": _to_float(raw.get("current_assets")),
+        "investment_securities": _to_float(raw.get("investment_securities")),
         "total_liabilities": _to_float(raw.get("total_liabilities")),
         "cash": _to_float(raw.get("cash")),
     }

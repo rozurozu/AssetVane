@@ -96,16 +96,18 @@ def test_none_when_no_usable_current_row() -> None:
 # --- 清原式ネットキャッシュ（ADR-079） ---
 
 
-def test_net_cash_jp_simplified_formula() -> None:
-    # JP は投資有価証券なし（inv_sec=None）→ 簡略式 net_cash = 流動資産 − 総負債
+def test_net_cash_simplified_formula_when_investment_securities_missing() -> None:
+    # 投資有価証券が欠落（inv_sec=None）なら簡略式 net_cash = 流動資産 − 総負債（保守側）。
+    # full 化後（ADR-079）は JP でも edinetdb.jp が値を持てばフル式・欠落時のみこの経路に落ちる。
     rows = [_row(2025, rev=1000.0, ca=8000.0, tl=3000.0, disclosed="2025-06-18")]
     q = compute_quality_from_financials(rows)
     assert q is not None
     assert q["net_cash"] == 8000.0 - 3000.0
 
 
-def test_net_cash_us_full_formula_with_investment_securities() -> None:
-    # US はフル式 net_cash = 流動資産 + 投資有価証券×0.7 − 総負債
+def test_net_cash_full_formula_with_investment_securities() -> None:
+    # JP/US とも投資有価証券があればフル式 net_cash = 流動資産 + 投資有価証券×0.7 − 総負債。
+    # JP は edinetdb.jp の investment_securities（実在）、US は yfinance の同項目（ADR-079）。
     rows = [_row(2025, rev=1000.0, ca=8000.0, inv_sec=2000.0, tl=3000.0)]
     q = compute_quality_from_financials(rows)
     assert q is not None

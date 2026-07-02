@@ -229,9 +229,10 @@ def net_cash(
     由来で四半期ごとにしか動かないので物理列に焼く・鮮度は ADR-079/071）。
 
     - 流動資産・総負債のどちらかが None なら計算不能で None（捏造しない・ADR-014）。
-    - 投資有価証券が None のときは項を 0 とする＝**簡略式（流動資産 − 総負債）**。JP v1 はデータ源
-      （edinetdb.jp）に投資有価証券の専用項目が無いためこの経路（投資有価証券を切り捨てるぶん
-      保守的に過小評価へ倒れる・full 化は tasks/net-cash-fullization-todo.md）。US はフル式。
+    - 投資有価証券が None のときは項を 0 とする＝**簡略式（流動資産 − 総負債）**。JP/US とも
+      データ源（JP=edinetdb.jp の `investment_securities`・US=yfinance Investments And Advances）が
+      値を持てばフル式。欠落（IFRS 銘柄・古い年）時のみこの簡略式に落ちる（保守的に過小評価へ倒れる
+      ・ADR-079 追補で JP も full 化済み）。
     - 総負債が流動資産を上回る（実質ネット負債）は負値として事実で返す（ROE と同じ規律）。
       割安の良し悪し（比率≥1 が買いか等）は LLM が解釈する（ADR-014）。
     """
