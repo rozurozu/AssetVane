@@ -26,7 +26,8 @@ class _FakeAdapter:
         self._by_date = by_date
         self.calls: list[str] = []
 
-    def fetch_financials(self, code=None, date=None) -> list[dict]:  # noqa: A002
+    def fetch_financials(self, code=None, date: str | None = None) -> list[dict]:  # noqa: A002
+        assert date is not None  # 本ジョブは常に日付を指定して呼ぶ
         self.calls.append(date)
         return self._by_date.get(date, [])
 
@@ -90,6 +91,7 @@ def test_universe_by_date_upserts_and_advances_meta(temp_db, _patch, monkeypatch
         count = conn.execute(select(func.count()).select_from(financials_table)).scalar()
         meta = repo.get_fetch_meta(conn, "financials")
     assert count == 3
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-05"  # 空日も含め前進
 
 
@@ -114,7 +116,8 @@ def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def fetch_financials(self, code=None, date=None) -> list[dict]:  # noqa: A002
+        def fetch_financials(self, code=None, date: str | None = None) -> list[dict]:  # noqa: A002
+            assert date is not None  # 本ジョブは常に日付を指定して呼ぶ
             self.calls.append(date)
             if date >= "2026-06-04":
                 raise JQuantsCoverageError("契約範囲外")
@@ -129,6 +132,7 @@ def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
     assert result.rows == 2
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "financials")
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-03"  # 前線には進めない
 
 

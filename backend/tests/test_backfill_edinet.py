@@ -9,7 +9,6 @@ return 0・KeyboardInterrupt は return 130（再実行で続きから）。craw
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import date
 from typing import Any
 
@@ -41,7 +40,7 @@ def _result(**overrides: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
-def script_env(temp_db, monkeypatch) -> Iterator[dict[str, Any]]:
+def script_env(temp_db, monkeypatch) -> dict[str, Any]:
     """main() の副作用を封じる: init_db 無効化・API キー設定・today 固定・crawl を fake 化。
 
     temp_db は create_schema 済みで、init_db（alembic upgrade）と併用すると "table already

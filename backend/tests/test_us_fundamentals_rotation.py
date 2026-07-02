@@ -81,6 +81,7 @@ def test_oldest_first_with_nightly_cap(temp_db, monkeypatch) -> None:
         aaa = repo.get_us_stock(conn, "AAA")
         meta = repo.get_fetch_meta(conn, "us_fundamentals:AAA")
     # 財務素は焼け、universe 側の company_name は `.info` の値で更新（partial update が壊れない）。
+    assert aaa is not None
     assert aaa["eps"] == 5.0
     assert aaa["gics_sector"] == "Technology"
     assert aaa["company_name"] == "Apple A"
@@ -117,6 +118,7 @@ def test_partial_failure_keeps_going(temp_db, monkeypatch) -> None:
         bad_meta = repo.get_fetch_meta(conn, "us_fundamentals:BAD")
         aaa = repo.get_us_stock(conn, "AAA")
     assert bad_meta is not None and bad_meta["last_attempt_ok"] == 0  # 失敗を記録
+    assert aaa is not None
     assert aaa["eps"] == 5.0  # 成功した銘柄は焼けている
 
 
@@ -147,6 +149,7 @@ def test_empty_info_raise_keeps_existing_values_and_cursor(temp_db, monkeypatch)
         aaa = repo.get_us_stock(conn, "AAA")
         meta = repo.get_fetch_meta(conn, "us_fundamentals:AAA")
     # 既存の財務値が NULL で潰れていない（partial UPSERT が走っていない）。
+    assert aaa is not None
     assert aaa["eps"] == 5.0
     assert aaa["net_sales"] == 200.0
     # ローテカーソルは据え置き（前進しない）＋失敗が記録される。

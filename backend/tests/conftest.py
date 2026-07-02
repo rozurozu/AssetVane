@@ -39,14 +39,16 @@ def seed_llm_config() -> None:
             select(llm_providers.c.id).where(llm_providers.c.name == _SEED_PROVIDER_NAME)
         ).first()
         if existing is None:
-            pid = conn.execute(
+            pk = conn.execute(
                 insert(llm_providers).values(
                     name=_SEED_PROVIDER_NAME,
                     base_url=_SEED_BASE_URL,
                     api_key="test-key",
                     default_model=_SEED_MODEL,
                 )
-            ).inserted_primary_key[0]
+            ).inserted_primary_key
+            assert pk is not None
+            pid = pk[0]
         else:
             pid = existing[0]
         for face in FACES:

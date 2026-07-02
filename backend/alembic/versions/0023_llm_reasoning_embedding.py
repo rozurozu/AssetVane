@@ -5,8 +5,8 @@ Revises: 0022_llm_providers
 Create Date: 2026-06-24
 
 ADR-059（ADR-058 拡張）。面（chat/nightly/dossier/tagger）ごとに推論努力を設定できるよう
-llm_face_config に reasoning_effort 列を足し、意味検索の embedding 接続（base_url/api_key/model/dim）
-を env から DB（embedding_config・単一行運用）へ移す。
+llm_face_config に reasoning_effort 列を足し、意味検索の embedding 接続
+（base_url/api_key/model/dim）を env から DB（embedding_config・単一行運用）へ移す。
 
 追加するもの（docs/data-model.md と鏡写し）:
   - llm_face_config.reasoning_effort … 空=既定（openai は送らない / codex は env フォールバック）。
@@ -45,7 +45,9 @@ def _existing_columns(table: str) -> set[str]:
 def upgrade() -> None:
     tables = _existing_tables()
 
-    if "llm_face_config" in tables and "reasoning_effort" not in _existing_columns("llm_face_config"):
+    if "llm_face_config" in tables and "reasoning_effort" not in _existing_columns(
+        "llm_face_config"
+    ):
         op.add_column("llm_face_config", sa.Column("reasoning_effort", sa.String(), nullable=True))
 
     if "embedding_config" not in tables:

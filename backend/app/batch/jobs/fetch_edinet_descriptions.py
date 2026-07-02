@@ -32,6 +32,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
+from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 from app.adapters.edinet import (
@@ -52,6 +53,24 @@ logger = logging.getLogger(__name__)
 # クロール進捗カーソル（fetch_meta の source キー・銘柄別 'edinet:<code>' とは別の単一カーソル）。
 _CRAWL_SOURCE = "edinet:crawl"
 _JST = ZoneInfo("Asia/Tokyo")
+
+
+class CrawlResult(TypedDict):
+    """crawl() の集計結果（呼び出し側が JobResult や print に整形して読む）。
+
+    戻り型を dict[str, object] にすると result[...] が全て object に潰れ、len()/int()/
+    スライスが pyright standard で弾かれる。実体の型を TypedDict で明示して読み手を型安全にする。
+    """
+
+    n_summarized: int
+    n_skip_dossier: int
+    n_skip_existing: int
+    n_no_business: int
+    n_restatements: int
+    dates_done: int
+    failures: list[str]
+    cap_reached: bool
+    last_cursor: str | None
 
 
 def _today_jst() -> date:
@@ -84,7 +103,7 @@ def crawl(
     adapter: EdinetAdapter | None = None,
     summarize_fn: Callable[[str], str] | None = None,
     log: Callable[[str], None] | None = None,
-) -> dict[str, object]:
+) -> CrawlResult:
     """提出日 start_date〜end_date をクロールして事業の内容を取り込む（差分/バックフィル共通）。
 
     Args:

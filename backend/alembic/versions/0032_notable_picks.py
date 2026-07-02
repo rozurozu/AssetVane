@@ -4,14 +4,16 @@ Revision ID: 0032_notable_picks
 Revises: 0031_receivables_inventory_quality
 Create Date: 2026-07-01
 
-ADR-067。夜 digest の「注目シグナル」を score 閾値 Top N 抽出から「合流(confluence)ゲート＋AI 選別」へ
-作り直す。Python が独立材料 2 次元以上の重なりで候補集合を組み、夜の分析AI が submit_notable_stocks で
-総合的に注目すべき銘柄だけを選ぶ（ADR-014）。その選別を永続し、後続 notify_digest が読んで digest 本文に
-載せる（journal/proposals と同じ「夜AI が書き digest が読む」パターン）。
+ADR-067。夜 digest の「注目シグナル」を score 閾値 Top N 抽出から
+「合流(confluence)ゲート＋AI 選別」へ作り直す。Python が独立材料 2 次元以上の重なりで
+候補集合を組み、夜の分析AI が submit_notable_stocks で総合的に注目すべき銘柄だけを
+選ぶ（ADR-014）。その選別を永続し、後続 notify_digest が読んで digest 本文に載せる
+（journal/proposals と同じ「夜AI が書き digest が読む」パターン）。
 
 追加するもの（docs/data-model.md と鏡写し）:
   - notable_picks … date/code/reason/source/created_at。source で nightly/chat を区別し digest は
-    nightly を読む。UNIQUE(date,code,source) ＋ 冪等 UPSERT で再実行（POST /batch/run）でも重複しない。
+    nightly を読む。UNIQUE(date,code,source) ＋ 冪等 UPSERT で再実行（POST /batch/run）
+    でも重複しない。
 
 採番: 直前 head は 0031_receivables_inventory_quality。連鎖を直線に保つため down_revision=0031。
 シードは入れない（夜間バッチが埋める）。冪等性: テーブルが無いときだけ作る（0030 と同方針）。

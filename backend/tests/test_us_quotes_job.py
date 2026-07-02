@@ -83,6 +83,7 @@ def test_batched_upsert_and_cursor_advances(temp_db, monkeypatch) -> None:
     assert [r["date"] for r in aaa] == ["2026-06-05", "2026-06-08"]  # date 昇順
     assert ccc[0]["close"] == 30.0
     # 全銘柄共通カーソルは取得最大 date（CCC の 2026-06-09）まで前進。
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-09"
 
 
@@ -146,6 +147,7 @@ def test_write_failure_does_not_advance_cursor_past_unpersisted(temp_db, monkeyp
         bbb = repo.get_us_quotes(conn, "BBB")
         meta = repo.get_fetch_meta(conn, "us_daily_quotes")
     assert bbb == []  # BBB は未永続
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-05"  # 永続した AAA まで。未永続 06-09 は飛ばさない
     assert "失敗 1 件" in result.detail  # BBB は失敗として計上
 
@@ -189,7 +191,9 @@ def test_full_backfill_vs_incremental_start(temp_db, monkeypatch) -> None:
     from datetime import date
 
     expected_year = date.today().replace(year=date.today().year - 2).year
-    assert fake2.calls[-1][1].startswith(str(expected_year))
+    from_arg = fake2.calls[-1][1]
+    assert from_arg is not None
+    assert from_arg.startswith(str(expected_year))
 
 
 def test_start_date_overlaps_last_fetched(temp_db) -> None:
@@ -223,6 +227,7 @@ def test_no_new_data_keeps_cursor_and_ok(temp_db) -> None:
     assert result.ok is True
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "us_daily_quotes")
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-08"  # 新規無しなので前進しない（後退もしない）
 
 
@@ -261,4 +266,5 @@ def test_stop_mid_batch_breaks_loop(temp_db, monkeypatch) -> None:
     assert "停止により中断" in result.detail
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "us_daily_quotes")
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-05"  # 取れた分でカーソル前進

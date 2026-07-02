@@ -70,7 +70,9 @@ def insert_provider(
             updated_at=now,
         )
     )
-    return int(result.inserted_primary_key[0])
+    pk = result.inserted_primary_key
+    assert pk is not None  # 単一行 insert なので必ず採番される
+    return int(pk[0])
 
 
 def update_provider(conn: Connection, provider_id: int, fields: dict[str, Any]) -> None:

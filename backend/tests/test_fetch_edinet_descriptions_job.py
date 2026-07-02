@@ -94,7 +94,7 @@ def test_crawl_takes_only_120_in_universe(temp_db) -> None:
         start_date=date(2025, 6, 25),
         end_date=date(2025, 6, 25),
         cap=None,
-        adapter=adapter,
+        adapter=adapter,  # type: ignore[arg-type]  # 本番 EdinetAdapter を模した fake
         summarize_fn=_fake_summarize,
         log=lambda _m: None,
     )
@@ -119,7 +119,7 @@ def test_crawl_pre_skips_dossier(temp_db) -> None:
         start_date=date(2025, 6, 25),
         end_date=date(2025, 6, 25),
         cap=None,
-        adapter=adapter,
+        adapter=adapter,  # type: ignore[arg-type]  # 本番 EdinetAdapter を模した fake
         summarize_fn=_fake_summarize,
         log=lambda _m: None,
     )
@@ -150,7 +150,7 @@ def test_crawl_pre_skips_existing_edinet_not_newer(temp_db) -> None:
         start_date=date(2025, 6, 25),
         end_date=date(2025, 6, 25),
         cap=None,
-        adapter=adapter,
+        adapter=adapter,  # type: ignore[arg-type]  # 本番 EdinetAdapter を模した fake
         summarize_fn=_fake_summarize,
         log=lambda _m: None,
     )
@@ -169,7 +169,7 @@ def test_crawl_cap_holds_cursor(temp_db) -> None:
         start_date=date(2025, 6, 25),
         end_date=date(2025, 6, 25),
         cap=1,
-        adapter=adapter,
+        adapter=adapter,  # type: ignore[arg-type]  # 本番 EdinetAdapter を模した fake
         summarize_fn=_fake_summarize,
         log=lambda _m: None,
     )
@@ -216,7 +216,7 @@ def test_crawl_records_130_restatement(temp_db) -> None:
         start_date=date(2025, 6, 25),
         end_date=date(2025, 6, 25),
         cap=None,
-        adapter=adapter,
+        adapter=adapter,  # type: ignore[arg-type]  # 本番 EdinetAdapter を模した fake
         summarize_fn=_fake_summarize,
         log=lambda _m: None,
     )

@@ -16,12 +16,38 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 
 import numpy as np
 import pandas as pd
 
 from app.quant.ml.features import FEATURE_NAMES, build_features_at
+
+
+# with_dates で戻りタプルの要素数が変わるため overload で呼び出し側を型安全にする（既定=3 タプル・
+# True=4 タプル）。全呼び出しがリテラル/省略なので pyright が正しい分岐を選べる。
+@overload
+def build_training_set(
+    financials: pd.DataFrame,
+    prices: pd.DataFrame,
+    benchmark: pd.Series,
+    *,
+    label_horizon_days: int = ...,
+    label_kind: str = ...,
+    with_dates: Literal[False] = ...,
+) -> tuple[pd.DataFrame, pd.Series, list[str]]: ...
+
+
+@overload
+def build_training_set(
+    financials: pd.DataFrame,
+    prices: pd.DataFrame,
+    benchmark: pd.Series,
+    *,
+    label_horizon_days: int = ...,
+    label_kind: str = ...,
+    with_dates: Literal[True],
+) -> tuple[pd.DataFrame, pd.Series, list[str], pd.Series]: ...
 
 
 def build_training_set(

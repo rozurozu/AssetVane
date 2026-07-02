@@ -51,7 +51,8 @@ def _make_adapter(rows_or_exc: list[dict[str, Any]] | Exception):
 
     src = _FakeSource(rows_or_exc)
     adapter = FxAdapter(sources=[src])
-    adapter._fake_source = src  # テストからコール検証したいとき用
+    # コール検証用に fake source を stash（FxAdapter に無い属性の後付けなので型は無視）。
+    adapter._fake_source = src  # type: ignore[attr-defined]
     return adapter
 
 
@@ -104,7 +105,7 @@ def test_cursor_absent_uses_backfill_start(temp_db, monkeypatch) -> None:
     # 実行日に依存しないよう today から動的に期待値を出す（決め打ちだと年跨ぎで壊れる）。
     today = date.today()
     expected_start = today.replace(year=today.year - settings.backfill_years).isoformat()
-    call = adapter._fake_source.calls[0]
+    call = adapter._fake_source.calls[0]  # type: ignore[attr-defined]  # 上で stash した fake
     # (pair, from_, to)
     assert call[0] == "USDJPY"
     assert call[1] == expected_start  # 初期窓＝今日 − backfill_years 年（カーソル不在）
@@ -129,13 +130,14 @@ def test_cursor_present_overlaps_last_fetched(temp_db) -> None:
     result = fetch_fx_rates.run(adapter=adapter)
 
     assert result.ok is True
-    call = adapter._fake_source.calls[0]
+    call = adapter._fake_source.calls[0]  # type: ignore[attr-defined]  # 上で stash した fake
     # from_ は 2026-06-07 から _REFETCH_OVERLAP_DAYS 日重ねた地点（= 2026-06-02）。
     assert call[1] == (date(2026, 6, 7) - timedelta(days=DEFAULT_OVERLAP_DAYS)).isoformat()
     assert call[1] <= "2026-06-07"  # 最終取得日に重なる
 
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "fx:USDJPY")
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-08"
 
 
@@ -153,6 +155,7 @@ def test_no_new_data_keeps_cursor_and_ok(temp_db) -> None:
     assert result.ok is True
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "fx:USDJPY")
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-07"  # 新規無しなので前進しない（後退もしない）
 
 
@@ -173,6 +176,7 @@ def test_zero_rows_is_contract_violation_not_ok(temp_db) -> None:
 
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "fx:USDJPY")
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-07"  # 据え置き（today へ前進しない）
 
 
@@ -197,4 +201,5 @@ def test_idempotent_reupsert(temp_db) -> None:
     assert result2.ok is True
     with get_engine().connect() as conn:
         fx = repo.get_latest_fx_rate(conn, "USDJPY")
+    assert fx is not None
     assert fx["rate"] == pytest.approx(149.0)

@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 from datetime import UTC, datetime
+from typing import cast
 
 import pandas as pd
 
@@ -56,11 +57,15 @@ def _load_inputs(db_path: str, bench_symbol: str) -> tuple[pd.DataFrame, pd.Data
             con,
         )
         px = pd.read_sql("SELECT code,date,adj_close FROM daily_quotes ORDER BY code,date", con)
-        bench = pd.read_sql(
-            "SELECT date,close FROM index_quotes WHERE symbol=? ORDER BY date",
-            con,
-            params=(bench_symbol,),
-        ).set_index("date")["close"]
+        # DataFrame["close"] は静的に Series | DataFrame になるが、単一列選択の実体は Series。
+        bench = cast(
+            "pd.Series",
+            pd.read_sql(
+                "SELECT date,close FROM index_quotes WHERE symbol=? ORDER BY date",
+                con,
+                params=(bench_symbol,),
+            ).set_index("date")["close"],
+        )
     finally:
         con.close()
     return fin, px, bench

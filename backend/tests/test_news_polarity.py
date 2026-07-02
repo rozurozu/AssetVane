@@ -61,7 +61,9 @@ def _insert_news(
                 polarity=polarity,
             )
         )
-    return int(result.inserted_primary_key[0])
+    pk = result.inserted_primary_key
+    assert pk is not None
+    return int(pk[0])
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +272,7 @@ def test_tag_news_polarity_total_enum_out_not_ok(monkeypatch, temp_db) -> None:
     assert result.rows == 0
     with get_engine().connect() as conn:
         row = conn.execute(news.select().where(news.c.id == n1)).mappings().first()
+    assert row is not None
     assert row["polarity"] is None
 
 
@@ -294,6 +297,7 @@ def test_tag_news_polarity_unconfigured_face_is_silent_skip(monkeypatch, temp_db
     assert result.rows == 0
     with get_engine().connect() as conn:
         row = conn.execute(news.select().where(news.c.id == n1)).mappings().first()
+    assert row is not None
     assert row["polarity"] is None  # 判定は付かず NULL のまま（設定後の夜に再判定）
 
 

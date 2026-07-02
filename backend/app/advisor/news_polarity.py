@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ _POLARITY_INSTRUCTION = (
 )
 
 
-async def classify_polarities(articles: list[dict[str, object]]) -> dict[int, str]:
+async def classify_polarities(articles: list[dict[str, Any]]) -> dict[int, str]:
     """複数のニュース記事を LLM 単発で定性 polarity 判定する（ADR-049/051・ADR-014）。
 
     LLM 単発 `engine.generate_once`（Tool ループ不要・provider は source="tagger" で解決＝
@@ -93,13 +94,16 @@ def _parse_polarity_response(content: str | None, valid_ids: set[int]) -> dict[i
     if not content:
         return {}
 
+    # ここで content は str に確定。以降は非 Optional の局所 text に移し、re.Match.group(1)
+    # （str | Any）の再代入で宣言型 str | None に戻るのを防ぐ（pyright standard）。
+    text = content
     # コードフェンス（```json ... ```）で包まれた応答は中身だけ取り出してからパースする。
-    fence_match = _FENCE_RE.match(content)
+    fence_match = _FENCE_RE.match(text)
     if fence_match:
-        content = fence_match.group(1)
+        text = fence_match.group(1)
 
     try:
-        parsed = json.loads(content)
+        parsed = json.loads(text)
     except (TypeError, ValueError):
         logger.warning("news_polarity: 応答が JSON でないため polarity を付けない（ADR-018）")
         return {}

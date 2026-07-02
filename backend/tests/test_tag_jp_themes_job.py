@@ -172,6 +172,7 @@ def test_bump_only_skips_llm_for_unchanged(temp_db, monkeypatch) -> None:
         meta = repo.get_fetch_meta(conn, "jp_themes:11110")
     assert rows[0]["last_seen_at"] != T1  # bump された（prune 回避）
     assert rows[0]["first_assigned_at"] == T1  # first は不変
+    assert meta is not None
     assert str(meta["last_fetched_date"]) > T2  # カーソルも前進
 
 

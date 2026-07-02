@@ -389,7 +389,8 @@ class YahooUsEquitySource(UsEquitySource):
         if hasattr(cols, "nlevels") and cols.nlevels > 1:
             if symbol not in cols.get_level_values(0):
                 return None
-            return df[symbol]
+            # MultiIndex の最外 level 選択は静的に Series | DataFrame になるが、実体は DataFrame。
+            return cast("pd.DataFrame", df[symbol])
         return df
 
     def fetch_fundamentals(self, symbol: str) -> dict[str, Any]:

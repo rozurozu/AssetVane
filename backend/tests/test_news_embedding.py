@@ -65,7 +65,9 @@ def _insert_news(
                 embed_model=embed_model,
             )
         )
-    return int(result.inserted_primary_key[0])
+    pk = result.inserted_primary_key
+    assert pk is not None
+    return int(pk[0])
 
 
 # ---------------------------------------------------------------------------

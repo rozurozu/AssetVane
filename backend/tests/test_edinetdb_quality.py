@@ -41,6 +41,7 @@ def test_cost_of_sales_direct_preferred_over_gross_profit() -> None:
     # cost_of_sales が直接あれば revenue−gross_profit より優先
     rows = [_row(2025, recv=100.0, inv=300.0, rev=1000.0, gp=400.0, cogs=600.0)]
     q = compute_quality_from_financials(rows)
+    assert q is not None
     assert abs(q["inventory_turnover_days"] - 300.0 / 600.0 * 365.0) < 1e-9
 
 
@@ -48,6 +49,7 @@ def test_dio_none_when_no_cogs_derivable() -> None:
     # gross_profit も cost_of_sales も無ければ DIO は None（捏造しない）。DSO は出る。
     rows = [_row(2025, recv=100.0, inv=300.0, rev=1000.0)]
     q = compute_quality_from_financials(rows)
+    assert q is not None
     assert q["inventory_turnover_days"] is None
     assert q["receivables_turnover_days"] is not None
 
@@ -59,6 +61,7 @@ def test_yoy_none_without_prev_year() -> None:
         _row(2025, recv=150.0, inv=260.0, rev=1100.0, gp=330.0),
     ]
     q = compute_quality_from_financials(rows)
+    assert q is not None
     assert q["receivables_growth_yoy"] is None
     assert q["inventory_growth_yoy"] is None
     # 当期の DSO/DIO は出る

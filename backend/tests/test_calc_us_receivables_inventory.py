@@ -94,6 +94,7 @@ def test_us_job_updates_snapshot_for_holding(temp_db, monkeypatch) -> None:
 
     with get_engine().connect() as conn:
         snap = repo.get_us_valuation_snapshot(conn, "AAPL")
+    assert snap is not None
     assert abs(snap["receivables_growth_yoy"] - 0.5) < 1e-9
     assert snap["inventory_turnover_days"] is not None
 

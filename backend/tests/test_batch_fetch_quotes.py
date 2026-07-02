@@ -185,4 +185,5 @@ def test_stop_mid_dayloop_breaks(temp_db, _patch, monkeypatch) -> None:
     assert "停止により中断" in result.detail
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "daily_quotes")
+    assert meta is not None
     assert meta["last_fetched_date"] == "2026-06-03"  # 取れた日まで前進

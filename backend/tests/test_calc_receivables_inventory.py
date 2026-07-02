@@ -82,6 +82,8 @@ def test_updates_snapshot_for_watchlist_code(temp_db, monkeypatch) -> None:
     with get_engine().connect() as conn:
         snap = repo.get_valuation_snapshot(conn, "72030")
         stock = repo.get_stock(conn, "72030")
+    assert snap is not None
+    assert stock is not None
     assert snap["receivables_growth_yoy"] is not None
     assert abs(snap["receivables_growth_yoy"] - 0.5) < 1e-9
     assert snap["inventory_turnover_days"] is not None

@@ -36,6 +36,7 @@ def test_repo_partial_update_keeps_api_key(temp_db) -> None:
     _set({"plan": "standard"})  # api_key を渡さない
     with get_engine().connect() as conn:
         row = repo.get_jquants_config(conn)
+    assert row is not None
     assert row["api_key"] == "secret"
     assert row["plan"] == "standard"
 

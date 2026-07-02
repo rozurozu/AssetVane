@@ -157,6 +157,7 @@ def test_screening_filters_crud(temp_db) -> None:
     with get_engine().connect() as conn:
         got = repo.get_screening_filter(conn, fid)
         all_f = repo.list_screening_filters(conn)
+    assert got is not None
     assert got["name"] == "割安高配当"
     assert len(all_f) == 1
 
@@ -164,6 +165,7 @@ def test_screening_filters_crud(temp_db) -> None:
     assert n == 1
     with get_engine().connect() as conn:
         got2 = repo.get_screening_filter(conn, fid)
+    assert got2 is not None
     assert got2["name"] == "改名"
     assert got2["criteria_json"] == '{"per_max":10}'
 

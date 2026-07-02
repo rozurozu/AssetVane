@@ -81,7 +81,12 @@ def test_throttle_no_sleep_when_interval_elapsed(monkeypatch) -> None:
 def test_returns_ok_response() -> None:
     """200 はそのまま Response を返す（1 回で成功）。"""
     client = _FakeClient([_FakeResponse(200, text="ok")])
-    resp = get_with_retry(client, "/x", on_http_error=_err("http"), on_exhausted=_err("done"))
+    resp = get_with_retry(
+        client,  # type: ignore[arg-type]  # get で叩くだけの fake httpx.Client（ダックタイピング）
+        "/x",
+        on_http_error=_err("http"),
+        on_exhausted=_err("done"),
+    )
     assert resp.status_code == 200
     assert len(client.calls) == 1
 
@@ -90,7 +95,12 @@ def test_retries_429_then_succeeds(monkeypatch) -> None:
     """429 を挟んでも最終 200 で成功する（バックオフは実時間消費させない）。"""
     monkeypatch.setattr(_http.time, "sleep", lambda s: None)
     client = _FakeClient([_FakeResponse(429), _FakeResponse(429), _FakeResponse(200)])
-    resp = get_with_retry(client, "/x", on_http_error=_err("http"), on_exhausted=_err("done"))
+    resp = get_with_retry(
+        client,  # type: ignore[arg-type]  # get で叩くだけの fake httpx.Client（ダックタイピング）
+        "/x",
+        on_http_error=_err("http"),
+        on_exhausted=_err("done"),
+    )
     assert resp.status_code == 200
     assert len(client.calls) == 3
 
@@ -100,7 +110,12 @@ def test_exhausts_on_persistent_429(monkeypatch) -> None:
     monkeypatch.setattr(_http.time, "sleep", lambda s: None)
     client = _FakeClient([_FakeResponse(429)] * _http.DEFAULT_MAX_RETRIES)
     with pytest.raises(RuntimeError, match="done"):
-        get_with_retry(client, "/x", on_http_error=_err("http"), on_exhausted=_err("done"))
+        get_with_retry(
+            client,  # type: ignore[arg-type]  # get で叩くだけの fake httpx.Client（ダックタイピング）
+            "/x",
+            on_http_error=_err("http"),
+            on_exhausted=_err("done"),
+        )
     assert len(client.calls) == _http.DEFAULT_MAX_RETRIES
 
 
@@ -108,7 +123,12 @@ def test_raises_on_http_error_immediately() -> None:
     """429 以外の 4xx は on_http_error で即 raise（リトライしない）。"""
     client = _FakeClient([_FakeResponse(404, text="nope")])
     with pytest.raises(RuntimeError, match="http"):
-        get_with_retry(client, "/x", on_http_error=_err("http"), on_exhausted=_err("done"))
+        get_with_retry(
+            client,  # type: ignore[arg-type]  # get で叩くだけの fake httpx.Client（ダックタイピング）
+            "/x",
+            on_http_error=_err("http"),
+            on_exhausted=_err("done"),
+        )
     assert len(client.calls) == 1
 
 
@@ -116,7 +136,12 @@ def test_retries_network_error_when_enabled(monkeypatch) -> None:
     """retry_network_errors=True（既定）は Timeout/Transport 例外もリトライする。"""
     monkeypatch.setattr(_http.time, "sleep", lambda s: None)
     client = _FakeClient([httpx.ConnectError("boom"), _FakeResponse(200)])
-    resp = get_with_retry(client, "/x", on_http_error=_err("http"), on_exhausted=_err("done"))
+    resp = get_with_retry(
+        client,  # type: ignore[arg-type]  # get で叩くだけの fake httpx.Client（ダックタイピング）
+        "/x",
+        on_http_error=_err("http"),
+        on_exhausted=_err("done"),
+    )
     assert resp.status_code == 200
     assert len(client.calls) == 2
 
@@ -126,7 +151,7 @@ def test_propagates_network_error_when_disabled() -> None:
     client = _FakeClient([httpx.ConnectError("boom")])
     with pytest.raises(httpx.ConnectError):
         get_with_retry(
-            client,
+            client,  # type: ignore[arg-type]  # get で叩くだけの fake httpx.Client（ダックタイピング）
             "/x",
             on_http_error=_err("http"),
             on_exhausted=_err("done"),
@@ -146,7 +171,7 @@ def test_calls_throttle_each_attempt(monkeypatch) -> None:
 
     client = _FakeClient([_FakeResponse(429), _FakeResponse(200)])
     get_with_retry(
-        client,
+        client,  # type: ignore[arg-type]  # get で叩くだけの fake httpx.Client（ダックタイピング）
         "/x",
         throttle=_SpyThrottle(0.0),
         on_http_error=_err("http"),

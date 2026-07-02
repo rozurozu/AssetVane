@@ -237,6 +237,7 @@ def test_fetch_index_run_no_new_data_is_ok(temp_db, monkeypatch) -> None:
     assert result.ok is True
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "index_quotes:^SPX")
+    assert meta is not None
     assert meta["last_attempt_ok"] == 1  # 失敗ではない＝digest に出ない
     assert meta["last_fetched_date"] == "2026-05-29"  # 新規無しなので前進しない
 

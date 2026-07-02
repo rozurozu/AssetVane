@@ -52,11 +52,13 @@ def test_resolve_face_dangling_provider_raises(temp_db: None) -> None:
 def test_resolve_face_model_falls_back_to_provider_default(temp_db: None) -> None:
     """face.model が空なら provider.default_model を使う。"""
     with get_engine().begin() as conn:
-        pid = conn.execute(
+        pk = conn.execute(
             insert(llm_providers).values(
                 name="p2", base_url="https://x/v1", api_key="k", default_model="default-m"
             )
-        ).inserted_primary_key[0]
+        ).inserted_primary_key
+        assert pk is not None
+        pid = pk[0]
         repo.upsert_face(conn, face="tagger", provider_id=pid, model="")
     with get_engine().connect() as conn:
         rf = llm_config.resolve_face(conn, "tagger")

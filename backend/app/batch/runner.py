@@ -90,7 +90,9 @@ def run_jobs(
                     logger.info("バッチ停止要求を検知。残りジョブをスキップして正常終了する。")
                     break
                 # __module__="app.batch.jobs.fetch_quotes" の末尾だけを表示用の短名にする。
-                name = getattr(job, "__module__", job.__name__).rsplit(".", 1)[-1]
+                # job は list[object] 由来。__name__ 直参照は不可なので getattr で回避。
+                module = getattr(job, "__module__", getattr(job, "__name__", ""))
+                name = module.rsplit(".", 1)[-1]
                 state.set_current_job(name)
                 try:
                     # full_backfill を受けないジョブもあるため、シグネチャに応じて渡し分ける。

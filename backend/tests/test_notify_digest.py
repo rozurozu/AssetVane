@@ -261,9 +261,11 @@ def _seed_holdings(*codes: str) -> None:
     from app.db.schema import holdings, portfolios
 
     with get_engine().begin() as conn:
-        pid = conn.execute(
+        pk = conn.execute(
             portfolios.insert().values(name="メイン", created_at="2026-01-01T00:00:00+00:00")
-        ).inserted_primary_key[0]
+        ).inserted_primary_key
+        assert pk is not None
+        pid = pk[0]
         for code in codes:
             conn.execute(
                 holdings.insert().values(portfolio_id=pid, code=code, shares=100.0, avg_cost=1000.0)

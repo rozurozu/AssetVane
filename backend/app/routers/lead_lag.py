@@ -127,6 +127,8 @@ def get_lead_lag(conn: Connection = Depends(get_conn)) -> LeadLagResponse:
         hit_rate=head_payload.get("hit_rate"),
         window=head_payload.get("window"),
         k=head_payload.get("k"),
-        lambda_=head_payload.get("lambda"),
+        # populate_by_name=True で lambda_（フィールド名）を受理する。pyright の pydantic
+        # alias 合成 __init__ が alias 名しか露出しないための偽陽性（実行時は test で担保）。
+        lambda_=head_payload.get("lambda"),  # type: ignore[call-arg]
     )
     return LeadLagResponse(as_of=resolved, ranking=ranking, meta=meta)

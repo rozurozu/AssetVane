@@ -23,6 +23,16 @@ from app.quant.valuation import (
 )
 
 
+def _nn(x: float | None) -> float:
+    """None でないことを表明して float に絞る（pyright standard・演算前の narrowing）。
+
+    quant.valuation の各関数は無効入力で None を返す正しい設計（ADR-014・捏造しない）。
+    有効入力での算術検証では None でないことをテスト側で表明してから引き算する。
+    """
+    assert x is not None
+    return x
+
+
 def test_per_basic() -> None:
     assert per(2000.0, 100.0) == 20.0
 
@@ -114,8 +124,8 @@ def test_margins_basic_and_guards() -> None:
 
 
 def test_growth_yoy_basic_and_guards() -> None:
-    assert abs(growth_yoy(110.0, 100.0) - 0.1) < 1e-12
-    assert abs(growth_yoy(90.0, 100.0) - (-0.1)) < 1e-12
+    assert abs(_nn(growth_yoy(110.0, 100.0)) - 0.1) < 1e-12
+    assert abs(_nn(growth_yoy(90.0, 100.0)) - (-0.1)) < 1e-12
     # 前年が 0 以下（赤字→黒字 等）は意味を成さず None
     assert growth_yoy(50.0, 0.0) is None
     assert growth_yoy(50.0, -10.0) is None
@@ -141,8 +151,8 @@ def test_forecast_achievement_basic_and_guards() -> None:
 
 def test_forecast_revision_basic_and_guards() -> None:
     # 新予想/旧予想 - 1（+ 上方・- 下方）
-    assert abs(forecast_revision(380.0, 340.0) - (380.0 / 340.0 - 1)) < 1e-12
-    assert abs(forecast_revision(90.0, 100.0) - (-0.1)) < 1e-12
+    assert abs(_nn(forecast_revision(380.0, 340.0)) - (380.0 / 340.0 - 1)) < 1e-12
+    assert abs(_nn(forecast_revision(90.0, 100.0)) - (-0.1)) < 1e-12
     assert forecast_revision(50.0, 0.0) is None
     assert forecast_revision(50.0, -10.0) is None
     assert forecast_revision(None, 100.0) is None
@@ -175,8 +185,8 @@ def test_forecast_guidance_beat_and_upward_revision_like_7203() -> None:
         _row("2026-02-06", "3Q", f_op=3.80),  # 直近 上方修正
     ]
     g = forecast_guidance(rows)
-    assert abs(g["op_forecast_achievement"] - 4.80 / 4.70) < 1e-12  # beat
-    assert abs(g["op_forecast_revision"] - (3.80 / 3.40 - 1)) < 1e-12  # 上方修正
+    assert abs(_nn(g["op_forecast_achievement"]) - 4.80 / 4.70) < 1e-12  # beat
+    assert abs(_nn(g["op_forecast_revision"]) - (3.80 / 3.40 - 1)) < 1e-12  # 上方修正
     # 純利益は素が無いので None（営業利益と独立）
     assert g["profit_forecast_achievement"] is None
     assert g["profit_forecast_revision"] is None
@@ -201,7 +211,7 @@ def test_forecast_guidance_revision_needs_two_in_progress_disclosures() -> None:
         _row("2024-08-07", "1Q", f_op=3.20),  # 進行中FY 予想は 1 件のみ
     ]
     g = forecast_guidance(rows)
-    assert abs(g["op_forecast_achievement"] - 4.80 / 4.70) < 1e-12
+    assert abs(_nn(g["op_forecast_achievement"]) - 4.80 / 4.70) < 1e-12
     assert g["op_forecast_revision"] is None
 
 
@@ -213,7 +223,7 @@ def test_forecast_guidance_no_fy_row_uses_all_forecast_rows_for_revision() -> No
     ]
     g = forecast_guidance(rows)
     assert g["op_forecast_achievement"] is None
-    assert abs(g["op_forecast_revision"] - (3.40 / 3.20 - 1)) < 1e-12
+    assert abs(_nn(g["op_forecast_revision"]) - (3.40 / 3.20 - 1)) < 1e-12
 
 
 def test_forecast_guidance_empty_rows() -> None:
@@ -231,7 +241,7 @@ def test_forecast_guidance_empty_rows() -> None:
 
 def test_receivables_turnover_days_basic_and_guards() -> None:
     # 受取債権 100・売上 365 → 100/365×365 = 100 日
-    assert abs(receivables_turnover_days(100.0, 365.0) - 100.0) < 1e-9
+    assert abs(_nn(receivables_turnover_days(100.0, 365.0)) - 100.0) < 1e-9
     # 売上 0 以下は None（捏造しない）
     assert receivables_turnover_days(100.0, 0.0) is None
     assert receivables_turnover_days(100.0, -10.0) is None
@@ -244,7 +254,7 @@ def test_receivables_turnover_days_basic_and_guards() -> None:
 
 def test_inventory_turnover_days_basic_and_guards() -> None:
     # 在庫 200・売上原価 365 → 200 日
-    assert abs(inventory_turnover_days(200.0, 365.0) - 200.0) < 1e-9
+    assert abs(_nn(inventory_turnover_days(200.0, 365.0)) - 200.0) < 1e-9
     # 分母（売上原価）0 以下は None
     assert inventory_turnover_days(200.0, 0.0) is None
     assert inventory_turnover_days(200.0, -5.0) is None
