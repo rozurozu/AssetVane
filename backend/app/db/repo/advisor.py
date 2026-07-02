@@ -62,6 +62,21 @@ def insert_journal(conn: Connection, **fields: Any) -> int:
     return int(result.lastrowid)
 
 
+def set_journal_policy_snapshot(conn: Connection, journal_id: int, snapshot: str | None) -> None:
+    """既存 advisor_journal 行に policy_snapshot を後追いで焼く（ADR-013・spec §8.1）。
+
+    夜 nightly が起票した policy_change 提案（journal_id 付き）の承認経路で、その生成元
+    journal 行に更新後 policy の snapshot を上書きする。Table 直参照を service に置くと
+    レイヤ違反かつ repo パッケージ未 export で AttributeError になるため repo に閉じる
+    （ADR-002・backend-repo-pattern）。write のトランザクション規律は本モジュール冒頭の通り。
+    """
+    conn.execute(
+        advisor_journal.update()
+        .where(advisor_journal.c.id == journal_id)
+        .values(policy_snapshot=snapshot)
+    )
+
+
 def get_journal(conn: Connection, journal_id: int) -> dict[str, Any] | None:
     """advisor_journal の 1 行を返す（situation_briefing 込み・GET /journal/{id}・spec §8.2）。"""
     row = (

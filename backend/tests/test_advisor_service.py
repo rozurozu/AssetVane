@@ -219,6 +219,35 @@ def test_resolve_proposal_policy_change_updates_policy(temp_db: None) -> None:
     assert snapshot["max_position_weight"] == pytest.approx(0.2)
 
 
+def test_resolve_proposal_policy_change_bakes_into_existing_journal(temp_db: None) -> None:
+    """journal_id 付き policy_change 承認は既存 journal 行へ snapshot を焼く（新規起票しない）。
+
+    夜 nightly が起票した policy_change 提案（journal_id 付き）を人間が承認する経路。旧実装は
+    service が repo.advisor_journal（repo 未 export の Table）を直参照しており、この分岐に入ると
+    実行時 AttributeError で 500 になっていた回帰（Table 直参照 → repo 関数へ・ADR-002/013）。
+    """
+    with get_engine().begin() as conn:
+        jid = repo.insert_journal(
+            conn, date="2025-01-01", source="nightly", observations="夜の方針提案"
+        )
+    body = json.dumps({"field": "max_position_weight", "to": 0.15, "reason": "集中"})
+    pid = _insert_proposal(kind="policy_change", body=body, journal_id=jid)
+
+    with get_engine().begin() as conn:
+        service.resolve_proposal(conn, pid, decision="approved")
+
+    with get_engine().connect() as conn:
+        policy = repo.get_policy(conn)
+        journals = repo.list_journal(conn)
+        target = repo.get_journal(conn, jid)
+    assert policy is not None and policy["max_position_weight"] == pytest.approx(0.15)
+    # 既存 journal 行に snapshot が焼かれ、新規 journal は増えない（journal_id 指定パス）。
+    assert len(journals) == 1, "journal_id 指定時は新規起票せず既存行へ焼く"
+    assert target is not None and target["id"] == jid
+    snapshot = json.loads(target["policy_snapshot"])
+    assert snapshot["max_position_weight"] == pytest.approx(0.15)
+
+
 def test_resolve_proposal_sector_caps_dict_roundtrip(temp_db: None) -> None:
     """sector_caps の dict `to` を承認しても落ちず、DB は JSON 文字列・読み出しは dict（ADR-013）。
 

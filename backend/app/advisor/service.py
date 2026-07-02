@@ -194,12 +194,8 @@ def apply_policy_change(
     observations = f"方針を更新（{field}）" + (f": {reason}" if reason else "")
 
     if journal_id is not None:
-        # 既存 journal（夜の生成元）に snapshot を焼く。
-        conn.execute(
-            repo.advisor_journal.update()
-            .where(repo.advisor_journal.c.id == journal_id)
-            .values(policy_snapshot=snapshot)
-        )
+        # 既存 journal（夜の生成元）に snapshot を焼く（Table 直参照は repo に閉じる・ADR-002）。
+        repo.set_journal_policy_snapshot(conn, journal_id, snapshot)
     else:
         # チャット承認など journal が無い入口は当日 journal を 1 件起票して snapshot を残す。
         # 監査 model は source 面の解決値を best-effort で（未設定なら None＝この snapshot は LLM
