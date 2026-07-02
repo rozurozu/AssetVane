@@ -69,7 +69,7 @@ cd frontend && npm install && npm run dev
 
 - frontend は API を相対パス `/api` で叩き、Next の rewrites（`next.config.ts`・転送先 `BACKEND_ORIGIN`）が裏で backend へ素通しする（同一オリジン化＝ADR-037）。CORS と API_URL 焼き込みは廃止。
 - 秘密情報のうち **LLM・J-Quants のキーは DB（`/settings` で編集）に移管済み**（ADR-058/059/061）。env に残る秘密（Discord/EDINET 等）は **backend の `.env` のみ**。いずれも frontend には渡さない。
-- 開発は J-Quants **Free プラン**（株価 12 週間遅延）で進む。評価額・P/L も遅延値になる点に注意。
+- J-Quants のプランは DB（`jquants_config`・`/settings` で編集）で管理する（ADR-061）。**現在は Light プラン（遅延なし）で運用**。ロジックはプラン非依存で、データが遅延しているかは契約プランの仮定でなく `as_of` の鮮度で判定する（ADR-071）。
 
 データ投入・テスト・移行（`backend/` で。Compose なら `docker compose exec backend …`）:
 

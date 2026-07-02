@@ -138,7 +138,7 @@ npm run dev
 
 > ホスト直 dev では Next の rewrites 転送先が `BACKEND_ORIGIN` 未設定で `http://localhost:8000` に落ちるので、backend を同じホストの :8000 で動かしていれば**設定不要**（同一オリジン化＝[ADR-037](docs/decisions.md)）。backend が別ホスト/別ポートなら `BACKEND_ORIGIN=http://host:port npm run dev`。CORS の指定は不要になった。API 契約は [docs/api.md](docs/api.md) を参照。
 
-> ℹ️ 開発は J-Quants **Free プラン**（株価12週間遅延・約2年分）で進められる。ロジックはプラン非依存なので、実運用時に Light 以上へ切り替えれば同じコードが最新データで動く。**Free 期間は評価額・P/L も遅延値**になる点に注意。
+> ℹ️ J-Quants のプランは **`/settings` の WebUI（DB 保存）で管理**する（[ADR-061](docs/decisions.md)）。**現在は Light プラン（遅延なし）で運用**。ロジックはプラン非依存なので Free/Light/Standard/Premium いずれでも同じコードが動く。データが遅延しているかは契約プランの仮定でなく `as_of` の鮮度で判定する（[ADR-071](docs/decisions.md)）。
 
 ### 4. LLM プロバイダ・面別 model を設定する（[ADR-058](docs/decisions.md)）
 
