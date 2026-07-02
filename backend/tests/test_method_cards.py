@@ -1,0 +1,73 @@
+"""手法カード（ローダ＋get_method_card Tool）を検証する（ADR-075）。
+
+担保: frontmatter パース・未登録は None・index/カタログ・ドリフト検査・Tool handler の
+（本文/一覧/未登録）3 分岐。リポジトリの advisor/method_cards/*.md を実際に読む（DB/ネット非依存）。
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+from app.advisor import method_cards
+from app.advisor.tools import handlers
+
+# 現時点で method_cards を持つべき signal_type（ドリフト検査の基準・手法追加時はここも更新）。
+_KNOWN = {"momentum", "volume_spike", "stealth_accum", "lead_lag", "ai_alpha"}
+
+
+def test_loader_parses_frontmatter() -> None:
+    """<signal_type>.md の frontmatter（signal_type/summary）と本文を読める。"""
+    card = method_cards.get_method_card("lead_lag")
+    assert card is not None
+    assert card["signal_type"] == "lead_lag"
+    assert card["summary"]  # 空でない
+    assert "リードラグ" in card["body"]
+
+
+def test_unknown_returns_none() -> None:
+    """未登録の signal_type は None。"""
+    assert method_cards.get_method_card("nope") is None
+
+
+def test_index_covers_known() -> None:
+    """index が既知の全 signal_type を summary 付きで返す。"""
+    index = method_cards.method_card_index()
+    got = {c["signal_type"] for c in index}
+    assert _KNOWN <= got
+    assert all(c["summary"] for c in index)
+
+
+def test_no_drift() -> None:
+    """既知 signal_type に対しカードの書き忘れ（missing）も孤児（orphan）も無い。"""
+    drift = method_cards.validate_method_cards(_KNOWN)
+    assert drift["missing"] == []
+    assert drift["orphan"] == []
+
+
+def test_catalog_text_lists_cards() -> None:
+    """Tool description 用カタログに独自手法が並ぶ（常時露出のメタ）。"""
+    catalog = method_cards.catalog_text()
+    assert "lead_lag" in catalog
+    assert "stealth_accum" in catalog
+
+
+def test_handler_returns_card() -> None:
+    """get_method_card(signal_type) は found=True＋本文を返す。"""
+    out = asyncio.run(handlers.handle_get_method_card({"signal_type": "stealth_accum"}))
+    assert out["found"] is True
+    assert out["signal_type"] == "stealth_accum"
+    assert "仕込み" in out["body"]
+
+
+def test_handler_no_arg_returns_index() -> None:
+    """引数なしは登録カード一覧（available）を返す。"""
+    out = asyncio.run(handlers.handle_get_method_card({}))
+    assert "available" in out
+    assert _KNOWN <= {c["signal_type"] for c in out["available"]}
+
+
+def test_handler_unknown_signal_type() -> None:
+    """未登録 signal_type は found=False＋一覧を添えて返す（誤解を誘わない）。"""
+    out = asyncio.run(handlers.handle_get_method_card({"signal_type": "nope"}))
+    assert out["found"] is False
+    assert "available" in out

@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from app.advisor import method_cards
 from app.advisor.tools import handlers
 from app.advisor.tools.schemas import (
     AdjustCardWeightArgs,
@@ -25,6 +26,7 @@ from app.advisor.tools.schemas import (
     GetGeneralNewsArgs,
     GetIndicatorsArgs,
     GetLeadLagArgs,
+    GetMethodCardArgs,
     GetNewsContextArgs,
     GetNotableCandidatesArgs,
     GetPortfolioMetricsArgs,
@@ -105,6 +107,19 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(GetSignalsArgs),
         handler=handlers.handle_get_signals,
+        min_phase=1,
+    ),
+    "get_method_card": ToolDef(
+        name="get_method_card",
+        description=(
+            "シグナル/手法の正典的な解釈（何を測る・スコアの読み方・限界）を"
+            "リポジトリの手法カードから取得する（ADR-075）。"
+            "独自手法（lead_lag / ai_alpha / stealth_accum 等）を解釈・引用する前に呼ぶ"
+            "（GC/RSI 等の教科書手法は薄い）。signal_type を渡すと本文、省略すると一覧を返す。"
+            "\n\n利用可能な手法カード:\n" + method_cards.catalog_text()
+        ),
+        parameters=_schema(GetMethodCardArgs),
+        handler=handlers.handle_get_method_card,
         min_phase=1,
     ),
     "get_notable_candidates": ToolDef(

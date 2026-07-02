@@ -36,6 +36,7 @@ def test_openai_tools_phase1_only_p1_tools() -> None:
     assert names == {
         "get_indicators",
         "get_signals",
+        "get_method_card",
         "get_notable_candidates",
         "screen_stocks",
         "submit_notable_stocks",
@@ -73,6 +74,8 @@ def test_registry_handlers_are_registered() -> None:
     expected = {
         "get_indicators",
         "get_signals",
+        # ADR-075: 手法カードのオンデマンド取得（min_phase=1）。
+        "get_method_card",
         # ADR-067: 注目候補の合流ゲート＋AI 選別（min_phase=1）。
         "get_notable_candidates",
         "submit_notable_stocks",

@@ -259,6 +259,17 @@ class SearchCardsArgs(_ToolArgs):
     limit: int | None = None
 
 
+class GetMethodCardArgs(_ToolArgs):
+    """get_method_card の引数（ADR-075・手法カードのオンデマンド取得）。
+
+    シグナル/手法の正典的な解釈（何を測る・スコアの読み方・限界）をリポジトリの手法カードから返す。
+    `signal_type` を渡すと本文を、省略すると登録カードの一覧（signal_type＋summary）を返す。
+    独自手法（lead_lag / ai_alpha / stealth_accum 等）を解釈する前に呼ぶ。
+    """
+
+    signal_type: str | None = None
+
+
 class ProposeCardArgs(_ToolArgs):
     """propose_card の引数（ADR-062 追補・チャットからカードを承認制で起票）。
 

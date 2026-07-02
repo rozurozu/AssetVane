@@ -850,7 +850,9 @@ knowledge_cards = Table(
     # code 付きは exact-match でだけ注入し汎用の意味検索プールからは除外する（他銘柄漏れ防止）。
     Column("market", String),  # 'JP'/'US'（銘柄ノートのとき・非銘柄カードは NULL）
     Column("code", String),  # 銘柄コード（JP 5 桁 / US ティッカー・非銘柄カードは NULL）
-    Column("linked_signal_type", String),  # 紐づく signal_type（未実装は NULL＝手法↔計算の索引）
+    # DEPRECATED（ADR-075）: 手法↔signal の対応は method_cards（advisor/method_cards/*.md）が
+    # signal_type キーで持つため冗長。triage は新規に埋めない（既存値は残置・列 DROP は別 PR）。
+    Column("linked_signal_type", String),  # 紐づく signal_type（非推奨・既存値のみ）
     Column("quant_note", String),  # needs_quant のとき「必要な計算」のメモ
     Column(
         "always_inject", Integer, nullable=False, server_default="0"

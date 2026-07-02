@@ -12,7 +12,7 @@ from app.advisor.card_triage import _parse_assist_response
 
 
 def test_parse_valid_active() -> None:
-    """active＋linked_signal_type の正常 JSON を AssistResult に正規化する。"""
+    """active の正常 JSON を正規化。linked_signal_type は無視して None（ADR-075）。"""
     content = (
         '{"title": "見出し", "when_to_apply": "この状況", "level": "market", '
         '"verdict": "active", "reason": "既存 momentum の読み方", '
@@ -24,7 +24,8 @@ def test_parse_valid_active() -> None:
     assert result.when_to_apply == "この状況"
     assert result.level == "market"
     assert result.verdict == "active"
-    assert result.linked_signal_type == "momentum"
+    # ADR-075: triage は手法↔signal を持たない（method_cards が持つ）＝LLM が出しても常に None。
+    assert result.linked_signal_type is None
     assert result.quant_note is None
     assert result.reason == "既存 momentum の読み方"
 

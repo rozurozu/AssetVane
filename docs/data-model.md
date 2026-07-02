@@ -576,7 +576,7 @@ AI アドバイザーの第 3 の知識源（CORE/POLICY に続く・[ADR-015](d
 | `theme` | TEXT | テーマ事前フィルタ（任意）|
 | `market` | TEXT | 銘柄ノートの市場 'JP'/'US'（[ADR-062](decisions.md) 追補・`0033`・非銘柄は null）|
 | `code` | TEXT | 銘柄ノートの code（JP 5 桁 / US ティッカー・`code` あり＝`level='stock'`・exact-match 注入・汎用意味検索プールからは除外・[ADR-062](decisions.md) 追補・`0033`・非銘柄は null）|
-| `linked_signal_type` | TEXT | 紐づく signal_type（未実装は null＝手法↔計算の索引）|
+| `linked_signal_type` | TEXT | 紐づく signal_type。**DEPRECATED（[ADR-075](decisions.md)）**＝手法↔signal は手法カード（`app/advisor/method_cards/<signal_type>.md`）が持つため冗長。triage は新規に埋めない（既存値は残置・列 DROP は別 PR）|
 | `quant_note` | TEXT | `needs_quant` のとき「必要な計算」のメモ |
 | `always_inject` | INTEGER | 1=常時注入の例外保険（0/1）|
 | `weight` | REAL | 重要度（>0・既定 1.0）。retrieval/注入順を `distance/weight` で重み付け（[ADR-062](decisions.md) 追補・`0026`）|

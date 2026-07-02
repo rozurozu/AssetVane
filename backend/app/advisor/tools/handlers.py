@@ -22,6 +22,7 @@ import pandas as pd
 from sqlalchemy import Connection
 
 from app.adapters.news import fetch_news
+from app.advisor import method_cards
 from app.advisor.dossier import investigate_stock
 from app.advisor.journaling import resolve_trade_target
 from app.advisor.tools.schemas import (
@@ -34,6 +35,7 @@ from app.advisor.tools.schemas import (
     GetGeneralNewsArgs,
     GetIndicatorsArgs,
     GetLeadLagArgs,
+    GetMethodCardArgs,
     GetNewsContextArgs,
     GetNotableCandidatesArgs,
     GetPortfolioMetricsArgs,
@@ -954,6 +956,29 @@ async def handle_search_cards(args: dict[str, object]) -> dict[str, Any]:
         )
     except Exception as exc:
         logger.exception("handle_search_cards 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_method_card(args: dict[str, object]) -> dict[str, Any]:
+    """get_method_card（ADR-075）。手法カード（手法の正典的解釈）をオンデマンドで返す。
+
+    signal_type を渡すと本文を、省略すると登録カードの一覧（signal_type＋summary）を返す。
+    実体は advisor/method_cards/*.md（起動時ロード）で、handler は橋渡しのみ（ADR-014/016）。
+    """
+    try:
+        a = GetMethodCardArgs.model_validate(args)
+        if a.signal_type is None:
+            return {"available": method_cards.method_card_index()}
+        card = method_cards.get_method_card(a.signal_type)
+        if card is None:
+            return {
+                "signal_type": a.signal_type,
+                "found": False,
+                "available": method_cards.method_card_index(),
+            }
+        return {"found": True, **card}
+    except Exception as exc:
+        logger.exception("handle_get_method_card 失敗")
         return {"error": str(exc)}
 
 

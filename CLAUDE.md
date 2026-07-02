@@ -45,7 +45,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **SQLite（WAL）。DB に触れる OS プロセスは FastAPI に限定**してロック競合を避ける（ADR-002/005）。書き込み系統は夜間バッチ・昼の手入力・チャット/承認の 3 系統だが、同一プロセス内で扱う。再取得で壊れないよう UPSERT で冪等にする。**dev の DB は named volume `assetvane-db` に載せる＝bind mount にしない**（macOS Docker Desktop の gRPC-FUSE/virtiofs 上で WAL/mmap が壊れ 2026-06-22 に実際に破損した＝ADR-060。prod ラズパイはネイティブ Linux で bind mount 維持）。named volume はホストから素見えしないのでバックアップ/復元は `make db-backup`/`db-restore`。
 - **単一ユーザー・認証なし**（ADR-001）。`user_id` を足さない。家庭内 LAN 前提で外部公開しない。
 - **データソースはアダプタ越し**（`JQuantsAdapter` / `IndexAdapter` / `UsEquityAdapter` / `NewsAdapter` / `FxAdapter`）。直結ハードコードしない（ADR-010）。
-- **銘柄ドシエは DB に保存**（`stock_dossiers` の markdown 列）＋ソース台帳（`dossier_sources`、本文は持たず要約＋URL）。リポジトリ markdown には置かない（AI が頻繁に自動更新するため＝ADR-020）。逆に CORE プロンプト（規律・ペルソナ）は安定資産なのでリポジトリ markdown に置く（`core_prompt.md`）。**知識（旧・手法カード）は ADR-062 で DB の `knowledge_cards`〔0025〕＋ `/cards` 管理画面・RAG へ移管**（UI で増減・AI 審査 triage で振り分け・active 化は人間承認）。一般教科書知識は LLM に任せ、計算は引き続き `quant/*.py`（カードは `linked_signal_type` で索引するだけ＝ADR-014/016）。
+- **銘柄ドシエは DB に保存**（`stock_dossiers` の markdown 列）＋ソース台帳（`dossier_sources`、本文は持たず要約＋URL）。リポジトリ markdown には置かない（AI が頻繁に自動更新するため＝ADR-020）。逆に CORE プロンプト（規律・ペルソナ）は安定資産なのでリポジトリ markdown に置く（`core_prompt.md`）。**知識（市場文脈・外部メモ・ユーザー知識）は ADR-062 で DB の `knowledge_cards`〔0025〕＋ `/cards` 管理画面・RAG へ移管**（UI で増減・AI 審査 triage で振り分け・active 化は人間承認）。一般教科書知識は LLM に任せ、計算は引き続き `quant/*.py`（＝ADR-014/016）。**手法の解釈（何を測る・スコアの読み方・限界）は ADR-075 で `knowledge_cards` でなく「手法カード＝リポジトリ所有の `app/advisor/method_cards/<signal_type>.md`」に置く**＝アプリ非編集（手法追加はコード変更を伴う）・`get_method_card(signal_type)` でオンデマンド注入（skill 型 progressive disclosure・教科書手法は薄く独自手法は厚く）。**`knowledge_cards.linked_signal_type` は ADR-075 で非推奨**（対応は method_cards がファイル名キーで持つ・triage は新規に埋めない・列 DROP は別 PR）。作法は skill `method-card-authoring`。
 - **重い処理の置き場所**: ML 学習は別 PC（開発機 Mac の Docker コンテナで実行＝ADR-006 を ADR-066 で具体化・スペック要時は GPU ゲーミングPC。ラズパイは `.pkl` で推論のみ＝ADR-006）。LLM 推論は OpenRouter（クラウド、`.env` で差替可＝ADR-012）。MCP によるニュース取得は昼チャットでは使えるが、**無人 cron では使えないことがある**ので夜は軽め（ADR-020）。
 
 ## 開発コマンド
@@ -97,6 +97,7 @@ frontend は `npm run lint`（Biome）/ `npm run format`（Biome）/ `npm run bu
 | 数理計算・下ごしらえ（`services/` ・`quant/`） | `backend-service-quant-pattern` |
 | 外部 API クライアント（`adapters/`） | `backend-adapter-pattern` |
 | AI Advisor の Tool（`app/advisor/tools/` の registry/schemas/handlers） | `advisor-tool-pattern` |
+| 手法カード（`app/advisor/method_cards/` ・新 signal_type/手法の解釈文脈・`get_method_card`） | `method-card-authoring` |
 | 夜間バッチ（`batch/` の runner/jobs/lock/notify） | `batch-pattern` |
 | テスト（pytest・一時 SQLite） | `testing-strategy` |
 | ページ・コンポーネント・フック・共有 UI（frontend） | `frontend-component-pattern` |
