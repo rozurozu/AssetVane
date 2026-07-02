@@ -39,6 +39,8 @@ def test_openai_tools_phase1_only_p1_tools() -> None:
         "get_method_card",
         # ADR-077: 過去提案の市場結果採点の成績取得（min_phase=1）。
         "get_track_record",
+        # ADR-078: 判断ログ横断想起（FTS5 recall・min_phase=1）。
+        "search_judgments",
         "get_notable_candidates",
         "screen_stocks",
         "submit_notable_stocks",
@@ -80,6 +82,8 @@ def test_registry_handlers_are_registered() -> None:
         "get_method_card",
         # ADR-077: 過去提案の市場結果採点の成績取得（min_phase=1）。
         "get_track_record",
+        # ADR-078: 判断ログ横断想起（FTS5 recall・min_phase=1）。
+        "search_judgments",
         # ADR-067: 注目候補の合流ゲート＋AI 選別（min_phase=1）。
         "get_notable_candidates",
         "submit_notable_stocks",

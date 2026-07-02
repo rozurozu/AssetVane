@@ -16,6 +16,7 @@ from sqlalchemy import Connection, Engine, create_engine, event, text
 
 from alembic import command
 from app.config import settings
+from app.db.fts import ensure_judgment_fts
 from app.db.schema import metadata
 
 logger = logging.getLogger(__name__)
@@ -109,8 +110,15 @@ def init_db() -> None:
 
 
 def create_schema() -> None:
-    """テスト用: マイグレーションを介さず metadata から直接スキーマを作る（高速・分離）。"""
-    metadata.create_all(get_engine())
+    """テスト用: マイグレーションを介さず metadata から直接スキーマを作る（高速・分離）。
+
+    judgment_fts（FTS5 仮想表＋同期トリガ）は metadata に載らないため、create_all の後に
+    ensure_judgment_fts で明示的に立てる（temp_db テスト経路でも FTS を使えるように＝ADR-078）。
+    """
+    engine = get_engine()
+    metadata.create_all(engine)
+    with engine.begin() as conn:
+        ensure_judgment_fts(conn)
 
 
 def get_conn() -> Iterator[Connection]:

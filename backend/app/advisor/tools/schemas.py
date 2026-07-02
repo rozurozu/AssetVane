@@ -80,6 +80,15 @@ class GetTrackRecordArgs(_ToolArgs):
     recent_limit: int | None = None  # 直近個別 outcome の件数（既定 10）
 
 
+class SearchJudgmentsArgs(_ToolArgs):
+    """search_judgments の引数（ADR-078）。query 必須・他は任意。"""
+
+    query: str  # 検索語（trigram・3 文字以上）
+    code: str | None = None  # 銘柄コードで絞る（proposal/notable のみ・exact）
+    origin: str | None = None  # 'journal'/'proposal'/'notable'
+    limit: int | None = None  # 返す件数（既定 8）
+
+
 class ScreenStocksArgs(_ToolArgs):
     """screen_stocks の criteria（spec §4.4・キーは内部列名）。"""
 

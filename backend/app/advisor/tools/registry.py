@@ -46,6 +46,7 @@ from app.advisor.tools.schemas import (
     ScreenUsValuationArgs,
     ScreenValuationArgs,
     SearchCardsArgs,
+    SearchJudgmentsArgs,
     SearchNewsArgs,
     SubmitJournalArgs,
     SubmitNotableStocksArgs,
@@ -134,6 +135,20 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(GetTrackRecordArgs),
         handler=handlers.handle_get_track_record,
+        min_phase=1,
+    ),
+    "search_judgments": ToolDef(
+        name="search_judgments",
+        description=(
+            "自分の過去の判断ログ（投資日記・買い/売り提案・注目選別）をキーワードで横断検索する"
+            "（ADR-078）。『この銘柄・この catalyst を前に扱ったか』『似た局面で何を考えたか』を"
+            "思い出したいときに呼ぶ。ヒットには当時の所見/根拠に加え、buy/sell・注目はその後の "
+            "20/60 営業日の実現/超過リターン（採点済みなら）も添えて返す（get_track_record は全体"
+            "集計・こちらは個別の想起）。origin(journal/proposal/notable)・code で絞れる。検索語は "
+            "3 文字以上（trigram）。生チャットは索引しない（永続した判断ログのみ＝ADR-029）。"
+        ),
+        parameters=_schema(SearchJudgmentsArgs),
+        handler=handlers.handle_search_judgments,
         min_phase=1,
     ),
     "get_notable_candidates": ToolDef(

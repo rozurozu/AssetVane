@@ -59,6 +59,10 @@ from app.db.repo.jquants_config import (
     get_jquants_config,
     upsert_jquants_config,
 )
+from app.db.repo.judgments import (
+    search_judgment_fts,
+    search_judgments,
+)
 from app.db.repo.knowledge_cards import (
     delete_knowledge_card,
     get_knowledge_card,
@@ -346,6 +350,8 @@ __all__ = [
     "list_recent_final_outcomes",
     "count_pending_outcomes",
     "latest_final_as_of",
+    "search_judgment_fts",
+    "search_judgments",
     "get_journal_for_date",
     "list_signals_with_sector_for_date",
     "get_recent_adj_closes_by_codes",

@@ -55,6 +55,7 @@ from app.advisor.tools.schemas import (
     ScreenUsValuationArgs,
     ScreenValuationArgs,
     SearchCardsArgs,
+    SearchJudgmentsArgs,
     SearchNewsArgs,
     SubmitJournalArgs,
     SubmitNotableStocksArgs,
@@ -68,7 +69,7 @@ from app.quant import (
     optimize_portfolio,
 )
 from app.reference.gics_sectors import normalize_gics_sector
-from app.services import freshness, track_record
+from app.services import freshness, judgments, track_record
 from app.services.fund_holdings import value_fund_holdings
 from app.services.knowledge_cards import search_cards_for_tool
 from app.services.news import build_news_context, search_news_corpus
@@ -1111,6 +1112,29 @@ async def handle_get_track_record(args: dict[str, object]) -> dict[str, Any]:
             )
     except Exception as exc:
         logger.exception("handle_get_track_record 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_search_judgments(args: dict[str, object]) -> dict[str, Any]:
+    """search_judgments（ADR-078）。過去の判断ログ（日記/提案/注目選別）を FTS 横断想起する。
+
+    judgment_fts を trigram で MATCH し、origin 別に基底表へ join し直して bookend（所見/根拠＋
+    buy/sell・注目は proposal_outcomes の実現/超過リターン）を返すだけ（計算は service/repo・
+    verdict は付けない＝ADR-014）。origin/code で絞れる。生チャットは索引しない（ADR-029）。
+    query 3 文字未満や FTS 未作成でも error にせず空＋理由を返す（ループを落とさない）。
+    """
+    try:
+        parsed = SearchJudgmentsArgs.model_validate(args)
+        with get_engine().connect() as conn:
+            return judgments.search_judgments_for_tool(
+                conn,
+                query=parsed.query,
+                code=parsed.code,
+                origin=parsed.origin,
+                limit=parsed.limit if parsed.limit is not None else 8,
+            )
+    except Exception as exc:
+        logger.exception("handle_search_judgments 失敗")
         return {"error": str(exc)}
 
 
