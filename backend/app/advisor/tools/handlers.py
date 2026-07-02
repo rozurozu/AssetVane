@@ -41,6 +41,7 @@ from app.advisor.tools.schemas import (
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     GetStockThemesArgs,
+    GetTrackRecordArgs,
     GetUsHoldingsArgs,
     GetUsValuationArgs,
     GetValuationArgs,
@@ -67,7 +68,7 @@ from app.quant import (
     optimize_portfolio,
 )
 from app.reference.gics_sectors import normalize_gics_sector
-from app.services import freshness
+from app.services import freshness, track_record
 from app.services.fund_holdings import value_fund_holdings
 from app.services.knowledge_cards import search_cards_for_tool
 from app.services.news import build_news_context, search_news_corpus
@@ -1086,6 +1087,30 @@ async def handle_get_lead_lag(args: dict[str, object]) -> dict[str, Any]:
         }
     except Exception as exc:
         logger.exception("handle_get_lead_lag 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_track_record(args: dict[str, object]) -> dict[str, Any]:
+    """get_track_record（ADR-077）。自分の過去提案の市場結果採点を返す。
+
+    夜バッチ score_proposal_outcomes が焼いた proposal_outcomes を
+    services.track_record が集計した成績（source×kind×horizon の的中率・
+    平均実現/超過リターン＋直近個別）を返すだけ（計算は service/quant・verdict は
+    付けない＝ADR-014）。source/kind/horizon で絞れる。実 P/L ではなく提案日終値
+    起点の理論リターン。台帳が空でも error にせず空集計を返す。
+    """
+    try:
+        parsed = GetTrackRecordArgs.model_validate(args)
+        with get_engine().connect() as conn:
+            return track_record.get_track_record(
+                conn,
+                source=parsed.source,
+                kind=parsed.kind,
+                horizon=parsed.horizon,
+                recent_limit=parsed.recent_limit if parsed.recent_limit is not None else 10,
+            )
+    except Exception as exc:
+        logger.exception("handle_get_track_record 失敗")
         return {"error": str(exc)}
 
 

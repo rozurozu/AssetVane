@@ -71,6 +71,15 @@ class GetSignalsArgs(_ToolArgs):
     code: str | None = None
 
 
+class GetTrackRecordArgs(_ToolArgs):
+    """get_track_record の引数（ADR-077）。すべて任意（省略時は全 source/kind/horizon を集計）。"""
+
+    source: str | None = None  # 'nightly'/'chat'
+    kind: str | None = None  # 'buy'/'sell'/'notable'
+    horizon: int | None = None  # 20/60（営業日）
+    recent_limit: int | None = None  # 直近個別 outcome の件数（既定 10）
+
+
 class ScreenStocksArgs(_ToolArgs):
     """screen_stocks の criteria（spec §4.4・キーは内部列名）。"""
 

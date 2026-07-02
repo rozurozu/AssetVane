@@ -32,6 +32,7 @@ from app.advisor.tools.schemas import (
     GetPortfolioMetricsArgs,
     GetSignalsArgs,
     GetStockThemesArgs,
+    GetTrackRecordArgs,
     GetUsHoldingsArgs,
     GetUsValuationArgs,
     GetValuationArgs,
@@ -120,6 +121,19 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(GetMethodCardArgs),
         handler=handlers.handle_get_method_card,
+        min_phase=1,
+    ),
+    "get_track_record": ToolDef(
+        name="get_track_record",
+        description=(
+            "自分の過去の買い/売り提案・注目選別が、その後の市場でどうだったかの成績（的中率・"
+            "平均実現/超過リターン）を取得する（ADR-077）。同じ銘柄を再度 買い/売り/注目する前や、"
+            "『自分の提案は当たっているか』と問われたときに呼ぶ。source(nightly/chat)・"
+            "kind(buy/sell/notable)・horizon(20/60 営業日) で絞れる。実 P/L ではなく提案日終値"
+            "起点の提示ベース評価で、notable は非方向のためリターンのみ（hit なし）。"
+        ),
+        parameters=_schema(GetTrackRecordArgs),
+        handler=handlers.handle_get_track_record,
         min_phase=1,
     ),
     "get_notable_candidates": ToolDef(

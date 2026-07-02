@@ -895,3 +895,49 @@ notable_picks = Table(
     UniqueConstraint("date", "code", "source", name="uq_notable_picks_date_code_source"),
     Index("ix_notable_picks_date", "date"),
 )
+
+# ===== ADR-077: AI 過去提案の市場結果採点（proposal_outcomes・0036_proposal_outcomes） =====
+# 夜の分析AI・チャットが出した buy/sell 提案（proposals・ADR-052）と注目選別（notable_picks・
+# ADR-067）を、提案日の終値を起点に N 営業日後の実現（超過）リターンで事後採点する台帳（テーマ A）。
+# 夜バッチ初の backward-looking ジョブ score_proposal_outcomes が quant/outcome.py の純関数で焼き、
+# Tool get_track_record が集計を返す（AI は自分の成績を pull で確認・push しない＝ADR-014/025）。
+# proposals.outcome（承認/却下の人手メモ）とは別列・別テーブルで「提示ベースの銘柄選択スキル評価」を
+# 分離する（実 P/L ではない）。origin_id は proposals.id / notable_picks.id の参照だが FK は張らない
+# （2 表参照・signals/notable_picks と同じ生データ流儀）。UNIQUE(origin_kind,origin_id,horizon)＋
+# 冪等 UPSERT で再実行・pending→final の上書きに耐える（ADR-002）。
+proposal_outcomes = Table(
+    "proposal_outcomes",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("origin_kind", String, nullable=False),  # 'proposal'（buy/sell）/ 'notable'
+    Column(
+        "origin_id", Integer, nullable=False
+    ),  # proposals.id / notable_picks.id（FK は張らない）
+    Column(
+        "source", String, nullable=False
+    ),  # 'nightly'/'chat'（proposal は journal 由来・NULL→chat）
+    Column("kind", String, nullable=False),  # 'buy'/'sell'/'notable'（notable は非方向＝hit なし）
+    Column("code", String, nullable=False),  # JP 5 桁 / US ティッカー
+    Column("market", String, nullable=False),  # 'JP'/'US'（notable は常に JP）
+    Column(
+        "entry_date", String, nullable=False
+    ),  # 起点日=proposals.created_date / notable_picks.date
+    Column("horizon", Integer, nullable=False),  # 保有営業日数（20/60・系列 N 本先）
+    Column("entry_priced_date", String),  # 実際に採用した起点バー日（forward で前進した場合ずれる）
+    Column("entry_price", Float),  # 起点バーの adj_close
+    Column("as_of_date", String),  # 到達バー日（pending は NULL）
+    Column("exit_price", Float),  # 到達バーの adj_close
+    Column("realized_return", Float),  # 絶対リターン（exit/entry - 1・pending は NULL）
+    Column("benchmark_symbol", String),  # '^TPX'（JP）/ '^SPX'（US）
+    Column("excess_return", Float),  # 対ベンチ超過（ベンチ欠測は NULL）
+    Column("benchmark_fallback", Integer),  # 1=ベンチ欠測で hit を絶対リターンで判定した
+    Column("hit", Integer),  # 1/0（buy: リターン>0・sell: リターン<0）／notable・pending は NULL
+    Column("status", String, nullable=False, server_default="pending"),  # 'pending'/'final'
+    Column("scored_at", String),  # ISO8601 UTC（最終採点時刻）
+    UniqueConstraint(
+        "origin_kind", "origin_id", "horizon", name="uq_proposal_outcomes_origin_horizon"
+    ),
+    Index("ix_proposal_outcomes_status", "status"),
+    Index("ix_proposal_outcomes_agg", "source", "kind", "horizon"),
+    Index("ix_proposal_outcomes_entry", "entry_date"),
+)

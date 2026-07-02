@@ -36,6 +36,7 @@ from app.batch.jobs import (
     notify_digest,
     run_advisor,
     score_ai_alpha,
+    score_proposal_outcomes,
     snapshot_assets,
     sync_master,
     sync_us_universe,
@@ -123,6 +124,12 @@ NIGHTLY_JOBS = [
     # ADR-062: 知識カードの when_to_apply を埋め込む（embedding 系をまとめて回す）。
     # UI 追加時の即時埋め込み（best-effort）の取りこぼしを夜間で拾う（フェーズ2 retrieval の素地）。
     embed_cards.run,
+    # ADR-077: 夜バッチ初の backward-looking ジョブ。過去 buy/sell 提案（ADR-052）＋notable_picks
+    # （ADR-067）を提案日終値起点の N 営業日後 実現/超過リターンで採点し proposal_outcomes を冪等
+    # UPSERT する（テーマ A）。fetch_quotes/fetch_index/fetch_us_quotes で当日終値＋ベンチが揃い、
+    # run_advisor で当夜提案が永続した後（通知系の前）に置く。horizon 未経過は pending で保留し、
+    # データが追いついた夜に final へ上書きされる（Free/Light の鮮度遅延を系列カウントが吸収）。
+    score_proposal_outcomes.run,
     # ADR-028: warn 超過時、その月最初の夜に 1 通だけ警告（通知系を digest と並べる）。
     notify_cost_warn.run,
     notify_digest.run,  # Phase 6: ⑦⑧＋夜AI 提案を 1 通の Discord digest に束ねる（phase6-spec §3）

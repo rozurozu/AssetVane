@@ -142,6 +142,15 @@ from app.db.repo.portfolio import (
     update_transaction,
     upsert_cash,
 )
+from app.db.repo.proposal_outcomes import (
+    aggregate_track_record,
+    count_pending_outcomes,
+    latest_final_as_of,
+    list_recent_final_outcomes,
+    list_scorable_notable_picks,
+    list_scorable_trade_proposals,
+    upsert_proposal_outcome,
+)
 from app.db.repo.stocks import (
     bulk_set_stock_edinet_codes,
     get_fetch_meta,
@@ -330,6 +339,13 @@ __all__ = [
     "remove_watchlist",
     "notification_exists",
     "record_notification",
+    "list_scorable_trade_proposals",
+    "list_scorable_notable_picks",
+    "upsert_proposal_outcome",
+    "aggregate_track_record",
+    "list_recent_final_outcomes",
+    "count_pending_outcomes",
+    "latest_final_as_of",
     "get_journal_for_date",
     "list_signals_with_sector_for_date",
     "get_recent_adj_closes_by_codes",
