@@ -199,6 +199,63 @@ def test_leadlag_leader_sector_counts_as_material(temp_db: None) -> None:
     assert set(cand["materials"]) == {"price", "leadlag"}
 
 
+def test_stealth_breakout_alone_is_candidate(temp_db: None) -> None:
+    """ステルス仕込みの上放れ（phase=breakout・出来高確認あり）は単独で候補（carve-out・ADR-074）。"""
+    repo.upsert_stocks([_stock("60980", "16", "リクルート")])
+    repo.upsert_signals(
+        [
+            _signal(
+                "60980",
+                "stealth_accum",
+                0.8,
+                {"phase": "breakout", "volume_confirmed": True, "vol_elevation": 1.6},
+            )
+        ]
+    )
+    with get_engine().connect() as conn:
+        result = notable.build_notable_candidates(conn)
+    assert "60980" in _candidate_codes(result)
+
+
+def test_stealth_in_range_alone_is_dropped(temp_db: None) -> None:
+    """仕込み継続中（phase=in_range）の単独は広い母集団では候補にならない（合流ゲート維持・ADR-074）。"""
+    repo.upsert_stocks([_stock("60980", "16", "リクルート")])
+    repo.upsert_signals(
+        [
+            _signal(
+                "60980",
+                "stealth_accum",
+                0.6,
+                {"phase": "in_range", "volume_confirmed": False, "vol_elevation": 1.4},
+            )
+        ]
+    )
+    with get_engine().connect() as conn:
+        result = notable.build_notable_candidates(conn)
+    assert "60980" not in _candidate_codes(result)
+
+
+def test_stealth_in_range_plus_price_is_candidate(temp_db: None) -> None:
+    """仕込み継続（in_range）＋値動き（GC）＝材料 2 次元 → 候補（in_range も 1 次元）。"""
+    repo.upsert_stocks([_stock("72030", "6", "トヨタ自動車")])
+    repo.upsert_signals(
+        [
+            _signal("72030", "momentum", 1.0, {"golden_cross": True, "notable": True}),
+            _signal(
+                "72030",
+                "stealth_accum",
+                0.6,
+                {"phase": "in_range", "volume_confirmed": False, "vol_elevation": 1.4},
+            ),
+        ]
+    )
+    with get_engine().connect() as conn:
+        result = notable.build_notable_candidates(conn)
+    cand = next((c for c in result["candidates"] if c["code"] == "72030"), None)
+    assert cand is not None
+    assert set(cand["materials"]) == {"price", "stealth"}
+
+
 def test_counts_reported(temp_db: None) -> None:
     """counts に signals 総数・候補数が入る（digest 極薄サマリの素・ADR-067）。"""
     repo.upsert_stocks([_stock("72030", "6", "トヨタ自動車")])

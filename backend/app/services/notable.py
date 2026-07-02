@@ -7,16 +7,18 @@
 分析AI はこの候補集合から「注目すべき銘柄」だけを submit_notable_stocks で選ぶ（ADR-014＝Python は
 事実、AI は選別・解釈）。
 
-材料次元（独立 4 つ・相関は 1 つに数える＝GC と RSI 反転は両方点いても「値動き」1 個）:
+材料次元（独立 5 つ・相関は 1 つに数える＝GC と RSI 反転は両方点いても「値動き」1 個）:
   ①値動き price   = 当日大幅変動(|前日比|>=BIG_MOVE_PCT) or GC or RSI 反転（momentum＋quant）
   ②出来高 volume  = volume_spike payload.notable（quant が焼いた ratio>=3.0 の目印・ADR-016）
   ③ニュース news  = 直近 NEWS_LOOKBACK_HOURS の polarity(pos/neg) 付き stock 層ニュース（ADR-049）
   ④リードラグ leadlag = 当日 lead_lag でその銘柄の業種(S17)がリーダー（score>=LEADLAG_LEADER_MIN）
-（ai_alpha は .pkl 配置後に⑤として自動参入＝現状は signals に出ないので材料にならない）
+  ⑤ステルス仕込み stealth = stealth_accum（価格圧縮×出来高持続増・phase in_range/breakout・ADR-074）
+（ai_alpha は .pkl 配置後に⑥として自動参入＝現状は signals に出ないので材料にならない）
 
 候補化ルール:
   - 広い母集団: 材料 BROAD_MIN_MATERIALS(=2) 次元以上
-  - carve-out（広い母集団）: 出来高極増（ratio>=EXTREME_VOLUME_RATIO）は単独でも候補
+  - carve-out（広い母集団）: 出来高極増（ratio>=EXTREME_VOLUME_RATIO）は単独でも候補／
+    ステルス仕込みの上放れ（phase=breakout・出来高確認あり）も単独でも候補（ADR-074）
   - レーダー枠（保有 ∪ ウォッチ）: 材料 RADAR_MIN_MATERIALS(=1) 次元で候補（材料ゼロは出さない）
 
 計算境界（ADR-014/016）: 事実（材料タグ・値）は Python がここで作り、AI は選別・説明だけ。手法閾値は
@@ -97,6 +99,7 @@ def build_notable_candidates(conn: Connection) -> dict[str, Any]:
     signal_rows = repo.list_signals_with_sector_for_date(conn, signal_date)
     momentum_by_code: dict[str, dict[str, Any]] = {}
     volume_by_code: dict[str, dict[str, Any]] = {}
+    stealth_by_code: dict[str, dict[str, Any]] = {}
     name_by_code: dict[str, str | None] = {}
     sector_by_code: dict[str, str | None] = {}
     for r in signal_rows:
@@ -108,6 +111,10 @@ def build_notable_candidates(conn: Connection) -> dict[str, Any]:
             sector_by_code[code] = r.get("sector17_code")
         elif stype == "volume_spike":
             volume_by_code[code] = _parse_payload(r.get("payload"))
+            name_by_code[code] = r.get("company_name")
+            sector_by_code[code] = r.get("sector17_code")
+        elif stype == "stealth_accum":
+            stealth_by_code[code] = _parse_payload(r.get("payload"))
             name_by_code[code] = r.get("company_name")
             sector_by_code[code] = r.get("sector17_code")
 
@@ -126,8 +133,14 @@ def build_notable_candidates(conn: Connection) -> dict[str, Any]:
     watch_codes = {str(w["code"]) for w in repo.list_watchlist(conn)}
     radar_codes = holding_codes | watch_codes
 
-    # 候補ユニバース＝signals（momentum/volume）∪ ニュース起点 ∪ レーダー。
-    universe = set(momentum_by_code) | set(volume_by_code) | set(news_by_code) | radar_codes
+    # 候補ユニバース＝signals（momentum/volume/stealth）∪ ニュース起点 ∪ レーダー。
+    universe = (
+        set(momentum_by_code)
+        | set(volume_by_code)
+        | set(stealth_by_code)
+        | set(news_by_code)
+        | radar_codes
+    )
 
     # signals 由来でない銘柄（ニュース起点・レーダー）の名前/業種を補完する。
     missing = [c for c in universe if c not in name_by_code]
@@ -150,12 +163,13 @@ def build_notable_candidates(conn: Connection) -> dict[str, Any]:
             code,
             momentum=momentum_by_code.get(code),
             volume=volume_by_code.get(code),
+            stealth=stealth_by_code.get(code),
             news=news_by_code.get(code),
             sector17=sector_by_code.get(code),
             leader_sectors=leader_sectors,
             move_pct=daily_move_pct(closes_by_code.get(code, [])),
         )
-        if "price" in materials or "volume" in materials:
+        if "price" in materials or "volume" in materials or "stealth" in materials:
             event_count += 1
         in_radar = code in radar_codes
         if not _qualifies(materials, in_radar=in_radar):
@@ -187,6 +201,7 @@ def _materials_for(
     *,
     momentum: dict[str, Any] | None,
     volume: dict[str, Any] | None,
+    stealth: dict[str, Any] | None,
     news: dict[str, Any] | None,
     sector17: str | None,
     leader_sectors: set[str],
@@ -226,6 +241,14 @@ def _materials_for(
     if s17 is not None and s17 in leader_sectors:
         materials["leadlag"] = {"sector17": s17, "sector": SECTOR17_LABELS_JA.get(s17)}
 
+    # ⑤ステルス仕込み: stealth_accum が発火（in_range/breakout）。phase を材料に載せる（ADR-074）。
+    if stealth:
+        materials["stealth"] = {
+            "phase": stealth.get("phase"),
+            "vol_elevation": stealth.get("vol_elevation"),
+            "volume_confirmed": bool(stealth.get("volume_confirmed")),
+        }
+
     return materials
 
 
@@ -239,15 +262,26 @@ def _qualifies(materials: dict[str, dict[str, Any]], *, in_radar: bool) -> bool:
     # carve-out: 出来高極増（ratio>=EXTREME_VOLUME_RATIO）は単独でも候補。
     vol = materials.get("volume")
     ratio = vol.get("ratio") if vol else None
-    return ratio is not None and float(ratio) >= EXTREME_VOLUME_RATIO
+    if ratio is not None and float(ratio) >= EXTREME_VOLUME_RATIO:
+        return True
+    # carve-out: ステルス仕込みの上放れ（phase=breakout・出来高確認あり）も単独で候補（ADR-074）。
+    stealth = materials.get("stealth")
+    return bool(stealth and stealth.get("phase") == "breakout" and stealth.get("volume_confirmed"))
 
 
 def _strength(materials: dict[str, dict[str, Any]], *, in_radar: bool) -> float:
     """並び替え用の強度（レーダー最優先→材料数→値動き/出来高の大きさ）。"""
     move = materials.get("price", {}).get("move_pct")
     ratio = materials.get("volume", {}).get("ratio")
+    stealth = materials.get("stealth")
+    # ステルス上放れは値動き/出来高が薄くても浮上させたいので強度を底上げ（ADR-074）。
+    stealth_mag = 0.0
+    if stealth is not None:
+        stealth_mag = 0.6 if stealth.get("phase") == "breakout" else 0.3
     magnitude = max(
-        abs(float(move)) if move is not None else 0.0, (float(ratio) / 10.0) if ratio else 0.0
+        abs(float(move)) if move is not None else 0.0,
+        (float(ratio) / 10.0) if ratio else 0.0,
+        stealth_mag,
     )
     return (100.0 if in_radar else 0.0) + 10.0 * len(materials) + magnitude
 
@@ -279,6 +313,12 @@ def _fmt_materials(materials: dict[str, dict[str, Any]]) -> str:
     leadlag = materials.get("leadlag")
     if leadlag is not None:
         parts.append(f"リードラグ({leadlag.get('sector')})")
+    stealth = materials.get("stealth")
+    if stealth is not None:
+        elev = stealth.get("vol_elevation")
+        elev_txt = f"・出来高{float(elev):.1f}倍" if elev is not None else ""
+        phase_txt = "上放れ" if stealth.get("phase") == "breakout" else "仕込み継続"
+        parts.append(f"ステルス仕込み({phase_txt}{elev_txt})")
     return " / ".join(parts)
 
 

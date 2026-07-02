@@ -98,8 +98,10 @@ REGISTRY: dict[str, ToolDef] = {
     "get_signals": ToolDef(
         name="get_signals",
         description=(
-            "夜間バッチが事前計算したシグナル（momentum / volume_spike 等）を取得する。"
+            "夜間バッチが事前計算したシグナル（momentum / volume_spike / stealth_accum 等）を取る。"
             "「今どんな兆候が出ているか」を尋ねられたとき・候補探しの起点に呼ぶ。"
+            "type='stealth_accum' で機関のステルス仕込み（価格圧縮×出来高持続増・payload.phase で"
+            "in_range=仕込み継続/breakout=上放れ）を絞れる（ADR-074）。"
         ),
         parameters=_schema(GetSignalsArgs),
         handler=handlers.handle_get_signals,

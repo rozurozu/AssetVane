@@ -247,7 +247,7 @@ UNIQUE `(portfolio_id, isin)`。
 | `id` | INTEGER PK | |
 | `date` | TEXT | 算出日 |
 | `code` | TEXT | 銘柄/業種コード |
-| `signal_type` | TEXT | `momentum`/`volume_spike`/`ai_alpha`/`lead_lag` 等 |
+| `signal_type` | TEXT | `momentum`/`volume_spike`/`stealth_accum`/`ai_alpha`/`lead_lag` 等（`stealth_accum`＝機関のステルス仕込み・[ADR-074](decisions.md)）|
 | `score` | REAL | スコア・強度 |
 | `payload` | TEXT | 補足（JSON。指標値・根拠） |
 

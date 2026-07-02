@@ -270,6 +270,17 @@ def get_valuation_snapshot(conn: Connection, code: str) -> dict[str, Any] | None
     return dict(row) if row else None
 
 
+def get_market_caps_by_code(conn: Connection) -> dict[str, float]:
+    """全銘柄の最新時価総額を {code: market_cap} で返す（stealth_accum のフロア用・ADR-074）。
+
+    valuation_snapshots は code 1 行（最新のみ・ADR-031）。market_cap が NULL の行は除く。
+    calc_signals がループ前に 1 回引き、銘柄ごとの N クエリを避ける（下ごしらえ＝ADR-016）。
+    """
+    v = valuation_snapshots
+    stmt = select(v.c.code, v.c.market_cap).where(v.c.market_cap.is_not(None))
+    return {r["code"]: float(r["market_cap"]) for r in conn.execute(stmt).mappings().all()}
+
+
 def screen_stocks(conn: Connection, criteria: dict[str, Any]) -> list[dict[str, Any]]:
     """valuation_snapshots × stocks を絞り込み・整列して返す（読み取り時計算・ADR-026/031/048）。
 
