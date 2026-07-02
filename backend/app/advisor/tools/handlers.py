@@ -50,6 +50,7 @@ from app.advisor.tools.schemas import (
     OptimizePortfolioArgs,
     ProposeCardArgs,
     ProposeTradeArgs,
+    ProposeWatchlistArgs,
     ScreenByThemeArgs,
     ScreenStocksArgs,
     ScreenUsValuationArgs,
@@ -768,6 +769,39 @@ async def handle_propose_trade(args: dict[str, object]) -> dict[str, Any]:
         "company_name": target["company_name"],
         "market": target["market"],
     }
+
+
+async def handle_propose_watchlist(args: dict[str, object]) -> dict[str, Any]:
+    """propose_watchlist（ADR-080）。厳選ウォッチ候補を提示する（検証 only・read-only）。
+
+    submit_notable_stocks / propose_trade と同じ検証 only の契約＝**watchlist への追加はしない**
+    （追加はユーザーが UI で行う・永続なし）。UI へ候補を載せる surfacing は昼 router だけに配線し、
+    夜 nightly が呼んでも返り値を捨てる no-op になる（ADR-080）。各 code を stocks で解決して AI に
+    手応え（resolved=解決済み {code, company_name} / dropped=未知コード）を返す（数値は返さず事実の
+    解決のみ＝ADR-014）。DB アクセスは try で握って {"error"} に倒す（dispatch を止めない）。
+    """
+    try:
+        parsed = ProposeWatchlistArgs.model_validate(args)
+        resolved: list[dict[str, str]] = []
+        dropped: list[str] = []
+        seen: set[str] = set()
+        with get_engine().connect() as conn:
+            for cand in parsed.candidates:
+                code = cand.code.strip()
+                if not code or code in seen:
+                    continue
+                seen.add(code)
+                stock = repo.get_stock(conn, code)
+                if stock is None:
+                    dropped.append(code)  # 未知（幻覚/US）は候補に載せない（ADR-018）
+                    continue
+                resolved.append(
+                    {"code": code, "company_name": str(stock.get("company_name") or "")}
+                )
+        return {"ok": True, "resolved": resolved, "dropped": dropped}
+    except Exception as exc:
+        logger.exception("handle_propose_watchlist 失敗")
+        return {"error": str(exc)}
 
 
 # ---------------------------------------------------------------------------

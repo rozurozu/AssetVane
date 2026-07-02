@@ -102,12 +102,22 @@ export type ToolRun = {
   args?: Record<string, unknown> | null;
 };
 
+/** AI が提示したウォッチ候補 1 件（ADR-080・backend WatchlistCandidate と 1:1）。
+ * UI がチェックリストで見せ、ユーザーが選んで postWatchlist する（AI は追加しない）。
+ * reason は追加時に watchlist の note に焼く（空可）。 */
+export type WatchlistCandidate = {
+  code: string;
+  company_name: string;
+  reason: string;
+};
+
 /** `POST /chat` レスポンス（非ストリーミング・spec §4.2/§6.3）。 */
 export type ChatResponse = {
   reply: string;
   tool_runs: ToolRun[];
   journal_id?: number | null; // journal に残せたら id（ADR-029・残せなければ null）
   card_ids?: number[]; // propose_card が起票した知識ノート draft の id（ADR-065・無ければ空/省略）
+  watchlist_candidates?: WatchlistCandidate[]; // propose_watchlist の候補（ADR-080・無ければ空/省略）
 };
 
 // --- Phase 3 API 関数（phase3-spec.md §9.5・既存 fetch ヘルパと同じ流儀）---

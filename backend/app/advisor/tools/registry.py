@@ -41,6 +41,7 @@ from app.advisor.tools.schemas import (
     OptimizePortfolioArgs,
     ProposeCardArgs,
     ProposeTradeArgs,
+    ProposeWatchlistArgs,
     ScreenByThemeArgs,
     ScreenStocksArgs,
     ScreenUsValuationArgs,
@@ -55,9 +56,9 @@ from app.advisor.tools.schemas import (
 # 現在の投入フェーズ（段2 の dispatch が openai_tools(phase) に渡す）。
 # Phase 4（Stock Dossier）＋ADR-034（一般ニュース）に加え、Phase 7（日米業種リードラグ・
 # SIG-FIN-036-13）まで実装済み。これを 7 にすることで以下が チャット・夜の分析AI に露出する:
-#   min_phase=4（11 本）: get_fund_holdings / get_dossier / investigate_stock / get_news_context /
-#                        propose_trade / fetch_news / get_general_news / search_news /
-#                        search_cards / propose_card / adjust_card_weight
+#   min_phase=4（12 本）: get_fund_holdings / get_dossier / investigate_stock / get_news_context /
+#                        propose_trade / propose_watchlist / fetch_news / get_general_news /
+#                        search_news / search_cards / propose_card / adjust_card_weight
 #   min_phase=7（7 本）: get_lead_lag / get_us_valuation / screen_us_valuation / list_themes /
 #                        get_stock_themes / screen_by_theme / get_us_holdings
 CURRENT_PHASE: int = 7
@@ -336,6 +337,20 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(ProposeTradeArgs),
         handler=handlers.handle_propose_trade,
+        min_phase=4,
+    ),
+    "propose_watchlist": ToolDef(
+        name="propose_watchlist",
+        description=(
+            "厳選したウォッチ候補をユーザーに提示する（提示専用・ADR-080）。screen や相談の結果、"
+            "『本命／次点／…』のようにウォッチリスト入りが妥当な銘柄群を絞り込めたときだけ呼ぶ"
+            "（雑談で銘柄名を挙げるだけのときは呼ばない・毎回出さない）。渡すのは候補の配列"
+            "（各 {code=JP 5 桁, reason=短い理由}）だけ。**この Tool は watchlist に追加しない**＝"
+            "候補を UI にチェックリストで出すだけで、実際の追加はユーザーが画面で選んで行う"
+            "（AI は追加しない・承認制＝ADR-009）。株数・金額などの数値は出さない（ADR-014）。"
+        ),
+        parameters=_schema(ProposeWatchlistArgs),
+        handler=handlers.handle_propose_watchlist,
         min_phase=4,
     ),
     "fetch_news": ToolDef(

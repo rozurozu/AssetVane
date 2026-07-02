@@ -499,3 +499,29 @@ class SubmitNotableStocksArgs(_ToolArgs):
         default_factory=list,
         description="注目銘柄の配列（各 {code, reason}）。関連度が高い順に並べる。無ければ空配列。",
     )
+
+
+class WatchlistCandidateArg(_ToolArgs):
+    """propose_watchlist の 1 候補（ADR-080）。code=JP 5 桁・reason=任意（追加時 note へ焼く）。"""
+
+    code: str = Field(
+        description="ウォッチ候補の JP 5 桁コード（例 37120）。提示した銘柄群から選ぶ。"
+    )
+    reason: str = Field(
+        default="",
+        description="なぜウォッチ候補かの短い理由（任意・数値は含めない・追加時に note へ焼く）。",
+    )
+
+
+class ProposeWatchlistArgs(_ToolArgs):
+    """propose_watchlist の引数（ADR-080・厳選ウォッチ候補の提示）。
+
+    厳選ショートリストを提示するときだけ呼ぶ（雑談での言及では呼ばない）。候補（code＋reason）を
+    構造化して UI に渡すだけで、**watchlist への追加はしない**（追加はユーザーが UI で行う＝ADR-009
+    の承認制精神）。受理側（router）が JP コードを解決し、未知コードは drop する（ADR-014/018）。
+    """
+
+    candidates: list[WatchlistCandidateArg] = Field(
+        default_factory=list,
+        description="ウォッチ候補の配列（各 {code, reason}）。本命→次点の順。無ければ空配列。",
+    )

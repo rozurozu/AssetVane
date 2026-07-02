@@ -10,13 +10,24 @@
 // ※ frontend-component-pattern「常駐フローティングは自前で会話状態を持つ」例外を、ページ共有の
 //    ため Context へ持ち上げたもの（描画は AdvisorChat / ChatConversation が担う）。
 
-import { type ChatMessage, type ChatResponse, type ToolRun, sendChat } from "@/lib/api";
+import {
+  type ChatMessage,
+  type ChatResponse,
+  type ToolRun,
+  type WatchlistCandidate,
+  sendChat,
+} from "@/lib/api";
 import { pathnameToContext } from "@/lib/chat-context";
 import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
-// assistant バブルは tool_runs を併せ持つ（user は持たない）。
-export type Msg = ChatMessage & { tool_runs?: ToolRun[] };
+// assistant バブルは tool_runs とウォッチ候補（ADR-080）を併せ持つ（user は持たない）。
+// watchlist_candidates はメッセージに括り付けて localStorage 永続する（遡っても選べる・card_ids の
+// ような最新ターンだけの transient state にしない）。
+export type Msg = ChatMessage & {
+  tool_runs?: ToolRun[];
+  watchlist_candidates?: WatchlistCandidate[];
+};
 
 // localStorage キー（同一ブラウザで永続・ADR-029）。窓サイズ/位置は AdvisorChat 側の別キー。
 const LS_MESSAGES = "advisor.messages.v1";
@@ -92,7 +103,13 @@ export function AdvisorChatProvider({ children }: { children: React.ReactNode })
         );
         setMessages((m) => [
           ...m,
-          { role: "assistant", content: data.reply, tool_runs: data.tool_runs },
+          {
+            role: "assistant",
+            content: data.reply,
+            tool_runs: data.tool_runs,
+            // ウォッチ候補をこの assistant メッセージに括り付ける（localStorage 永続・ADR-080）。
+            watchlist_candidates: data.watchlist_candidates,
+          },
         ]);
         // propose_card が draft を起票したら id を保持（/cards 導線のインライン表示・ADR-065）。
         if (data.card_ids && data.card_ids.length > 0) setLastCardIds(data.card_ids);

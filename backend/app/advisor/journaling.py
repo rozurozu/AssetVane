@@ -28,6 +28,7 @@ from app.advisor.tools.schemas import (
     NotablePickArg,
     ProposeCardArgs,
     ProposeTradeArgs,
+    WatchlistCandidateArg,
     coerce_policy_change,
 )
 from app.db import repo
@@ -303,6 +304,60 @@ def persist_notable_picks_from_tool_runs(
         repo.upsert_notable_pick(conn, date=date, code=code, reason=pick.reason, source=source)
         inserted.append(code)
     return inserted
+
+
+def build_watchlist_candidates_from_tool_runs(
+    conn: Connection, *, tool_runs: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    """tool_runs から propose_watchlist を拾い UI 用ウォッチ候補を組む（ADR-080・読み取り専用）。
+
+    戻り値: [{code, company_name, reason}] の配列（未知/重複/不正で落ちた分は含まない）。
+
+    persist_* 族と違い **何も永続しない**＝候補を UI に載せる surfacing は昼 router だけに配線し、
+    夜 nightly が propose_watchlist を呼んでもこの関数を通らず no-op になる（ADR-080）。手順は
+    persist_notable_picks と同型:
+    1. propose_watchlist の args から candidates を全件集める（1 ターンに複数呼び出し可）。
+    2. 各候補を WatchlistCandidateArg で検証（不備の 1 件だけ skip・per-item グレースフル）。
+    3. code を stocks で解決（JP のみ）。未知は drop（幻覚/US を候補に載せない・ADR-018）。
+    4. 同一 code は初出のみ（dedup）。reason はそのまま持ち回る（追加時 note に焼く元）。
+
+    接続規約: 読み取り専用（get_stock のみ）。呼び出し側（router）が connect() 境界を所有する。
+    """
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for run in tool_runs:
+        if run.get("name") != "propose_watchlist":
+            continue
+        args = run.get("args")
+        raw_candidates = args.get("candidates") if isinstance(args, dict) else None
+        if not isinstance(raw_candidates, list):
+            continue
+        for raw in raw_candidates:
+            try:
+                cand = WatchlistCandidateArg.model_validate(raw)
+            except ValidationError:
+                # 1 件の不備（code 欠落・非 dict 等）はこの候補だけ落とし、有効分は残す（ADR-018）。
+                logger.warning(
+                    "propose_watchlist: 候補 1 件が不正（%s）。この候補だけスキップ", raw
+                )
+                continue
+            code = cand.code.strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            stock = repo.get_stock(conn, code)
+            if stock is None:
+                # 未知コード（幻覚/US）は候補に載せない（ADR-014/018）。watchlist は JP 専用。
+                logger.warning("propose_watchlist: 銘柄 %s が stocks に無い。候補から drop", code)
+                continue
+            out.append(
+                {
+                    "code": code,
+                    "company_name": str(stock.get("company_name") or ""),
+                    "reason": cand.reason,
+                }
+            )
+    return out
 
 
 def _extract_args(tool_runs: list[dict[str, Any]], name: str) -> list[dict[str, Any]]:

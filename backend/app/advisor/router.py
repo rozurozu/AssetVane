@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from app.advisor.core_prompt import CORE
 from app.advisor.engine import resolve_face, run_turn
 from app.advisor.journaling import (
+    build_watchlist_candidates_from_tool_runs,
     persist_card_ops_from_tool_runs,
     persist_journal_from_tool_runs,
     persist_trade_proposals_from_tool_runs,
@@ -51,6 +52,18 @@ class ToolRun(BaseModel):
     args: dict[str, object] | None = None
 
 
+class WatchlistCandidate(BaseModel):
+    """propose_watchlist が提示したウォッチ候補 1 件（ADR-080・lib/api WatchlistCandidate と 1:1）。
+
+    UI がチェックリストで見せ、ユーザーが選んで `POST /watchlist` する（AI は追加しない）。
+    reason は追加時に watchlist の note に焼く元（空可）。company_name は backend が解決した社名。
+    """
+
+    code: str
+    company_name: str
+    reason: str
+
+
 class ChatResponse(BaseModel):
     """`POST /chat` のレスポンス（spec §6.3）。{reply} 契約は維持し tool_runs を足すだけ。
 
@@ -59,12 +72,16 @@ class ChatResponse(BaseModel):
     card_ids: チャットで propose_card を呼んで起票した知識ノート draft の id（ADR-062 追補/065）。
     壁打ち→合意→起票のフィードバックを frontend がインライン表示する（journal_id と同型）。
     起票が無ければ空。active 化は人間が /cards で行う（承認制・ADR-009）。
+    watchlist_candidates: チャットで propose_watchlist を呼んで提示したウォッチ候補（ADR-080）。
+    frontend がチェックリストで見せ、ユーザーが選んで `POST /watchlist` する（追加は UI 側＝AI は
+    watchlist を書かない）。呼ばれなければ空。surfacing は昼 router だけ＝夜 nightly は no-op。
     """
 
     reply: str
     tool_runs: list[ToolRun] = []
     journal_id: int | None = None
     card_ids: list[int] = []
+    watchlist_candidates: list[WatchlistCandidate] = []
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -178,6 +195,22 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
             card_ops = persist_card_ops_from_tool_runs(conn, tool_runs=tool_runs, date=today)
             card_ids = card_ops["cards"]
 
+    # ウォッチ候補の surfacing（ADR-080）。propose_watchlist を呼んだときだけ、候補（code→社名解決・
+    # 未知 drop）を組んで返す。**永続はしない**＝追加はユーザーが UI で選んで POST /watchlist する。
+    # この surfacing は昼 router だけに配線するので、夜 nightly が呼んでも no-op（構造保証）。
+    # 読み取りのみ（get_stock）なので begin() でなく connect() で、上の書き込み境界とは分ける。
+    watchlist_candidates: list[WatchlistCandidate] = []
+    if any(r.get("name") == "propose_watchlist" for r in tool_runs):
+        with get_engine().connect() as conn:
+            watchlist_candidates = [
+                WatchlistCandidate(**c)
+                for c in build_watchlist_candidates_from_tool_runs(conn, tool_runs=tool_runs)
+            ]
+
     return ChatResponse(
-        reply=reply, tool_runs=response_tool_runs, journal_id=journal_id, card_ids=card_ids
+        reply=reply,
+        tool_runs=response_tool_runs,
+        journal_id=journal_id,
+        card_ids=card_ids,
+        watchlist_candidates=watchlist_candidates,
     )

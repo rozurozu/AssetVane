@@ -108,6 +108,8 @@ def test_registry_handlers_are_registered() -> None:
         "get_news_context",
         # ADR-052: ニュース起点 buy/sell 提案の起票（min_phase=4）。
         "propose_trade",
+        # ADR-080: チャットからのウォッチ候補提示（min_phase=4・検証 only）。
+        "propose_watchlist",
         # ADR-045: ニュース意味検索（min_phase=4）。
         "search_news",
         # ADR-062: 知識カード意味検索（min_phase=4）。

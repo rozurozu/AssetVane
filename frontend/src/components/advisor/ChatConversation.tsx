@@ -7,8 +7,9 @@
 // - 起票フィードバック（ADR-065）: lastCardIds があれば /cards への導線を出す（journal と同型）。
 // - tool_runs 可視化（screens.md §4）: AI が呼んだ Tool をチップ表示（結果値は出さない＝ADR-025）。
 
+import { WatchlistCandidatePicker } from "@/components/advisor/WatchlistCandidatePicker";
 import { useAdvisorChat } from "@/lib/advisor-chat-context";
-import type { ToolRun } from "@/lib/api";
+import type { ToolRun, WatchlistCandidate } from "@/lib/api";
 import { contextLabel, pathnameToContext } from "@/lib/chat-context";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -67,8 +68,13 @@ export function ChatConversation({ showContextHint = true }: Props) {
           </div>
         )}
         {messages.map((m, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: 追記のみで並びは不変
-          <Bubble key={i} who={m.role === "user" ? "u" : "a"} toolRuns={m.tool_runs}>
+          <Bubble
+            // biome-ignore lint/suspicious/noArrayIndexKey: 追記のみで並びは不変
+            key={i}
+            who={m.role === "user" ? "u" : "a"}
+            toolRuns={m.tool_runs}
+            watchlistCandidates={m.watchlist_candidates}
+          >
             {m.content}
           </Bubble>
         ))}
@@ -151,10 +157,12 @@ export function ChatConversation({ showContextHint = true }: Props) {
 function Bubble({
   who,
   toolRuns,
+  watchlistCandidates,
   children,
 }: {
   who: "u" | "a";
   toolRuns?: ToolRun[];
+  watchlistCandidates?: WatchlistCandidate[];
   children: React.ReactNode;
 }) {
   const base = "max-w-[88%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px] leading-[1.45]";
@@ -177,6 +185,10 @@ function Bubble({
         </div>
       )}
       <div className={`${base} border border-hairline bg-canvas`}>{children}</div>
+      {/* ウォッチ候補チェックリスト（ADR-080）。propose_watchlist が付いたバブルだけ出す。 */}
+      {watchlistCandidates && watchlistCandidates.length > 0 && (
+        <WatchlistCandidatePicker candidates={watchlistCandidates} />
+      )}
     </div>
   );
 }
