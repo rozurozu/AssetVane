@@ -14,6 +14,8 @@ ADR-044: 旧 dossier_sources は統合コーパス news に集約済み。銘柄
         記録する（source は旧 source_type を移し替えた値・fetched_at は取り込み時刻を補填）。
 ADR-050: テーマタグ段階B。ドシエ要約（summary_md）を company_descriptions(JP, source='dossier') に
         同一 conn で焼き、夜間 tag_jp_themes の grounded タグ付け信号源にする（段取り 7.5）。
+ADR-076: 調査の開始/終了を `dossier_progress` レジストリ（プロセスメモリ）に mark/unmark し、
+        `GET /dossiers/{code}` の investigating に露出する。リロードしても「調査中」を保つ。
 
 トランザクション境界（ADR-005・W2）: `investigate_stock` は spec §3 の正本シグネチャどおり
 `conn` を受け取り、自分では commit しない。複数ソース＋ドシエ本体を 1 トランザクションに
@@ -38,6 +40,7 @@ from typing import Any
 from sqlalchemy import Connection
 
 from app.adapters.news import fetch_news
+from app.advisor import dossier_progress
 from app.db import repo
 
 logger = logging.getLogger(__name__)
@@ -99,85 +102,96 @@ async def investigate_stock(
         `{code, summary_md, key_facts, last_investigated_at, n_sources_added}`（spec §4 正本）。
         key_facts は JSON 文字列（dossier_sources/stock_dossiers に保存した生の形）。
     """
-    # ── 前段: 読み取り＋await のみ（DML を発行しない＝書きロックを取らない・C-6） ──
+    # 進行状態レジストリに「調査中」を刻む（ADR-076）。手動 POST・夜間巡回・チャット Tool の
+    # 共通パイプラインなので、ここ 1 箇所の mark/unmark でどの起動口の調査も
+    # GET /dossiers/{code} の investigating に映る。in-memory なので `conn` の
+    # トランザクション設計（末尾に書き込みを束ねる）には干渉しない。finally で必ず落とす
+    # ＝クライアント切断で CancelledError が飛んでも整合する。
+    dossier_progress.mark(code)
+    try:
+        # ── 前段: 読み取り＋await のみ（DML を発行しない＝書きロックを取らない・C-6） ──
 
-    # 1. 財務の事実（data レーン・ADR-014）。AI には計算させず、この事実を要約に渡す。
-    financials = repo.get_financials(conn, code)
+        # 1. 財務の事実（data レーン・ADR-014）。AI には計算させず、この事実を要約に渡す。
+        financials = repo.get_financials(conn, code)
 
-    # 2. ニュース取得（発行 1 週間以内・httpx 一本＝ADR-020 改訂）。社名は呼び出し側で解決する
-    #    （adapter は DB に触らない契約）。社名が取れなければ code を社名代わりに使う。
-    stock = repo.get_stock(conn, code)
-    company_name = (stock or {}).get("company_name") or code
-    articles = await fetch_news(code, company_name, since=_since_today_minus(_LOOKBACK_DAYS))
+        # 2. ニュース取得（発行 1 週間以内・httpx 一本＝ADR-020 改訂）。社名は呼び出し側で解決する
+        #    （adapter は DB に触らない契約）。社名が取れなければ code を社名代わりに使う。
+        stock = repo.get_stock(conn, code)
+        company_name = (stock or {}).get("company_name") or code
+        articles = await fetch_news(code, company_name, since=_since_today_minus(_LOOKBACK_DAYS))
 
-    # 3. URL 重複排除（既存 url の記事は二重に取り込まない・spec §3）。
-    #    統合コーパス news の存在確認（ADR-044・旧 dossier_source_exists を置換）。
-    new_articles = [a for a in articles if not repo.news_exists(conn, a["url"])]
+        # 3. URL 重複排除（既存 url の記事は二重に取り込まない・spec §3）。
+        #    統合コーパス news の存在確認（ADR-044・旧 dossier_source_exists を置換）。
+        new_articles = [a for a in articles if not repo.news_exists(conn, a["url"])]
 
-    # 4. 既存ドシエ（living document）を読む。
-    existing = repo.get_dossier(conn, code)
+        # 4. 既存ドシエ（living document）を読む。
+        existing = repo.get_dossier(conn, code)
 
-    # 5. LLM 単発で要約更新（Tool ループ不要・記事は「短い要約」のみ渡す・ADR-014/020）。
-    #    ここまで DML を 1 つも発行していないので、LLM が失敗してもまだ DB には何も書かれて
-    #    いない（原子的・tasks/review-2026-06-12.md C-6）。
-    summary_md, key_facts = await summarize_dossier(existing, financials, new_articles)
+        # 5. LLM 単発で要約更新（Tool ループ不要・記事は「短い要約」のみ渡す・ADR-014/020）。
+        #    ここまで DML を 1 つも発行していないので、LLM が失敗してもまだ DB には何も書かれて
+        #    いない（原子的・tasks/review-2026-06-12.md C-6）。
+        summary_md, key_facts = await summarize_dossier(existing, financials, new_articles)
 
-    # ── 後段: 書き込みだけを束ねる（最初の DML はここ＝書きロック保持は upsert 群の間のみ） ──
+        # ── 後段: 書き込みだけを束ねる（最初の DML はここ＝書きロック保持は upsert 群の間のみ） ──
 
-    # 6. 新着のみ統合コーパス news に記録（本文は保存しない＝summary と url のみ・ADR-020/044）。
-    #    銘柄ニュースは level="stock"＋code でタグ付けし、旧 source_type は news の source へ移す
-    #    （fetched_at は upsert_news が UTC now を補填する）。
-    news_rows = [
-        {
-            "level": "stock",
+        # 6. 新着のみ統合コーパス news に記録（本文は保存せず summary/url のみ・ADR-020/044）。
+        #    level="stock"＋code でタグ付けし、旧 source_type は news.source へ移す
+        #    （fetched_at は upsert_news が UTC now を補填する）。
+        news_rows = [
+            {
+                "level": "stock",
+                "code": code,
+                "sector17_code": None,
+                "category": None,
+                "source": a.get("source_type"),
+                "url": a["url"],
+                "title": a.get("title"),
+                "summary": a.get("summary"),
+                "published_at": a.get("published_at"),
+                "extraction_status": a.get("extraction_status"),
+            }
+            for a in new_articles
+        ]
+        repo.upsert_news(conn, news_rows)
+
+        # 7. ドシエ本体を UPSERT（last_investigated_at を前進・stale 起点）。
+        now = _now_iso()
+        repo.upsert_dossier(
+            conn,
+            code=code,
+            summary_md=summary_md,
+            key_facts=key_facts,
+            last_investigated_at=now,
+            updated_at=now,
+        )
+
+        # 7.5 ドシエ要約を company_descriptions(JP, source='dossier') に焼く
+        # （テーマタグ段階B の信号源・ADR-050 改訂）。同一 conn（W2）でドシエ本体と atomic に書く。
+        # description_text が変化したときだけ fetched_at が動き、夜間 tag_jp_themes が
+        # 「説明変化した銘柄」として grounded タグ付け。JP の同一性は code。基準日/書類番号は
+        # EDINET 専用なのでドシエ由来は None。
+        repo.upsert_company_description_tx(
+            conn,
+            market="JP",
+            code=code,
+            source="dossier",
+            description_text=summary_md,
+            disclosed_date=None,
+            doc_id=None,
+            fetched_at=now,
+        )
+
+        # 8. 返却（spec §4 の investigate_stock スキーマ正本）。
+        return {
             "code": code,
-            "sector17_code": None,
-            "category": None,
-            "source": a.get("source_type"),
-            "url": a["url"],
-            "title": a.get("title"),
-            "summary": a.get("summary"),
-            "published_at": a.get("published_at"),
-            "extraction_status": a.get("extraction_status"),
+            "summary_md": summary_md,
+            "key_facts": key_facts,
+            "last_investigated_at": now,
+            "n_sources_added": len(new_articles),
         }
-        for a in new_articles
-    ]
-    repo.upsert_news(conn, news_rows)
-
-    # 7. ドシエ本体を UPSERT（last_investigated_at を前進・stale 起点）。
-    now = _now_iso()
-    repo.upsert_dossier(
-        conn,
-        code=code,
-        summary_md=summary_md,
-        key_facts=key_facts,
-        last_investigated_at=now,
-        updated_at=now,
-    )
-
-    # 7.5 ドシエ要約を company_descriptions(JP, source='dossier') に焼く（テーマタグ段階B の信号源・
-    # ADR-050 改訂）。同一 conn（W2）でドシエ本体と atomic に書く。description_text が変化したとき
-    # だけ fetched_at が動き、夜間 tag_jp_themes が「説明変化した銘柄」として grounded タグ付け。
-    # JP の同一性は code。基準日/書類番号は EDINET 専用なのでドシエ由来は None。
-    repo.upsert_company_description_tx(
-        conn,
-        market="JP",
-        code=code,
-        source="dossier",
-        description_text=summary_md,
-        disclosed_date=None,
-        doc_id=None,
-        fetched_at=now,
-    )
-
-    # 8. 返却（spec §4 の investigate_stock スキーマ正本）。
-    return {
-        "code": code,
-        "summary_md": summary_md,
-        "key_facts": key_facts,
-        "last_investigated_at": now,
-        "n_sources_added": len(new_articles),
-    }
+    finally:
+        # 調査中フラグを必ず落とす（成功・例外・切断キャンセルのいずれでも・ADR-076）。
+        dossier_progress.unmark(code)
 
 
 async def summarize_dossier(

@@ -11,7 +11,7 @@ import { StatusBlock } from "@/components/ui/StatusBlock";
 import { type Dossier, getDossier, investigateStock, postWatchlist } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 
@@ -31,6 +31,33 @@ export function DossierSection({ code }: Props) {
   // useApi の data（初回）と調査後の useState を合成。後者が優先。
   const current = dossier ?? data;
   const investigated = current?.last_investigated_at != null;
+  // サーバのプロセスメモリが「調査中」を示す（ADR-076）。リロード後も GET でこれを読むので、
+  // ローカルの投稿中フラグと OR して「調査中…」表示を復元する（二重起動もこれで防ぐ）。
+  const serverInvestigating = current?.investigating ?? false;
+  const isInvestigating = investigating || serverInvestigating;
+
+  // 完了検知のポーリング（ADR-076）: サーバが調査中を示し、かつこのタブが同期 POST を走らせて
+  // いない（＝リロード/別タブの観測者）ときだけ、getDossier を数秒間隔で叩いて完了を待つ。
+  // サーバの investigating が false になったら止める（依存に入れて自己終了）。暴走を避けるため
+  // ポーリング回数に上限を設ける（数十秒の調査を十分カバーする長さ）。
+  useEffect(() => {
+    if (!serverInvestigating || investigating) return;
+    let polls = 0;
+    const MAX_POLLS = 150; // 4s × 150 = 10 分（実運用の数十秒に対し十分な保険）
+    const id = setInterval(async () => {
+      polls += 1;
+      if (polls > MAX_POLLS) {
+        clearInterval(id);
+        return;
+      }
+      try {
+        setDossier(await getDossier(code));
+      } catch {
+        // ポーリングの失敗は握りつぶす（次周期で回復・既存表示は維持）。
+      }
+    }, 4000);
+    return () => clearInterval(id);
+  }, [code, serverInvestigating, investigating]);
 
   // 調査を起動（同期・完了まで待つ＝L-23）。完了後の最新ドシエで差し替え。
   async function onInvestigate() {
@@ -100,15 +127,17 @@ export function DossierSection({ code }: Props) {
             // 未調査: 調査ボタンのみ（L-23・同期調査→ローディング→再取得）。
             <div className="py-4 text-center">
               <div className="text-[13px] text-ink-subtle">
-                この銘柄はまだ調査されていないのだ。
+                {isInvestigating
+                  ? "調査中なのだ…（数十秒かかるのだ）"
+                  : "この銘柄はまだ調査されていないのだ。"}
               </div>
               <button
                 type="button"
                 onClick={onInvestigate}
-                disabled={investigating}
+                disabled={isInvestigating}
                 className="mt-3 rounded-md bg-accent px-3 py-1.5 text-[13px] text-white disabled:bg-surface-2 disabled:text-ink-subtle"
               >
-                {investigating ? "調査中…（数十秒かかるのだ）" : "調査する"}
+                {isInvestigating ? "調査中…（数十秒かかるのだ）" : "調査する"}
               </button>
               {actionErr && (
                 <div className="mt-2 text-[12px] text-down">⚠ 調査に失敗: {actionErr}</div>
@@ -184,10 +213,10 @@ export function DossierSection({ code }: Props) {
                 <button
                   type="button"
                   onClick={onInvestigate}
-                  disabled={investigating}
+                  disabled={isInvestigating}
                   className="rounded-md bg-surface-2 px-2.5 py-1 text-[12px] text-ink hover:text-accent disabled:text-ink-subtle"
                 >
-                  {investigating ? "再調査中…" : "再調査する"}
+                  {isInvestigating ? "再調査中…" : "再調査する"}
                 </button>
                 {actionErr && <span className="text-[12px] text-down">⚠ {actionErr}</span>}
               </div>

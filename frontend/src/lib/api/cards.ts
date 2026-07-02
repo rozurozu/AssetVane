@@ -30,7 +30,6 @@ export type CardOut = {
   // 銘柄ノート（ADR-062 追補）。code あり＝level='stock' の 1 カード 1 銘柄・market は JP/US。
   market: string | null;
   code: string | null;
-  linked_signal_type: string | null; // triage が紐づけた実装済みシグナル種別
   quant_note: string | null; // needs_quant の補足（必要な新計算のメモ）
   always_inject: boolean; // 常時注入カードか
   source: string | null; // 出所（任意 URL 等）
@@ -65,7 +64,6 @@ export type CardUpdateIn = {
   // 空文字/null＝銘柄解除（汎用プールへ戻る）。market は backend が code から解決するので送らない。
   code?: string | null;
   source?: string | null;
-  linked_signal_type?: string | null;
   quant_note?: string | null;
   always_inject?: boolean;
   weight?: number; // 重要度（>0・ADR-062 追補）
@@ -76,7 +74,6 @@ export type TriageOut = {
   verdict: string; // active / needs_quant / to_core / rejected
   reason: string;
   quant_note: string | null;
-  linked_signal_type: string | null;
 };
 
 /** 審査エンドポイントの応答（backend TriageResponse と 1:1）。

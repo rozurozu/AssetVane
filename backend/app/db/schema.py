@@ -825,8 +825,9 @@ edinetdb_config = Table(
 # 第 3 の知識源として DB 化する。旧・手法カード（cards/*.md・全カード常時注入＝ADR-016/048）を廃し、
 # 増える知識（市場文脈・外部メモ・手法の解釈）を 1 表に集約して UI 管理・RAG 取得する。
 # data-model.md の将来予約 method_cards を実体化＋改名（"method" の 3 分裂＝手法/カード/カタログを
-# 解消）。計算そのものは持たない（計算は必ずコード＝quant・ADR-014/016）。linked_signal_type で
-# 「手法↔計算」の索引役を畳み、別カタログ表は作らない。embedding は when_to_apply の意味検索キー
+# 解消）。計算そのものは持たない（計算は必ずコード＝quant・ADR-014/016）。手法↔計算の索引は
+# method_cards（advisor/method_cards/*.md）が signal_type キーで持つ（ADR-075・旧 linked_signal_type
+# 列は 0035 で DROP）。embedding は when_to_apply の意味検索キー
 # （ADR-045 同型・float32 LE BLOB を vec_distance_cosine が次元非依存にスキャン）。
 knowledge_cards = Table(
     "knowledge_cards",
@@ -850,9 +851,8 @@ knowledge_cards = Table(
     # code 付きは exact-match でだけ注入し汎用の意味検索プールからは除外する（他銘柄漏れ防止）。
     Column("market", String),  # 'JP'/'US'（銘柄ノートのとき・非銘柄カードは NULL）
     Column("code", String),  # 銘柄コード（JP 5 桁 / US ティッカー・非銘柄カードは NULL）
-    # DEPRECATED（ADR-075）: 手法↔signal の対応は method_cards（advisor/method_cards/*.md）が
-    # signal_type キーで持つため冗長。triage は新規に埋めない（既存値は残置・列 DROP は別 PR）。
-    Column("linked_signal_type", String),  # 紐づく signal_type（非推奨・既存値のみ）
+    # 手法↔signal の索引は method_cards（advisor/method_cards/*.md）が signal_type キーで持つ
+    # （ADR-075）。旧 linked_signal_type 列は冗長のため 0035 で DROP 済み。
     Column("quant_note", String),  # needs_quant のとき「必要な計算」のメモ
     Column(
         "always_inject", Integer, nullable=False, server_default="0"

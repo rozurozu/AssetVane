@@ -56,7 +56,6 @@ def test_create_active_candidate_stays_draft_with_reason(
             verdict="active",
             reason="既存値で成立",
             quant_note=None,
-            linked_signal_type="momentum",
         ),
     )
     res = client.post("/cards", json={"body": "本文", "source": "https://example.com/x"})
@@ -65,7 +64,6 @@ def test_create_active_candidate_stays_draft_with_reason(
     assert c["title"] == "AI 見出し"
     assert c["level"] == "market"
     assert c["status"] == "draft"  # active 候補は人間承認待ち（ADR-009）
-    assert c["linked_signal_type"] == "momentum"
     assert c["triage_reason"] == "既存値で成立"
     assert c["source"] == "https://example.com/x"
 
@@ -81,7 +79,6 @@ def test_create_rejected_sets_status(client: TestClient, monkeypatch: pytest.Mon
             verdict="rejected",
             reason="一般常識でカード不要",
             quant_note=None,
-            linked_signal_type=None,
         ),
     )
     c = client.post("/cards", json={"body": "PER は 15 倍が目安"}).json()
@@ -102,7 +99,6 @@ def test_create_needs_quant_sets_status_and_note(
             verdict="needs_quant",
             reason="新指標が要る",
             quant_note="X を計算",
-            linked_signal_type=None,
         ),
     )
     c = client.post("/cards", json={"body": "b"}).json()
@@ -147,7 +143,6 @@ def test_reassist_updates_and_keeps_active_as_draft(
             verdict="active",
             reason="採用",
             quant_note=None,
-            linked_signal_type=None,
         ),
     )
     res = client.post(f"/cards/{cid}/assist")
@@ -175,7 +170,6 @@ def test_reassist_active_card_is_not_demoted(
             verdict="active",  # AI は再び「active（既存データで成立）」と判定
             reason="既存データで成立",
             quant_note=None,
-            linked_signal_type=None,
         ),
     )
     body = client.post(f"/cards/{cid}/assist").json()

@@ -59,16 +59,15 @@ def test_update_changes_fields_and_invalidates_embedding() -> None:
 
 @pytest.mark.usefixtures("temp_db")
 def test_set_status_keeps_existing_quant_note() -> None:
-    """set_status は渡されない quant_note を温存し、status と linked_signal_type を更新する。"""
+    """set_status は渡されない quant_note を温存し、status だけ更新する。"""
     cid = repo.insert_knowledge_card(title="t", body="b")
     repo.set_knowledge_card_status(cid, status="needs_quant", quant_note="X を計算")
-    repo.set_knowledge_card_status(cid, status="active", linked_signal_type="momentum")
+    repo.set_knowledge_card_status(cid, status="active")
     with get_engine().connect() as conn:
         row = repo.get_knowledge_card(conn, cid)
     assert row is not None
     assert row["status"] == "active"
     assert row["quant_note"] == "X を計算"  # quant_note=None は温存
-    assert row["linked_signal_type"] == "momentum"
 
 
 @pytest.mark.usefixtures("temp_db")

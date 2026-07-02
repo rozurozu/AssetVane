@@ -45,9 +45,6 @@ class AssistResult:
     verdict: str
     reason: str
     quant_note: str | None
-    linked_signal_type: (
-        str | None
-    )  # ADR-075 で非推奨（手法↔signal は method_cards が持つ）＝常に None
 
 
 # level の値域（AI 生成の正規化用）。値域外は None に倒す。
@@ -87,7 +84,6 @@ async def assist_card(
     *,
     body: str,
     title: str = "",
-    existing_signal_types: list[str] | None = None,
 ) -> AssistResult | None:
     """本文から title/when_to_apply/level を生成し審査する（ADR-062 追補・ADR-014）。
 
@@ -95,8 +91,8 @@ async def assist_card(
     （source="triage"）。面未設定や壊れた応答では None（呼び出し側はユーザー入力のまま保存に倒す）。
     verdict が値域外でも None。生成 title が空なら本文先頭で代替するのは呼び出し側の責務。
 
-    `existing_signal_types` は ADR-075 で非推奨（手法↔signal の対応は method_cards が持つ）。
-    signature は当面維持するが triage は linked_signal_type を生成しない（渡さなくてよい）。
+    手法↔signal の索引は method_cards（advisor/method_cards/*.md）が持つため triage は生成しない
+    （ADR-075・旧 linked_signal_type は 0035 で DROP）。
     """
     payload = {
         "title": title,
@@ -153,6 +149,4 @@ def _parse_assist_response(content: str | None) -> AssistResult | None:
         verdict=verdict.strip().lower(),
         reason=_str_or_none(parsed.get("reason")) or "",
         quant_note=_str_or_none(parsed.get("quant_note")),
-        # ADR-075: 手法↔signal は method_cards が持つため生成しない（非推奨）。
-        linked_signal_type=None,
     )

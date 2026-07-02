@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import Connection
 
+from app.advisor import dossier_progress
 from app.advisor.dossier import investigate_stock
 from app.db import repo
 from app.db.engine import get_conn, get_engine
@@ -55,6 +56,9 @@ class Dossier(BaseModel):
     last_investigated_at: str | None = None
     updated_at: str | None = None
     sources: list[DossierSource] = []
+    # 今この銘柄を調査中か（ADR-076・プロセスメモリの dossier_progress 由来）。frontend は
+    # リロード時にこれを読んで「調査中…」表示を復元し、true の間は完了をポーリングで検知する。
+    investigating: bool = False
 
 
 class InvestigateResult(BaseModel):
@@ -108,8 +112,13 @@ def _build_dossier(conn: Connection, code: str) -> Dossier:
     """
     row = repo.get_dossier(conn, code)
     sources = [_to_source(s) for s in repo.list_news(conn, level="stock", code=code)]
+    # 進行状態はプロセスメモリの真実（ADR-076）。未調査（row is None）でも調査中はありうる
+    # （初回調査の実行中はまだドシエ行が無い）ので、両分岐で investigating を載せる。
+    investigating = dossier_progress.is_investigating(code)
     if row is None:
-        return Dossier(code=code, summary_md="", key_facts=None, sources=sources)
+        return Dossier(
+            code=code, summary_md="", key_facts=None, sources=sources, investigating=investigating
+        )
     return Dossier(
         code=code,
         summary_md=row.get("summary_md") or "",
@@ -117,6 +126,7 @@ def _build_dossier(conn: Connection, code: str) -> Dossier:
         last_investigated_at=row.get("last_investigated_at"),
         updated_at=row.get("updated_at"),
         sources=sources,
+        investigating=investigating,
     )
 
 

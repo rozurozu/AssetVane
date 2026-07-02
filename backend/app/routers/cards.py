@@ -27,10 +27,6 @@ router = APIRouter(tags=["cards"])
 CardLevel = Literal["stock", "sector", "market", "general"]
 CardStatus = Literal["draft", "active", "needs_quant", "to_core", "rejected"]
 
-# 既に計算済み（quant 実装済み）のシグナル種別。AI 審査が「active（既存値で成立）か needs_quant
-# （新計算が要る）か」を判断する材料に渡す（signals.signal_type の実装済み集合）。
-_IMPLEMENTED_SIGNAL_TYPES = ["momentum", "volume_spike", "ai_alpha", "lead_lag"]
-
 
 class CardOut(BaseModel):
     """知識カードの公開表現（embedding BLOB は含めない・ADR-062）。"""
@@ -46,7 +42,6 @@ class CardOut(BaseModel):
     # 銘柄ノート（ADR-062 追補）。code あり＝level='stock' の 1 カード 1 銘柄・market は JP/US。
     market: str | None = None
     code: str | None = None
-    linked_signal_type: str | None = None
     quant_note: str | None = None
     always_inject: bool = False
     # 重要度（retrieval ランク・注入順を distance/weight で重み付け・ADR-062 追補）
@@ -87,7 +82,6 @@ class CardUpdateIn(BaseModel):
     # ＋always_inject 0 矯正）、code に null/空＝銘柄解除（汎用プールへ戻る）。market はサーバ解決。
     code: str | None = None
     source: str | None = None
-    linked_signal_type: str | None = None
     quant_note: str | None = None
     always_inject: bool | None = None
     weight: float | None = Field(default=None, gt=0)  # 重要度（>0・ADR-062 追補）
@@ -99,7 +93,6 @@ class TriageOut(BaseModel):
     verdict: str  # active/needs_quant/to_core/rejected
     reason: str
     quant_note: str | None = None
-    linked_signal_type: str | None = None
 
 
 class TriageResponse(BaseModel):
@@ -144,7 +137,7 @@ def _resolve_market_or_400(code: str) -> str:
 async def _resolve_via_assist(body: str, *, title: str = "") -> dict[str, Any]:
     """本文を `assist_card`（triage 面）に通し、保存に使うフィールドへ解決する（ADR-062 追補）。
 
-    返す dict＝title/when_to_apply/level/status/triage_reason/quant_note/linked_signal_type。
+    返す dict＝title/when_to_apply/level/status/triage_reason/quant_note。
     - assist=None（面未設定/応答不正）→ AI 未整形。status=draft・reason None・
       title は入力のまま（再整形は既存 title 温存・create は空）。先頭切り出しはしない。
     - verdict=='active' → 人間承認待ちで status=draft 据え置き（active 化は activate 経由）。
@@ -153,9 +146,7 @@ async def _resolve_via_assist(body: str, *, title: str = "") -> dict[str, Any]:
     """
     from app.advisor.card_triage import assist_card
 
-    result = await assist_card(
-        body=body, title=title, existing_signal_types=_IMPLEMENTED_SIGNAL_TYPES
-    )
+    result = await assist_card(body=body, title=title)
     if result is None:
         return {
             "title": title.strip(),  # 再整形は既存 title 温存・create は空（切り出さない）
@@ -164,7 +155,6 @@ async def _resolve_via_assist(body: str, *, title: str = "") -> dict[str, Any]:
             "status": "draft",
             "triage_reason": None,
             "quant_note": None,
-            "linked_signal_type": None,
         }
     status = "draft" if result.verdict == "active" else result.verdict
     return {
@@ -174,7 +164,6 @@ async def _resolve_via_assist(body: str, *, title: str = "") -> dict[str, Any]:
         "status": status,
         "triage_reason": result.reason or None,
         "quant_note": result.quant_note,
-        "linked_signal_type": result.linked_signal_type,
         "verdict": result.verdict,  # 応答（TriageOut）用
     }
 
@@ -223,7 +212,6 @@ async def create_card(body: CardCreateIn) -> CardOut:
         code=code,
         always_inject=always_inject,
         quant_note=resolved["quant_note"],
-        linked_signal_type=resolved["linked_signal_type"],
         triage_reason=resolved["triage_reason"],
         source=body.source,
     )
@@ -314,7 +302,6 @@ async def reassist_card_endpoint(card_id: int) -> TriageResponse:
             card_id,
             status=new_status,
             quant_note=resolved["quant_note"],
-            linked_signal_type=resolved["linked_signal_type"],
             reason=resolved["triage_reason"],
         )
         from app.batch.jobs.embed_cards import embed_card_best_effort_async
@@ -328,7 +315,6 @@ async def reassist_card_endpoint(card_id: int) -> TriageResponse:
             verdict=str(verdict),
             reason=resolved["triage_reason"] or "",
             quant_note=resolved["quant_note"],
-            linked_signal_type=resolved["linked_signal_type"],
         )
         if verdict is not None
         else None

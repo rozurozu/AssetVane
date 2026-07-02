@@ -458,7 +458,7 @@ function CardRow({
               <span className="font-semibold text-[14px]">{card.title}</span>
             )}
           </div>
-          {/* メタ（level/theme/linked_signal_type/重要度/埋め込み/追加日・更新日）を控えめに並べる。
+          {/* メタ（level/theme/重要度/埋め込み/追加日・更新日）を控えめに並べる。
               適用条件（when_to_apply）は UI に出さない（AI が埋める内部キー・ADR-062 追補）。 */}
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-ink-subtle">
             {card.level && <span>level: {card.level}</span>}
@@ -471,7 +471,6 @@ function CardRow({
             )}
             {card.sector17_code && <span>S17: {card.sector17_code}</span>}
             {card.theme && <span>theme: {card.theme}</span>}
-            {card.linked_signal_type && <span>signal: {card.linked_signal_type}</span>}
             <span>重要度: {card.weight.toFixed(1)}</span>
             {card.always_inject && <span className="text-accent">常時注入</span>}
             <span>{card.embedded_at ? "埋込済" : "未埋込"}</span>

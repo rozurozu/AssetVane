@@ -31,7 +31,6 @@ _CARD_COLS = (
     "theme",
     "market",  # 銘柄ノートの market（ADR-062 追補・0033）
     "code",  # 銘柄ノートの code（ADR-062 追補・0033）
-    "linked_signal_type",
     "quant_note",
     "always_inject",
     "weight",
@@ -57,7 +56,6 @@ _EDITABLE_COLS = frozenset(
         "theme",
         "market",  # 銘柄ノートの付け替え・除去（ADR-062 追補・整合は router が担う）
         "code",
-        "linked_signal_type",
         "quant_note",
         "always_inject",
         "weight",
@@ -146,7 +144,6 @@ def insert_knowledge_card_tx(
     theme: str | None = None,
     market: str | None = None,
     code: str | None = None,
-    linked_signal_type: str | None = None,
     quant_note: str | None = None,
     always_inject: int = 0,
     weight: float = 1.0,
@@ -171,7 +168,6 @@ def insert_knowledge_card_tx(
             theme=theme,
             market=market,
             code=code,
-            linked_signal_type=linked_signal_type,
             quant_note=quant_note,
             always_inject=always_inject,
             weight=weight,
@@ -220,13 +216,12 @@ def set_knowledge_card_status(
     *,
     status: str,
     quant_note: str | None = None,
-    linked_signal_type: str | None = None,
     reason: str | None = None,
 ) -> None:
     """status を遷移する（AI 審査・人間承認の両方が使う・W1）。
 
-    quant_note/linked_signal_type/reason は渡されたときだけ更新（None は変更しない＝既存値温存）。
-    needs_quant の必要計算メモや、紐づく signal_type、AI 審査理由（triage_reason）の付与に使う。
+    quant_note/reason は渡されたときだけ更新（None は変更しない＝既存値温存）。
+    needs_quant の必要計算メモや、AI 審査理由（triage_reason）の付与に使う。
     """
     fields: dict[str, Any] = {
         "status": status,
@@ -234,8 +229,6 @@ def set_knowledge_card_status(
     }
     if quant_note is not None:
         fields["quant_note"] = quant_note
-    if linked_signal_type is not None:
-        fields["linked_signal_type"] = linked_signal_type
     if reason is not None:
         fields["triage_reason"] = reason
     with get_engine().begin() as conn:

@@ -242,7 +242,6 @@ def test_create_card_with_code_sets_stock_level(
             verdict="active",
             reason="r",
             quant_note=None,
-            linked_signal_type=None,
         )
 
     monkeypatch.setattr("app.advisor.card_triage.assist_card", _fake)

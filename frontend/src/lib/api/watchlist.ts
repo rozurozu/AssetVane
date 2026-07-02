@@ -42,6 +42,7 @@ export type Dossier = {
   last_investigated_at: string | null; // null は未調査
   updated_at: string | null;
   sources: DossierSource[];
+  investigating: boolean; // 今この銘柄を調査中か（ADR-076・サーバのプロセスメモリ由来）
 };
 
 /** `POST /dossiers/{code}/investigate` レスポンス（spec §5.2・調査後の最新ドシエ）。 */

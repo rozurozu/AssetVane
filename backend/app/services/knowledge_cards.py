@@ -66,7 +66,6 @@ def _card_item(c: dict[str, Any]) -> dict[str, Any]:
         "level",
         "market",
         "code",
-        "linked_signal_type",
         "weight",
         "created_at",
         "updated_at",

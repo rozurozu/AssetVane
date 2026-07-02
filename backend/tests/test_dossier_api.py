@@ -17,6 +17,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from app.advisor import dossier_progress
 from app.db import repo
 from app.db.engine import get_engine
 
@@ -53,6 +54,27 @@ def test_get_dossier_uninvestigated_returns_empty(client: Any) -> None:
     assert body["key_facts"] is None
     assert body["last_investigated_at"] is None
     assert body["sources"] == []
+    assert body["investigating"] is False  # 既定は調査中でない（ADR-076）
+
+
+def test_get_dossier_investigating_reflects_registry(client: Any) -> None:
+    """GET は進行状態レジストリ（プロセスメモリ）を investigating に載せる（ADR-076）。
+
+    リロード後も「調査中」を保つための土台。初回調査中はまだドシエ行が無い（未調査）が、
+    investigating は立つことを確認する（frontend はこれで「調査中…」を復元しポーリングする）。
+    """
+    repo.upsert_stocks([STOCK_A])
+    assert client.get("/dossiers/7203").json()["investigating"] is False
+
+    dossier_progress.mark("7203")
+    try:
+        body = client.get("/dossiers/7203").json()
+        assert body["investigating"] is True
+        assert body["last_investigated_at"] is None  # 初回調査中はドシエ行がまだ無い
+    finally:
+        dossier_progress.unmark("7203")
+
+    assert client.get("/dossiers/7203").json()["investigating"] is False
 
 
 def test_get_dossier_composes_sources_and_key_facts(client: Any) -> None:

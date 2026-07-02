@@ -1,9 +1,9 @@
 """card_triage の応答パース堅牢化を検証（ADR-062・ADR-018）。
 
 担保: _parse_assist_response が正常 JSON / コードフェンス付きを AssistResult に正規化し、壊れ応答・
-verdict 値域外・空 content は None（draft のまま）に倒す。空文字の quant_note/linked_signal_type は
-None に畳み、level は値域外を None に倒す。LLM は呼ばない純パース関数のテスト
-（旧 _parse_triage_response は assist に統合され撤去・#15）。
+verdict 値域外・空 content は None（draft のまま）に倒す。空文字の quant_note は None に畳み、
+level は値域外を None に倒す。未知キー（例: 旧 linked_signal_type・ADR-075 で DROP）は握って無視。
+LLM は呼ばない純パース関数のテスト（旧 _parse_triage_response は assist に統合され撤去・#15）。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from app.advisor.card_triage import _parse_assist_response
 
 
 def test_parse_valid_active() -> None:
-    """active の正常 JSON を正規化。linked_signal_type は無視して None（ADR-075）。"""
+    """active の正常 JSON を正規化。未知キー（旧 linked_signal_type）は無視する（ADR-075）。"""
     content = (
         '{"title": "見出し", "when_to_apply": "この状況", "level": "market", '
         '"verdict": "active", "reason": "既存 momentum の読み方", '
@@ -24,8 +24,6 @@ def test_parse_valid_active() -> None:
     assert result.when_to_apply == "この状況"
     assert result.level == "market"
     assert result.verdict == "active"
-    # ADR-075: triage は手法↔signal を持たない（method_cards が持つ）＝LLM が出しても常に None。
-    assert result.linked_signal_type is None
     assert result.quant_note is None
     assert result.reason == "既存 momentum の読み方"
 
@@ -51,7 +49,7 @@ def test_parse_code_fence_stripped() -> None:
 
 
 def test_parse_empty_strings_folded_to_none() -> None:
-    """空文字の quant_note/linked_signal_type/title は None・""（空 title 許容）に畳む。"""
+    """空文字の quant_note/title は None・""（空 title 許容）に畳む（未知キーは無視）。"""
     content = (
         '{"title": "", "verdict": "active", "reason": "", '
         '"quant_note": "", "linked_signal_type": ""}'
@@ -60,7 +58,6 @@ def test_parse_empty_strings_folded_to_none() -> None:
     assert result is not None
     assert result.title == ""  # 空 title は許容（呼び出し側が扱う）
     assert result.quant_note is None
-    assert result.linked_signal_type is None
     assert result.reason == ""
 
 
