@@ -15,7 +15,7 @@ from app.config import settings
 from app.db import engine as db_engine
 
 # テスト用 LLM 面設定の seed 値（ADR-058）。本番はシードしない（確定4）が、テストは LLM 経路を
-# openai（モック可能）に固定するためダミー provider＋4 面を入れる。これがないと resolve_face が
+# openai（モック可能）に固定するためダミー provider＋全 FACES を入れる。これがないと resolve_face が
 # FaceNotConfiguredError で落ち、/chat は 503・nightly 等は skip になる（.env 非依存・ネットに
 # 出ない＝旧 llm_provider_* monkeypatch の後継）。
 _SEED_PROVIDER_NAME = "test-openai"
@@ -24,9 +24,11 @@ _SEED_MODEL = "test-model"
 
 
 def seed_llm_config() -> None:
-    """temp DB に openai provider 1 行＋4 面（chat/nightly/dossier/tagger）を seed する（ADR-058）。
+    """temp DB に openai provider 1 行＋全 FACES を seed する（ADR-058）。
 
-    現エンジン（差し替え済み database_path）に対して書く。冪等（既に在れば無視）。
+    `for face in FACES` で回すので面が増えても自動追従する（現在 chat/nightly/dossier/tagger/
+    triage/reviewer の 6 面・ADR-081）。現エンジン（差し替え済み database_path）に対して書く。
+    冪等（既に在れば無視）。
     """
     from sqlalchemy import insert, select
 

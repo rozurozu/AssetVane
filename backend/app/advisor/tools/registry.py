@@ -531,11 +531,32 @@ REGISTRY: dict[str, ToolDef] = {
 }
 
 
-def openai_tools(available_phase: int = CURRENT_PHASE) -> list[dict[str, object]]:
+# 経験蒸留（reviewer 面・ADR-081）に見せる最小 toolset。蒸留の核＝採点済み成績の参照
+# （get_track_record）・過去判断の横断想起（search_judgments）・起票前の近傍検索で重複を避ける
+# （search_cards）・知識カード draft 起票（propose_card）・既存カードの重み調整
+# （adjust_card_weight）。
+# propose_trade/submit_journal/submit_notable_stocks は見せない（無駄ラウンド＋誤起票を断つ・多重
+# 防御で persist 層は card_ops だけ拾う）。全て既存 Tool（新 Tool なし）で min_phase も満たす。
+REVIEWER_TOOLSET: frozenset[str] = frozenset(
+    {
+        "get_track_record",
+        "search_judgments",
+        "search_cards",
+        "propose_card",
+        "adjust_card_weight",
+    }
+)
+
+
+def openai_tools(
+    available_phase: int = CURRENT_PHASE, *, allow: set[str] | frozenset[str] | None = None
+) -> list[dict[str, object]]:
     """min_phase <= available_phase の Tool を OpenAI tools 配列にして返す（spec §4.1）。
 
     各要素は `{"type": "function", "function": {name, description, parameters}}` 形。
     Phase ゲート: まだ実装されていない Tool を LLM に見せない。
+    allow を渡すと **その名前集合に絞る**（reviewer の toolset 制限＝ADR-081）。既定 None は絞らない
+    （chat/nightly は従来どおり phase の全 Tool を見せる）。
     """
     return [
         {
@@ -547,5 +568,5 @@ def openai_tools(available_phase: int = CURRENT_PHASE) -> list[dict[str, object]
             },
         }
         for t in REGISTRY.values()
-        if t.min_phase <= available_phase
+        if t.min_phase <= available_phase and (allow is None or t.name in allow)
     ]

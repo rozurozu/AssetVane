@@ -66,10 +66,17 @@ def test_resolve_face_model_falls_back_to_provider_default(temp_db: None) -> Non
 
 
 def test_describe_faces_returns_all(temp_db: None) -> None:
-    """describe_faces は全面を必ず返し configured フラグを付ける（triage 含む・ADR-062）。"""
+    """describe_faces は全面を返し configured を付ける（triage/reviewer 含む・ADR-062/081）。"""
     with get_engine().connect() as conn:
         faces = llm_config.describe_faces(conn)
-    assert {f["face"] for f in faces} == {"chat", "nightly", "dossier", "tagger", "triage"}
+    assert {f["face"] for f in faces} == {
+        "chat",
+        "nightly",
+        "dossier",
+        "tagger",
+        "triage",
+        "reviewer",
+    }
     assert all(f["configured"] for f in faces)
 
 

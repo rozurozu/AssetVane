@@ -335,7 +335,7 @@ interface UsTransactionOut {
 
 ## 10. LLM 設定（プロバイダ複数登録・面別 provider/model・[ADR-058](decisions.md)）
 
-`/settings` から LLM の provider を複数登録し、面（chat/nightly/dossier/tagger/triage）ごとに provider と model を割り当てる（`triage`＝知識カード審査・[ADR-062](decisions.md)）。`api_key` は GET では必ずマスク（末尾4桁）で返し、更新は **write-only**（空送信は据え置き）。provider は OpenAI 互換のみ（codex 経路は [ADR-073](decisions.md) で撤去）。
+`/settings` から LLM の provider を複数登録し、面（chat/nightly/dossier/tagger/triage/reviewer）ごとに provider と model を割り当てる（`triage`＝知識カード審査〔[ADR-062](decisions.md)〕・`reviewer`＝経験蒸留〔[ADR-081](decisions.md)〕）。`api_key` は GET では必ずマスク（末尾4桁）で返し、更新は **write-only**（空送信は据え置き）。provider は OpenAI 互換のみ（codex 経路は [ADR-073](decisions.md) で撤去）。
 
 | メソッド | パス | 説明 |
 |---|---|---|
@@ -344,7 +344,7 @@ interface UsTransactionOut {
 | PUT | `/llm/providers/{id}` | 部分更新（`api_key` 空送信は据え置き＝write-only） |
 | DELETE | `/llm/providers/{id}` | 削除（面が使用中なら 409） |
 | POST | `/llm/providers/{id}/test` | `/v1/models` 疎通テスト（`{ok, detail}`・失敗も 200） |
-| GET | `/llm/faces` | 全面の割当（`{face, provider_id, provider_name, model, reasoning_effort, configured}`・全面を必ず返す＝chat/nightly/dossier/tagger/triage） |
+| GET | `/llm/faces` | 全面の割当（`{face, provider_id, provider_name, model, reasoning_effort, configured}`・全面を必ず返す＝chat/nightly/dossier/tagger/triage/reviewer） |
 | PUT | `/llm/faces/{face}` | 割当更新（`{provider_id, model, reasoning_effort}`・`null` で未設定・`>0` で登録 provider・0/未知 provider は 422） |
 | GET | `/llm/embedding` | embedding 接続の現在値（`{base_url, api_key_masked, has_api_key, model, dim, configured}`・ADR-059） |
 | PUT | `/llm/embedding` | embedding 更新（`{base_url?, api_key?, model?, dim?}`・api_key 空送信は据え置き） |

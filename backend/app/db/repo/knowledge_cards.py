@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, delete, insert, select, text, update
+from sqlalchemy import Connection, and_, delete, func, insert, select, text, update
 
 from app.db.engine import get_engine
 from app.db.schema import knowledge_cards
@@ -179,6 +179,22 @@ def insert_knowledge_card_tx(
     )
     pk = result.inserted_primary_key
     return int(pk[0]) if pk else 0
+
+
+def count_reviewer_drafts_on(conn: Connection, date: str) -> int:
+    """指定日（UTC 'YYYY-MM-DD'）に起票された reviewer 由来の draft カード件数（ADR-081）。
+
+    notify_digest が「🗂 知識ノート下書き N 件」の 1 行を出すために読む。created_at は ISO8601 UTC
+    なので日付プレフィックス一致で当日分を数える（digest も UTC 日付＝同じ暦日で揃う）。
+    """
+    stmt = select(func.count()).where(
+        and_(
+            knowledge_cards.c.source == "reviewer",
+            knowledge_cards.c.status == "draft",
+            knowledge_cards.c.created_at.like(f"{date}%"),
+        )
+    )
+    return int(conn.execute(stmt).scalar() or 0)
 
 
 def insert_knowledge_card(**fields: Any) -> int:

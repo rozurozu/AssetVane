@@ -87,12 +87,13 @@ async def run_tool_loop(
     phase: int = CURRENT_PHASE,
     source: str = "chat",
     max_rounds: int = 6,
+    tool_names: set[str] | frozenset[str] | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     """build 済み messages を面別 provider/model で LLM に投げ、最終テキストと tool_runs を返す。
 
     （spec §4.2・ADR-014/025/058）。face は engine が resolve_face で解決して渡す。
 
-    1. resp = complete(messages, face=face, tools=openai_tools(phase), source=source)
+    1. resp = complete(messages, face, tools=openai_tools(phase, allow=tool_names), source=source)
     2. resp.tool_calls がある限り（max_rounds まで）:
        - 各 tool_call の handler を呼ぶ（未知 name は {"error": ...}・落とさない）
        - assistant の tool_calls 記録 → 各結果を {"role":"tool", ...} で messages に append
@@ -100,9 +101,12 @@ async def run_tool_loop(
        - 再度 complete
     3. max_rounds 超過時は打ち切り、実 content を返す（無ければ nightly は ""・chat は定型文）。
 
+    tool_names を渡すと LLM に見せる Tool をその集合に絞る（reviewer の toolset 制限＝ADR-081）。
+    既定 None は phase の全 Tool（chat/nightly は従来どおり）。
+
     戻り値: (最終テキスト, tool_runs)。tool_runs は [{name, args}]。
     """
-    tools = openai_tools(phase)
+    tools = openai_tools(phase, allow=tool_names)
     tool_runs: list[dict[str, object]] = []
 
     resp = await complete(messages, face=face, tools=tools, source=source)

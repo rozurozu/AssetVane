@@ -38,14 +38,17 @@ async def run_turn(
     *,
     phase: int = CURRENT_PHASE,
     source: str = "chat",
+    tool_names: set[str] | frozenset[str] | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     """エージェント形（Tool ループ）を面の provider に振り分ける（ADR-058）。
 
     戻り値は (最終テキスト, tool_runs)。tool_runs は [{name, args}]（結果値なし・ADR-025）で、
-    run_tool_loop が供給する。
+    run_tool_loop が供給する。tool_names を渡すと見せる Tool をその集合に絞る（reviewer・ADR-081）。
     """
     face = resolve_face(source)
-    return await run_tool_loop(messages, face=face, phase=phase, source=source)
+    return await run_tool_loop(
+        messages, face=face, phase=phase, source=source, tool_names=tool_names
+    )
 
 
 async def generate_once(messages: list[dict[str, object]], *, source: str) -> str:

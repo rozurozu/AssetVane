@@ -217,3 +217,89 @@ def latest_final_as_of(conn: Connection) -> str | None:
         proposal_outcomes.c.status == "final"
     )
     return conn.execute(stmt).scalar()
+
+
+# --- 経験蒸留（reviewer）用の新規 final 抽出（ADR-081・テーマ B） ---
+# 発火ゲート/素材は「前回レビュー以降に新しく final 化した outcome」を `scored_at`（final 化時刻）で
+# 数える。`as_of_date`（horizon 到達の市場日）ではない理由: Free/Light の鮮度遅延で as_of_date が
+# 過去日でも finalize は後日になり得るため、as_of_date > cursor だと遅れて final 化した行を
+# 取りこぼす。
+# scored_at は採点入口の有界化（ADR-077・final は再採点しない）ゆえ一度立つと不変＝正しい新着信号。
+
+
+def count_final_outcomes_since(conn: Connection, *, since: str | None) -> int:
+    """`scored_at > since` の final 件数を返す（ADR-081・活動量ゲート）。since=None は全 final。"""
+    conds = [proposal_outcomes.c.status == "final"]
+    if since is not None:
+        conds.append(proposal_outcomes.c.scored_at > since)
+    return int(conn.execute(select(func.count()).where(and_(*conds))).scalar() or 0)
+
+
+def latest_final_scored_at(conn: Connection) -> str | None:
+    """final 採点の最新 scored_at（最大）を返す（ADR-081・カーソル前進値）。無ければ None。"""
+    stmt = select(func.max(proposal_outcomes.c.scored_at)).where(
+        proposal_outcomes.c.status == "final"
+    )
+    return conn.execute(stmt).scalar()
+
+
+def list_new_final_outcomes(
+    conn: Connection, *, since: str | None, limit: int = 50
+) -> list[dict[str, Any]]:
+    """`scored_at > since` の final を起点根拠付きで返す（ADR-081・素材の bookend）。
+
+    採点数値（尾）に起点の根拠（頭）を bookend する: origin_kind='proposal' は proposals.rationale、
+    'notable' は notable_picks.reason を origin_id で LEFT JOIN し `rationale` に coalesce する
+    （origin_id は 2 表参照なので join 条件に origin_kind を含めて衝突を防ぐ）。company_name は
+    stocks/us_stocks を LEFT JOIN で補う（list_recent_final_outcomes 同型）。scored_at 昇順で
+    limit 件。
+    """
+    rationale = func.coalesce(proposals.c.rationale, notable_picks.c.reason).label("rationale")
+    company_name = func.coalesce(stocks.c.company_name, us_stocks.c.company_name).label(
+        "company_name"
+    )
+    conds = [proposal_outcomes.c.status == "final"]
+    if since is not None:
+        conds.append(proposal_outcomes.c.scored_at > since)
+    stmt = (
+        select(
+            proposal_outcomes.c.origin_kind,
+            proposal_outcomes.c.origin_id,
+            proposal_outcomes.c.source,
+            proposal_outcomes.c.kind,
+            proposal_outcomes.c.code,
+            company_name,
+            proposal_outcomes.c.market,
+            proposal_outcomes.c.entry_date,
+            proposal_outcomes.c.horizon,
+            proposal_outcomes.c.as_of_date,
+            proposal_outcomes.c.realized_return,
+            proposal_outcomes.c.excess_return,
+            proposal_outcomes.c.benchmark_symbol,
+            proposal_outcomes.c.hit,
+            proposal_outcomes.c.scored_at,
+            rationale,
+        )
+        .select_from(
+            proposal_outcomes.outerjoin(
+                proposals,
+                and_(
+                    proposal_outcomes.c.origin_kind == "proposal",
+                    proposal_outcomes.c.origin_id == proposals.c.id,
+                ),
+            )
+            .outerjoin(
+                notable_picks,
+                and_(
+                    proposal_outcomes.c.origin_kind == "notable",
+                    proposal_outcomes.c.origin_id == notable_picks.c.id,
+                ),
+            )
+            .outerjoin(stocks, proposal_outcomes.c.code == stocks.c.code)
+            .outerjoin(us_stocks, proposal_outcomes.c.code == us_stocks.c.symbol)
+        )
+        .where(and_(*conds))
+        .order_by(proposal_outcomes.c.scored_at, proposal_outcomes.c.id)
+        .limit(limit)
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]

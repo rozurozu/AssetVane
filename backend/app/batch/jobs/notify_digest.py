@@ -140,6 +140,18 @@ def _notable_lines(conn: Connection, today: str) -> tuple[list[str], int]:
     return (lines, len(picks))
 
 
+def _reviewer_drafts_line(conn: Connection, today: str) -> str | None:
+    """当夜 reviewer が起票した知識ノート下書きの件数を 1 行にする（ADR-081・Q9）。
+
+    情報行（failed_index 同型）＝has_content には含めない（下書きだけの夜に digest を新規発火
+    させない）。0 件なら None（行を出さない）。当夜作った draft は /cards で承認できる。
+    """
+    n = repo.count_reviewer_drafts_on(conn, today)
+    if n <= 0:
+        return None
+    return f"🗂 経験レビューの知識ノート下書き {n} 件（/cards で確認）"
+
+
 def build_digest_content(conn: Connection, today: str) -> str | None:
     """当日の注目（AI 選別）＋⑦＋夜AI 提案を 1 通の digest 本文に組み立てる（spec §3・ADR-067）。
 
@@ -184,6 +196,9 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
     # ある夜は always_daily_digest=False でも送る」を満たす。
     risk_lines = _holding_risk_lines(conn)
 
+    # 経験レビューの下書き件数（ADR-081・Q9）。情報行なので has_content には含めない。
+    reviewer_drafts = _reviewer_drafts_line(conn, today)
+
     has_content = bool(n_picks or rebalance or proposal or risk_lines)
     if not has_content and not settings.always_daily_digest:
         return None  # 好機がある日だけ送る設定で、何も無い日（[OPEN-N]）
@@ -209,6 +224,10 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
         if policy_change:
             to = policy_change.get("to")
             lines.append(f"　方針変更案: {policy_change['field']} → {to}")
+        lines.append("")
+
+    if reviewer_drafts:
+        lines.append(reviewer_drafts)
         lines.append("")
 
     if failed_index:

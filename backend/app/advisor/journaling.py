@@ -384,6 +384,7 @@ def persist_card_ops_from_tool_runs(
     *,
     tool_runs: list[dict[str, Any]],
     date: str,
+    source_override: str | None = None,
 ) -> dict[str, list[int]]:
     """tool_runs から propose_card / adjust_card_weight を承認制で起票する（ADR-062 追補・W2）。
 
@@ -392,6 +393,10 @@ def persist_card_ops_from_tool_runs(
     - adjust_card_weight → weight 変更を proposals(kind='card_weight') へ承認制で起票。
       /proposals で承認すると resolve_proposal が body の card_id/weight を反映する。
     commit はしない＝呼び出し側（router/nightly）が begin を所有し journal/proposal と束ねる（W2）。
+
+    source_override を渡すと propose_card の source を **決定論で強制上書き**する（LLM の source
+    引数を信用しない・ADR-081）。reviewer 経路が 'reviewer' を渡し /cards で由来を識別できる。
+    既定 None は従来どおり tool 引数の source を使う（chat/nightly 不変）。
     戻り値: {"cards": [draft id...], "weight_proposals": [proposal id...]}。
     """
     card_ids: list[int] = []
@@ -430,7 +435,7 @@ def persist_card_ops_from_tool_runs(
             level=level,
             market=market,
             code=code,
-            source=a.source,
+            source=source_override if source_override is not None else a.source,
         )
         card_ids.append(cid)
 

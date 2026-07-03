@@ -64,6 +64,7 @@ from app.db.repo.judgments import (
     search_judgments,
 )
 from app.db.repo.knowledge_cards import (
+    count_reviewer_drafts_on,
     delete_knowledge_card,
     get_knowledge_card,
     insert_knowledge_card,
@@ -148,9 +149,12 @@ from app.db.repo.portfolio import (
 )
 from app.db.repo.proposal_outcomes import (
     aggregate_track_record,
+    count_final_outcomes_since,
     count_pending_outcomes,
     latest_final_as_of,
+    latest_final_scored_at,
     list_finalized_outcome_keys,
+    list_new_final_outcomes,
     list_recent_final_outcomes,
     list_scorable_notable_picks,
     list_scorable_trade_proposals,
@@ -174,6 +178,7 @@ from app.db.repo.stocks import (
     set_stock_edinet_code,
     upsert_daily_quotes,
     upsert_fetch_meta,
+    upsert_fetch_meta_tx,
     upsert_signals,
     upsert_stocks,
 )
@@ -249,6 +254,7 @@ __all__ = [
     "bulk_set_stock_edinet_codes",
     "get_quotes",
     "upsert_fetch_meta",
+    "upsert_fetch_meta_tx",
     "mark_fetch_attempt_failed",
     "get_fetch_meta",
     "get_max_quote_date",
@@ -352,6 +358,9 @@ __all__ = [
     "list_recent_final_outcomes",
     "count_pending_outcomes",
     "latest_final_as_of",
+    "count_final_outcomes_since",
+    "latest_final_scored_at",
+    "list_new_final_outcomes",
     "search_judgment_fts",
     "search_judgments",
     "get_journal_for_date",
@@ -433,5 +442,6 @@ __all__ = [
     "set_card_weight",
     "update_card_weight",
     "delete_knowledge_card",
+    "count_reviewer_drafts_on",
     "update_card_embedding",
 ]

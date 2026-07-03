@@ -121,6 +121,24 @@ def upsert_fetch_meta(source: str, last_fetched_date: str) -> None:
     _upsert(fetch_meta, [row], index_elements=["source"])
 
 
+def upsert_fetch_meta_tx(conn: Connection, source: str, last_fetched_date: str) -> None:
+    """`source` の取得済み最終値を conn 注入で前進させる（W2＝呼び出し側が begin を所有・ADR-081）。
+
+    upsert_fetch_meta（自前で begin を開き commit する）の conn 版。reviewer:cursor を
+    distill_experience ジョブの begin() 境界内で card 起票と atomic に前進させるために使う
+    （別接続の self-commit を外側 begin の最中に呼ぶと WAL で database is locked になり得る）。
+    """
+    row = {
+        "source": source,
+        "last_fetched_date": last_fetched_date,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "last_attempt_ok": 1,
+    }
+    stmt = sqlite_insert(fetch_meta).values(**row)
+    stmt = stmt.on_conflict_do_update(index_elements=["source"], set_=row)
+    conn.execute(stmt)
+
+
 def mark_fetch_attempt_failed(source: str) -> None:
     """`source` の直近取得試行を失敗（last_attempt_ok=0）として記録する（ADR-018）。
 

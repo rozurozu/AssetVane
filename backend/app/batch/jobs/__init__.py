@@ -18,6 +18,7 @@ from app.batch.jobs import (
     calc_us_receivables_inventory,
     calc_us_valuation,
     calc_valuation,
+    distill_experience,
     embed_cards,
     embed_news,
     embed_themes,
@@ -130,6 +131,11 @@ NIGHTLY_JOBS = [
     # run_advisor で当夜提案が永続した後（通知系の前）に置く。horizon 未経過は pending で保留し、
     # データが追いついた夜に final へ上書きされる（Free/Light の鮮度遅延を系列カウントが吸収）。
     score_proposal_outcomes.run,
+    # ADR-081: 経験蒸留（reviewer 面・自己改善ループ ④）。score_proposal_outcomes がその晩の
+    # final を採点した直後・通知系の前に置き、新しく確定した採点結果を教材に知識カード draft を蒸留
+    # （夜バッチ唯一の backward-looking ペア）。活動量ゲート（新規 final < 閾値）と reviewer 面
+    # 未設定は健全 skip（ok=True）。当夜作った draft 件数は notify_digest が読んで 1 行出す。
+    distill_experience.run,
     # ADR-028: warn 超過時、その月最初の夜に 1 通だけ警告（通知系を digest と並べる）。
     notify_cost_warn.run,
     notify_digest.run,  # Phase 6: ⑦⑧＋夜AI 提案を 1 通の Discord digest に束ねる（phase6-spec §3）

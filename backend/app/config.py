@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     )
     notable_digest_max: int = 8  # digest に載せる AI 選別の上限（残りは「…ほか N 件」）
 
+    # --- 経験蒸留（reviewer 面・自己改善ループ ④・ADR-081） ---
+    # 夜バッチの distill_experience が採点済み outcome を知識カード draft に蒸留する（テーマ B）。
+    # 活動量ゲート＝新規 final（scored_at がカーソル超）がこの数未満の晩は LLM を呼ばず skip。
+    reviewer_min_new_finals: int = 3
+    # 過学習足切り＝傾向として提示する集計バケットの最小 count
+    # （少サンプルを durable card 化しない）。
+    reviewer_min_samples: int = 3
+
     # --- 夜間バッチ / cron --- Phase 1〜（spec §3.7・ADR-021・ADR-011）
     # APScheduler を FastAPI プロセスに同居させる（追加コンテナ 0）。
     # dev の --reload 二重起動を避けるため既定は false（prod で true）。
