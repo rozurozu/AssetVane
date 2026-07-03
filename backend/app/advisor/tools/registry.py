@@ -40,6 +40,7 @@ from app.advisor.tools.schemas import (
     ListThemesArgs,
     OptimizePortfolioArgs,
     ProposeCardArgs,
+    ProposeProfileNoteArgs,
     ProposeTradeArgs,
     ProposeWatchlistArgs,
     ScreenByThemeArgs,
@@ -73,6 +74,10 @@ class ToolDef:
     parameters: dict[str, object]  # OpenAI Function Calling 用 JSON Schema（引数）
     handler: Callable[[dict[str, object]], Awaitable[dict]]  # handlers.py の実体
     min_phase: int  # 投入フェーズ（1/2/3/4…）
+    # allowlist で明示されたときだけ露出する Tool（allow=None の chat/nightly には見せない）。
+    # 面固有の書き込み Tool（propose_profile_note＝profiler 専用・ADR-082）が「呼べるが永続され
+    # ない」宙ぶらりんで chat に出るのを防ぐ（reviewer と違い persist 経路が profiler にしかない）。
+    allowlist_only: bool = False
 
 
 def _schema(model: type) -> dict[str, object]:
@@ -430,6 +435,21 @@ REGISTRY: dict[str, ToolDef] = {
         handler=handlers.handle_adjust_card_weight,
         min_phase=4,
     ),
+    # --- 投資家プロファイル蒸留（profiler 面専用・ADR-082）---
+    "propose_profile_note": ToolDef(
+        name="propose_profile_note",
+        description=(
+            "台帳から観測した**投資家自身の行動の癖**（記述）を承認制の傾向メモとして起票する"
+            "（ADR-082）。text＝1 行の癖の記述（規範でなく記述・嗜好に迎合しない）、evidence＝"
+            "台帳事実の根拠（どの信号か・数値は素材から引用し自分で計算しない＝ADR-014）。"
+            "十分なサンプルのある傾向だけ・乱発しない。起票は pending で人間が /profile で承認"
+            "すると本文へ追記される。"
+        ),
+        parameters=_schema(ProposeProfileNoteArgs),
+        handler=handlers.handle_propose_profile_note,
+        min_phase=1,
+        allowlist_only=True,  # profiler 面（PROFILER_TOOLSET）でだけ露出・chat/nightly には見せない
+    ),
     # --- Phase 7（日米業種リードラグ・SIG-FIN-036-13）---
     "get_lead_lag": ToolDef(
         name="get_lead_lag",
@@ -548,6 +568,19 @@ REVIEWER_TOOLSET: frozenset[str] = frozenset(
 )
 
 
+# 投資家プロファイル蒸留（profiler 面・ADR-082）に見せる最小 toolset。素材の大半は Python が
+# verbatim で素材注入するので toolset は最小＝成績の裏取り（get_track_record）・過去判断の横断想起
+# （search_judgments）・傾向メモの承認制起票（propose_profile_note＝allowlist_only で他面に隠す）。
+# 末尾で persist_profile_notes_from_tool_runs が profile_note だけ拾う（多重防御・reviewer 同型）。
+PROFILER_TOOLSET: frozenset[str] = frozenset(
+    {
+        "get_track_record",
+        "search_judgments",
+        "propose_profile_note",
+    }
+)
+
+
 def openai_tools(
     available_phase: int = CURRENT_PHASE, *, allow: set[str] | frozenset[str] | None = None
 ) -> list[dict[str, object]]:
@@ -555,8 +588,9 @@ def openai_tools(
 
     各要素は `{"type": "function", "function": {name, description, parameters}}` 形。
     Phase ゲート: まだ実装されていない Tool を LLM に見せない。
-    allow を渡すと **その名前集合に絞る**（reviewer の toolset 制限＝ADR-081）。既定 None は絞らない
-    （chat/nightly は従来どおり phase の全 Tool を見せる）。
+    allow を渡すと **その名前集合に絞る**（reviewer/profiler の toolset 制限＝ADR-081/082）。既定
+    None は絞らない（chat/nightly は phase の全 Tool を見せる）が、allowlist_only の Tool は
+    allow に明示されたときだけ出す（面固有の書き込み Tool を chat/nightly に漏らさない＝ADR-082）。
     """
     return [
         {
@@ -568,5 +602,12 @@ def openai_tools(
             },
         }
         for t in REGISTRY.values()
-        if t.min_phase <= available_phase and (allow is None or t.name in allow)
+        if t.min_phase <= available_phase and _tool_allowed(t, allow)
     ]
+
+
+def _tool_allowed(t: ToolDef, allow: set[str] | frozenset[str] | None) -> bool:
+    """allow の絞り込み規則。allow=None なら allowlist_only 以外を出す・指定時は名前一致で出す。"""
+    if allow is None:
+        return not t.allowlist_only
+    return t.name in allow

@@ -27,6 +27,7 @@ from app.advisor.tools.schemas import (
     AdjustCardWeightArgs,
     NotablePickArg,
     ProposeCardArgs,
+    ProposeProfileNoteArgs,
     ProposeTradeArgs,
     WatchlistCandidateArg,
     coerce_policy_change,
@@ -233,6 +234,52 @@ def persist_trade_proposals_from_tool_runs(
             status="pending",
             journal_id=journal_id,
             depends_on=None,
+        )
+        inserted.append(proposal_id)
+
+    return inserted
+
+
+def persist_profile_notes_from_tool_runs(
+    conn: Connection,
+    *,
+    tool_runs: list[dict[str, Any]],
+    date: str,
+) -> list[int]:
+    """tool_runs から propose_profile_note を拾い傾向メモを承認制で起票する（ADR-082・W2）。
+
+    戻り値: 起票した proposals（kind='profile_note'）の id 一覧（dedup された分は含まない）。
+
+    手順（persist_trade_proposals_from_tool_runs と同型）:
+    1. propose_profile_note の args を全件抽出（1 晩に複数可）。
+    2. text/evidence を検証（ProposeProfileNoteArgs）。不正・空 text はスキップ。
+    3. pending dedup（同一 text の pending があればスキップ＝毎晩の氾濫を抑える）。
+    4. insert_proposal（kind='profile_note'・body=JSON{text,evidence}・rationale=evidence）。
+
+    承認すると resolve_proposal→apply_profile_note が投資家プロファイル本文へ追記する（人間承認で
+    のみ active 文書が育つ＝ADR-009）。接続規約（W2）: commit しない＝呼び出し側 job が begin 所有。
+    """
+    inserted: list[int] = []
+    for raw in _extract_args(tool_runs, "propose_profile_note"):
+        try:
+            args = ProposeProfileNoteArgs.model_validate(raw)
+        except ValidationError:
+            logger.warning("propose_profile_note: 引数が不正（%s）。起票せずスキップ", raw)
+            continue
+        text = args.text.strip()
+        if not text:
+            continue
+        if repo.pending_profile_note_exists(conn, text):
+            logger.info("propose_profile_note: 同一 text が既に pending。重複起票をスキップ")
+            continue
+        body = json.dumps({"text": text, "evidence": args.evidence}, ensure_ascii=False)
+        proposal_id = repo.insert_proposal(
+            conn,
+            created_date=date,
+            kind="profile_note",
+            body=body,
+            rationale=args.evidence,
+            status="pending",
         )
         inserted.append(proposal_id)
 

@@ -44,6 +44,8 @@ export const nav: NavSection[] = [
       { label: "Policy", icon: "🧭", href: "/policy" },
       // 知識カード管理（ADR-062）。非自明な投資知識を置き、AI 審査→人間承認で本番助言に効かせる。
       { label: "知識カード", icon: "🗂", href: "/cards" },
+      // 投資家プロファイル（ADR-082）。行動の癖の記述。夜バッチ profiler の傾向メモを承認で育てる。
+      { label: "プロファイル", icon: "🪞", href: "/profile" },
       { label: "Journal", icon: "📓", href: "/journal" },
       { label: "Proposals", icon: "✓", href: "/proposals" },
     ],

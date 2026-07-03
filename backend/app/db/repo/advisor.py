@@ -170,6 +170,41 @@ def pending_trade_proposal_exists(conn: Connection, kind: str, code: str) -> boo
     return False
 
 
+def pending_profile_note_exists(conn: Connection, text: str) -> bool:
+    """同一 text の pending な profile_note 提案が既にあるか（ADR-082・重複起票防止）。
+
+    proposals は本文専用列を持たず body(JSON) に {text, evidence} を詰めるため、pending かつ
+    kind='profile_note' の行を引いて Python 側で body の text を突き合わせる（migration 不要・
+    pending_trade_proposal_exists と同型）。承認/却下済みは対象外＝毎晩の pending 氾濫だけ抑える。
+    """
+    stmt = select(proposals.c.body).where(
+        proposals.c.status == "pending", proposals.c.kind == "profile_note"
+    )
+    for (body,) in conn.execute(stmt).all():
+        if not body:
+            continue
+        try:
+            if json.loads(body).get("text") == text:
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
+
+
+def count_profile_notes_on(conn: Connection, date: str) -> int:
+    """指定日（'YYYY-MM-DD'）に起票された pending の傾向メモ件数（ADR-082・digest の情報行用）。
+
+    notify_digest が「🪞 投資家プロファイルの傾向メモ下書き N 件」の 1 行を出すために読む。夜バッチ
+    profiler が当夜 created_date=today で起票した profile_note のうち、まだ承認待ち（pending）の数。
+    """
+    stmt = select(func.count()).where(
+        proposals.c.kind == "profile_note",
+        proposals.c.status == "pending",
+        proposals.c.created_date == date,
+    )
+    return int(conn.execute(stmt).scalar() or 0)
+
+
 def get_proposal(conn: Connection, proposal_id: int) -> dict[str, Any] | None:
     """proposals の 1 行を返す（無ければ None・spec §8.3）。"""
     row = conn.execute(select(proposals).where(proposals.c.id == proposal_id)).mappings().first()

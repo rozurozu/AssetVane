@@ -49,6 +49,7 @@ from app.advisor.tools.schemas import (
     ListThemesArgs,
     OptimizePortfolioArgs,
     ProposeCardArgs,
+    ProposeProfileNoteArgs,
     ProposeTradeArgs,
     ProposeWatchlistArgs,
     ScreenByThemeArgs,
@@ -1049,6 +1050,26 @@ async def handle_propose_card(args: dict[str, object]) -> dict[str, Any]:
         "title": parsed.title or "（本文先頭で代替）",
         "code": parsed.code,
         "message": f"{scope}を draft で起票する（/cards で確認・active 化は人間承認）。",
+    }
+
+
+async def handle_propose_profile_note(args: dict[str, object]) -> dict[str, Any]:
+    """propose_profile_note（ADR-082・検証 only）。投資家プロファイルの傾向メモを承認制で起票する。
+
+    propose_card と同じ契約＝実際の pending 起票は呼び出し側（profiler ジョブ）が tool_runs から
+    persist_profile_notes_from_tool_runs で行う。ここでは引数を検証し AI に手応えを返すだけ
+    （ADR-009＝起票は pending で人間が /profile で承認）。例外は握って {"error"} に倒す。
+    """
+    try:
+        parsed = ProposeProfileNoteArgs.model_validate(args)
+    except Exception as exc:
+        logger.warning("handle_propose_profile_note: 引数が不正（%s）", args)
+        return {"error": str(exc)}
+    if not parsed.text.strip():
+        return {"error": "text が空です。行動の癖の記述を入れてください。"}
+    return {
+        "ok": True,
+        "message": "投資家プロファイルの傾向メモを pending で起票する（/profile で承認）。",
     }
 
 

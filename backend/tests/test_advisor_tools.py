@@ -117,6 +117,8 @@ def test_registry_handlers_are_registered() -> None:
         # ADR-062 追補: チャットからのカード整備（min_phase=4・承認制）。
         "propose_card",
         "adjust_card_weight",
+        # ADR-082: 投資家プロファイルの傾向メモ（profiler 面専用・allowlist_only）。
+        "propose_profile_note",
         # Phase 7: 日米業種リードラグ（min_phase=7）。
         "get_lead_lag",
         # Phase 7(B-1): 米国株バリュエーション（min_phase=7・ADR-039/048/055）。

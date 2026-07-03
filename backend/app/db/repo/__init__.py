@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.db.repo._common import pack_embedding
 from app.db.repo.advisor import (
+    count_profile_notes_on,
     get_journal,
     get_policy,
     get_proposal,
@@ -17,6 +18,7 @@ from app.db.repo.advisor import (
     insert_proposal,
     list_journal,
     list_proposals,
+    pending_profile_note_exists,
     pending_trade_proposal_exists,
     set_journal_policy_snapshot,
     sum_llm_cost_month,
@@ -54,6 +56,10 @@ from app.db.repo.fx_us_holdings import (
     update_us_transaction,
     upsert_fx_rates,
     upsert_us_holding,
+)
+from app.db.repo.investor_profile import (
+    get_investor_profile,
+    upsert_investor_profile,
 )
 from app.db.repo.jquants_config import (
     get_jquants_config,
@@ -326,6 +332,8 @@ __all__ = [
     "insert_proposal",
     "list_proposals",
     "pending_trade_proposal_exists",
+    "pending_profile_note_exists",
+    "count_profile_notes_on",
     "set_journal_policy_snapshot",
     "get_proposal",
     "update_proposal_status",
@@ -429,6 +437,8 @@ __all__ = [
     "upsert_jquants_config",
     "get_edinetdb_config",
     "upsert_edinetdb_config",
+    "get_investor_profile",
+    "upsert_investor_profile",
     "list_knowledge_cards",
     "list_active_cards_by_codes",
     "get_knowledge_card",

@@ -152,6 +152,18 @@ def _reviewer_drafts_line(conn: Connection, today: str) -> str | None:
     return f"🗂 経験レビューの知識ノート下書き {n} 件（/cards で確認）"
 
 
+def _profile_notes_line(conn: Connection, today: str) -> str | None:
+    """当夜 profiler が起票した投資家プロファイルの傾向メモ件数を 1 行にする（ADR-082）。
+
+    情報行（reviewer 下書きと同型）＝has_content には含めない（下書きだけの夜に digest を新規発火
+    させない）。0 件なら None（行を出さない）。当夜作った傾向メモは /profile で承認できる。
+    """
+    n = repo.count_profile_notes_on(conn, today)
+    if n <= 0:
+        return None
+    return f"🪞 投資家プロファイルの傾向メモ下書き {n} 件（/profile で確認）"
+
+
 def build_digest_content(conn: Connection, today: str) -> str | None:
     """当日の注目（AI 選別）＋⑦＋夜AI 提案を 1 通の digest 本文に組み立てる（spec §3・ADR-067）。
 
@@ -198,6 +210,8 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
 
     # 経験レビューの下書き件数（ADR-081・Q9）。情報行なので has_content には含めない。
     reviewer_drafts = _reviewer_drafts_line(conn, today)
+    # 投資家プロファイルの傾向メモ件数（ADR-082）。同じく情報行（has_content に含めない）。
+    profile_notes = _profile_notes_line(conn, today)
 
     has_content = bool(n_picks or rebalance or proposal or risk_lines)
     if not has_content and not settings.always_daily_digest:
@@ -228,6 +242,10 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
 
     if reviewer_drafts:
         lines.append(reviewer_drafts)
+        lines.append("")
+
+    if profile_notes:
+        lines.append(profile_notes)
         lines.append("")
 
     if failed_index:

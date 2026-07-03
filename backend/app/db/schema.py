@@ -308,6 +308,19 @@ policy = Table(
     Column("updated_at", String),  # ISO8601
 )
 
+# 投資家プロファイル（ADR-082: テーマ C・★4 自己改善ループ）。policy（規範＝どうすべきか）と
+# 厳格分離した「記述＝投資家の行動の癖（誰か）」の層。single row を育てる（id 固定・版管理機構なし
+# ＝ADR-013 と同流儀だが policy とは別テーブル）。body は散文 1 枚。夜間バッチ profiler 面が台帳から
+# 蒸留した傾向メモを承認制（proposals kind='profile_note'）で起票し、人間承認で body に追記される
+# （ADR-009）。注入は CORE→POLICY に続く第 3 層（鏡・反追従で注入）。knowledge_cards とは別物。
+investor_profile = Table(
+    "investor_profile",
+    metadata,
+    Column("id", Integer, primary_key=True),  # 1 行運用（id 固定・autoincrement しない）
+    Column("body", String, nullable=False, server_default=""),  # 散文プロファイル（空なら未育成）
+    Column("updated_at", String),  # ISO8601
+)
+
 # 投資日記（ADR-011/029: 夜=1件/日 自動・チャットの会話要約昇格も当日 journal に書く）。
 # source で 'nightly'（夜の分析AI）/ 'chat'（昼チャットの要約昇格）を区別（ADR-029）。
 # situation_briefing / proposed_policy_change / policy_snapshot は JSON 文字列。
@@ -335,7 +348,8 @@ proposals = Table(
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("created_date", String, nullable=False),  # 'YYYY-MM-DD'
-    Column("kind", String, nullable=False),  # "policy_change"/"buy"/"sell"/"rebalance"
+    # policy_change/buy/sell/rebalance/card_weight/profile_note（自由 String・CHECK なし）
+    Column("kind", String, nullable=False),
     Column("body", String),  # JSON（kind 依存）
     Column("rationale", String),  # 根拠（AI の説明）
     Column("status", String, nullable=False, server_default="pending"),  # pending/approved/rejected

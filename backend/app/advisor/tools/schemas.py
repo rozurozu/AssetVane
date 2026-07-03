@@ -469,6 +469,19 @@ class ProposeTradeArgs(_ToolArgs):
     reason: str = Field(description="ニュース起点の根拠（なぜ買い/売りかの説明・数値は含めない）。")
 
 
+class ProposeProfileNoteArgs(_ToolArgs):
+    """propose_profile_note の引数（ADR-082・投資家プロファイルの傾向メモを承認制で起票）。
+
+    profiler 面が台帳から観測した**投資家自身の行動の癖**（記述であって規範でない）を、承認制の
+    傾向メモとして起票する。text＝1 行の癖の記述、evidence＝台帳事実の根拠（どの信号バケットか・
+    数値は素材の値を引用し自分で計算しない＝ADR-014）。起票は pending で、人間が /profile で承認
+    すると投資家プロファイル本文に追記される（ADR-009）。
+    """
+
+    text: str = Field(description="1 行の行動の癖の記述（規範でなく記述・嗜好に迎合しない）。")
+    evidence: str = Field(description="台帳事実の根拠（どの信号か・数値は素材から引用する）。")
+
+
 class GetNotableCandidatesArgs(_ToolArgs):
     """get_notable_candidates の引数（ADR-067・引数なし）。
 

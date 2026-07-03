@@ -93,10 +93,11 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
     LLM 呼び出しごと打ち切る。切断時は末尾の永続化（journal/proposals/cards）に到達しないので
     中途半端な起票は残らない（副作用は末尾集約＝下記）。
     """
-    # POLICY（DEFAULT マージ済み）と直近 journal は読み取り接続で引く（ADR-005）。
+    # POLICY・直近 journal・投資家プロファイルは読み取り接続で引く（ADR-005）。
     with get_engine().connect() as conn:
         policy = policy_service.get_policy(conn)
         recent = repo.get_recent_journal_summary(conn)
+        profile = repo.get_investor_profile(conn)["body"]  # 記述の第3層（鏡・反追従・ADR-082）
 
     # 最新のユーザー発話を retrieval キーに知識カードを引く（ADR-062・ambient＋意味検索）。
     query = next((m.content for m in reversed(req.messages) if m.role == "user"), None)
@@ -112,6 +113,7 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
         screen_context=req.context,
         knowledge_cards=await load_card_texts_for_injection(query, focus_code=focus_code),
         recent_journal=recent,
+        investor_profile=profile,
     )
 
     # 面（provider/model）は engine が source="chat" から解決する（ADR-058）。未設定なら明示エラー

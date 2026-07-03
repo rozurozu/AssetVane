@@ -306,6 +306,10 @@ def resolve_proposal(
     if decision == "approved" and proposal.get("kind") == "card_weight":
         _apply_card_weight(conn, proposal.get("body"))
 
+    # approved かつ profile_note なら投資家プロファイル本文へ追記（ADR-082・承認制の記述追加）。
+    if decision == "approved" and proposal.get("kind") == "profile_note":
+        apply_profile_note(conn, proposal.get("body"))
+
 
 def _apply_card_weight(conn: Connection, body_raw: object) -> None:
     """proposals.body（{card_id, weight}）から知識カードの weight を適用する（ADR-062 追補）。
@@ -328,6 +332,31 @@ def _apply_card_weight(conn: Connection, body_raw: object) -> None:
     if weight <= 0:
         return
     repo.update_card_weight(conn, card_id, weight)
+
+
+def apply_profile_note(conn: Connection, body_raw: object) -> None:
+    """proposals.body（{text, evidence}）を投資家プロファイル本文へ追記する（ADR-082）。
+
+    承認された傾向メモを日付見出し付きで現 body 末尾に足す（増分＝active 文書は人間承認でのみ育つ
+    ＝ADR-009）。壊れた body・空 text は追記せず skip（落とさない・ADR-018）。write を含むため
+    呼び出し側が `with get_engine().begin() as conn:` で渡す（W2）。
+    """
+    try:
+        data = json.loads(body_raw) if isinstance(body_raw, str) else body_raw
+    except (TypeError, ValueError):
+        logger.warning("profile_note: body が JSON でない。追記せず skip")
+        return
+    if not isinstance(data, dict):
+        return
+    text = str(data.get("text") or "").strip()
+    if not text:
+        logger.warning("profile_note: text が空。追記せず skip")
+        return
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    current = str(repo.get_investor_profile(conn).get("body") or "")
+    addition = f"（{today}）{text}"
+    new_body = f"{current}\n\n{addition}" if current.strip() else addition
+    repo.upsert_investor_profile(conn, new_body)
 
 
 def _parse_change(body_raw: object) -> dict[str, object] | None:

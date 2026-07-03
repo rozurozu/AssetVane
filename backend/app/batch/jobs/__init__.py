@@ -19,6 +19,7 @@ from app.batch.jobs import (
     calc_us_valuation,
     calc_valuation,
     distill_experience,
+    distill_investor_profile,
     embed_cards,
     embed_news,
     embed_themes,
@@ -136,6 +137,10 @@ NIGHTLY_JOBS = [
     # （夜バッチ唯一の backward-looking ペア）。活動量ゲート（新規 final < 閾値）と reviewer 面
     # 未設定は健全 skip（ok=True）。当夜作った draft 件数は notify_digest が読んで 1 行出す。
     distill_experience.run,
+    # ADR-082: 投資家プロファイル蒸留（profiler 面・自己改善ループ ④）。取引台帳の行動信号を教材に
+    # 傾向メモ draft を蒸留する（distill_experience と対の backward-looking 蒸留）。活動量ゲート
+    # （新規 SELL < 閾値）と profiler 面 未設定は健全 skip（ok=True）。下書き件数は digest が出す。
+    distill_investor_profile.run,
     # ADR-028: warn 超過時、その月最初の夜に 1 通だけ警告（通知系を digest と並べる）。
     notify_cost_warn.run,
     notify_digest.run,  # Phase 6: ⑦⑧＋夜AI 提案を 1 通の Discord digest に束ねる（phase6-spec §3）

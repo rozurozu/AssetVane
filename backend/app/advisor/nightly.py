@@ -93,6 +93,7 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
     policy = repo.get_policy(conn)
     briefing = await _gather_briefing()  # 非同期コンテキスト内なので handler を直接 await する
     recent = repo.get_recent_journal_summary(conn)
+    profile = repo.get_investor_profile(conn)["body"]  # 記述の第3層（鏡・反追従・ADR-082）
 
     # 合流ゲート済みの注目候補をプロンプトに直接注入（ツール依存なしで堅牢＝ADR-067/018）。
     candidates = build_notable_candidates(conn)
@@ -113,6 +114,7 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
         # Tool（ADR-062 追補・④）。
         knowledge_cards=await load_card_texts_for_injection(None, candidate_codes=candidate_codes),
         recent_journal=recent,
+        investor_profile=profile,
     )
 
     # provider（OpenAI 互換）は engine が source="nightly" から解決する（ADR-058）。

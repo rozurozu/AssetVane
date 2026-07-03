@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     # （少サンプルを durable card 化しない）。
     reviewer_min_samples: int = 3
 
+    # --- 投資家プロファイル蒸留（profiler 面・自己改善ループ ④・ADR-082） ---
+    # 夜バッチの distill_investor_profile が台帳から行動の癖を蒸留し profile_note を承認制起票する。
+    # 活動量ゲート＝新規 SELL（traded_at がカーソル超）がこの数未満の晩は LLM を呼ばず skip。
+    profiler_min_new_sells: int = 1
+    # 過学習足切り＝傾向として提示する信号の最小サンプル数（単発トレードから癖を作らない）。
+    profiler_min_samples: int = 5
+
     # --- 夜間バッチ / cron --- Phase 1〜（spec §3.7・ADR-021・ADR-011）
     # APScheduler を FastAPI プロセスに同居させる（追加コンテナ 0）。
     # dev の --reload 二重起動を避けるため既定は false（prod で true）。

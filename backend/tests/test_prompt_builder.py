@@ -308,3 +308,47 @@ def test_build_messages_recent_journal_adds_system_message() -> None:
         m for m in msgs if m["role"] == "system" and "先週の投資日記サマリ" in str(m["content"])
     ]
     assert len(journal_msgs) == 1
+
+
+# ---------------------------------------------------------------------------
+# build_messages — 投資家プロファイル（第3層・ADR-082）
+# ---------------------------------------------------------------------------
+
+
+class TestInvestorProfileInjection:
+    """投資家プロファイル（記述）を POLICY の直後・知識カードの前に注入する（ADR-082）。"""
+
+    def test_profile_injected_after_policy_before_cards(self) -> None:
+        """投資家プロファイル system は POLICY の後・知識カードの前に入る。"""
+        msgs = build_messages(
+            core_prompt=CORE,
+            policy=POLICY_DICT,
+            conversation=CONVERSATION,
+            knowledge_cards=["ある知識カード"],
+            investor_profile="急落で狼狽売りしがち（売り後上昇率 70%）",
+        )
+        contents = [str(m["content"]) for m in msgs]
+        policy_idx = next(i for i, c in enumerate(contents) if "リスク許容度" in c)
+        profile_idx = next(i for i, c in enumerate(contents) if "行動の癖" in c)
+        cards_idx = next(i for i, c in enumerate(contents) if "ある知識カード" in c)
+        assert policy_idx < profile_idx < cards_idx
+        # 反追従の枠づけと本文の両方が載る。
+        assert "狼狽売り" in contents[profile_idx]
+        assert "反追従" in contents[profile_idx]
+
+    def test_empty_profile_not_injected(self) -> None:
+        """空文字/None の profile は system を足さない（未育成なら第3層なし）。"""
+        base = build_messages(core_prompt=CORE, policy=POLICY_DICT, conversation=CONVERSATION)
+        empty = build_messages(
+            core_prompt=CORE,
+            policy=POLICY_DICT,
+            conversation=CONVERSATION,
+            investor_profile="   ",
+        )
+        none = build_messages(
+            core_prompt=CORE,
+            policy=POLICY_DICT,
+            conversation=CONVERSATION,
+            investor_profile=None,
+        )
+        assert len(base) == len(empty) == len(none)

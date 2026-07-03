@@ -105,6 +105,7 @@ def build_messages(
     screen_context: ScreenContext | None = None,
     knowledge_cards: list[str] | None = None,
     recent_journal: str | None = None,
+    investor_profile: str | None = None,
     facts: None = None,  # noqa: ARG001 — 事実は Tool ループで動的に入る（ADR-014）。静的には積まない
 ) -> list[dict[str, object]]:
     """advisor.md §6 / spec §6.1 の順序でメッセージ列を組む。
@@ -112,11 +113,14 @@ def build_messages(
     組み立て順序（system → 会話）:
     1. system: [CORE]         ← core_prompt.md（不変・リポジトリ管理）
     2. system: [POLICY]       ← compile_policy(policy)（DB からコンパイル）
+    2.5 system: [投資家プロファイル] ← investor_profile があれば（記述＝鏡・反追従・ADR-082）
     3. system: [知識カード]    ← knowledge_cards があれば（DB の active 行・ADR-062）
     4. system: [文脈]         ← recent_journal があれば「直近の投資日記: …」
     5. system: [画面コンテキスト] ← 軸2 のみ。compile_screen_context() の 1 行（ADR-025）
     6. conversation           ← user/assistant の列を {role, content} dict に変換
 
+    投資家プロファイル（ADR-082）は POLICY（規範＝どうすべきか）に続く記述の層（この投資家は
+    どういう人か＝行動の癖）。CORE の反追従節が「迎合せず癖を打ち消す方向に使う」を縛る（鏡）。
     facts 引数は受けるが使わない（将来用・None 固定）。事実は Tool ループで動的に挿入する。
     これにより「AI は計算しない（ADR-014）」を構造的に担保する。
     """
@@ -128,6 +132,20 @@ def build_messages(
     # 2. POLICY（DB からコンパイル）
     policy_text = compile_policy(policy)
     messages.append({"role": "system", "content": policy_text})
+
+    # 2.5 投資家プロファイル（記述＝鏡・反追従・ADR-082。POLICY=規範 の次に「誰か」を置く）
+    if investor_profile and investor_profile.strip():
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "## 投資家プロファイル（あなた自身の行動の癖・鏡）\n\n"
+                    "以下はこの投資家の**行動の癖の記述**（規範でなく記述）。迎合せず、癖に沿う判断へ"
+                    "傾くときは癖を名指しして反対側の視点を必ず示す（鏡・反追従＝ADR-082）。\n\n"
+                    f"{investor_profile.strip()}"
+                ),
+            }
+        )
 
     # 3. 知識カード（DB の active 行・任意・ADR-062。旧・手法カード常時注入を置換）
     if knowledge_cards:

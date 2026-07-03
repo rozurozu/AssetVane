@@ -35,6 +35,7 @@ from app.routers.lead_lag import router as lead_lag_router
 from app.routers.llm_config import router as llm_config_router
 from app.routers.news import router as news_router
 from app.routers.portfolio import router as portfolio_router
+from app.routers.profile import router as profile_router
 from app.routers.screening_filters import router as screening_filters_router
 from app.routers.signals import router as signals_router
 from app.routers.stocks import router as stocks_router
@@ -117,6 +118,8 @@ app.include_router(diagnostics_router)
 app.include_router(advisor_router)
 # AI Advisor 状態（Phase 3）。/policy・/journal・/proposals（routers/advisor_state.py）。
 app.include_router(advisor_state_router)
+# 投資家プロファイル（ADR-082）。GET/PUT /profile・GET /profile/notes（routers/profile.py）。
+app.include_router(profile_router)
 # ポートフォリオ（Phase 2）。GET /portfolios・GET /holdings・POST /transactions・metrics・optimize。
 app.include_router(portfolio_router)
 # 資産概要・現金・外部資産（Phase 2）。GET /cash・/external-assets・/asset-overview。

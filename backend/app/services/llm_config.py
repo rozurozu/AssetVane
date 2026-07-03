@@ -20,7 +20,8 @@ from app.db import repo
 # engine が source として渡す面（ADR-058 確定3）。tagger は theme_tagger/news_polarity、
 # triage は知識カードの AI 審査（card_triage・ADR-062）が使う（低頻度・結果が重いので独立面）。
 # reviewer は経験蒸留（distill_experience・ADR-081）が使う（採点済み outcome→知識カード draft）。
-FACES: tuple[str, ...] = ("chat", "nightly", "dossier", "tagger", "triage", "reviewer")
+# profiler は投資家プロファイル蒸留（distill_investor_profile・ADR-082）が使う（台帳→傾向メモ）。
+FACES: tuple[str, ...] = ("chat", "nightly", "dossier", "tagger", "triage", "reviewer", "profiler")
 
 
 class FaceNotConfiguredError(RuntimeError):
