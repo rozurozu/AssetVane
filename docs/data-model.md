@@ -270,7 +270,7 @@ UNIQUE `(portfolio_id, isin)`。
 | `op_forecast_revision`/`profit_forecast_revision` | REAL | 会社予想 直近修正（進行中FY 予想の最新÷前−1＝＋上方/−下方。[ADR-063](decisions.md) #4・0029）|
 | `receivables_turnover_days`/`inventory_turnover_days` | REAL | 売掛/在庫の質＝DSO（受取債権/売上×365）・DIO（在庫/売上原価×365）。JP 源は edinetdb.jp（[ADR-064](decisions.md) #2・0031）|
 | `receivables_growth_yoy`/`inventory_growth_yoy` | REAL | 受取債権・棚卸資産 YoY（対売上の乖離＝押し込み/滞留の疑いは `revenue_growth_yoy` と突合して LLM が解釈。[ADR-064](decisions.md) #2・0031）|
-| `net_cash` | REAL | 清原式ネットキャッシュ（流動資産＋投資有価証券×0.7−総負債・BS 由来の絶対額・負値=実質ネット負債。JP も edinetdb.jp の `investment_securities` でフル式＝[ADR-079](decisions.md) 追補・欠落時のみ簡略式=保守側。0038）|
+| `net_cash` | REAL | 清原式ネットキャッシュ（流動資産＋投資有価証券×0.7−総負債・BS 由来の絶対額・負値=実質ネット負債。JP も edinetdb.jp の `investment_securities` でフル式＝[ADR-079](decisions.md) 追補・欠落時のみ簡略式=保守側。**焼き込みは全 JP 普通株**＝[ADR-083](decisions.md)〔初回は `/settings` の全銘柄取得ボタンで pro 一括・以降は開示があった銘柄だけ差分〕。0038）|
 | `fin_disclosed_date` | TEXT | 採用財務の開示日（監査） |
 | `updated_at` | TEXT | この行を焼いた時刻 ISO8601 |
 

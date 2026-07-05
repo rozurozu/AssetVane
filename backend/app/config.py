@@ -219,6 +219,9 @@ class Settings(BaseSettings):
     # 月の残予算がこの数を下回ったら当夜の #2 取得を打ち切る予備（
     # x-ratelimit-monthly-remaining 監視）。
     edinetdb_monthly_reserve: int = 50
+    # sec_code→edinet_code 全件スイープ（resolve_edinet_codes）を何日あけて回すか（ADR-083）。
+    # 新規上場は稀ゆえ月次で十分。full_backfill（初回ボタン）はこの cadence を無視する。
+    edinetdb_sweep_interval_days: int = 30
 
     @property
     def index_symbol_list(self) -> list[str]:

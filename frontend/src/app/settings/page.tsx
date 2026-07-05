@@ -7,8 +7,11 @@ import { Card } from "@/components/ui/Card";
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import {
   type BatchStatusResponse,
+  type EdinetdbConfig,
   type HealthResponse,
+  backfillNetCash,
   getBatchStatus,
+  getEdinetdbConfig,
   getHealth,
   runBatch,
   runEdinetDifferential,
@@ -42,6 +45,10 @@ function elapsedMin(startedAt: string | null): number | null {
 
 export default function SettingsPage() {
   const { data, error, loading } = useApi<HealthResponse>((signal) => getHealth(signal), []);
+
+  // EDINET DB プラン（全銘柄取得ボタンの free ガード表示・ADR-083）。未取得は free 扱い（安全側）。
+  const { data: edinetdbCfg } = useApi<EdinetdbConfig>((signal) => getEdinetdbConfig(signal), []);
+  const planIsFree = (edinetdbCfg?.plan ?? "free") === "free";
 
   // バッチ実行状態をポーリングして「実行中・今どのジョブ・経過」を映す（ADR-036）。
   // cron・/batch/run・CLI --nightly のどの口で走っていても同じ状態を見られる（ADR-011）。
@@ -124,6 +131,35 @@ export default function SettingsPage() {
       setEdinetNote(e instanceof Error ? e.message : String(e));
     } finally {
       setEdinetBusy(false);
+    }
+  }
+
+  // 清原式ネットキャッシュ 全銘柄取得（ADR-083）。全普通株の net_cash を pro で一括バックフィル。
+  // 進捗は上のバッチ状態ポーリングに相乗りで映る（同じ state・ADR-011/036）。
+  const [netCashBusy, setNetCashBusy] = useState(false);
+  const [netCashNote, setNetCashNote] = useState<string | null>(null);
+
+  async function onBackfillNetCash() {
+    // 数日かかる重い処理なので誤クリック防止に確認ダイアログを挟む（夜間フル取得と同じ流儀）。
+    if (
+      !window.confirm(
+        "清原式ネットキャッシュの全銘柄取得を始めるのだ。数日かけて全上場銘柄を焼くのだ。実行していい？",
+      )
+    ) {
+      return;
+    }
+    setNetCashBusy(true);
+    setNetCashNote(null);
+    try {
+      await backfillNetCash();
+      setNetCashNote(
+        "全銘柄取得を起動したのだ。日次予算まで焼いて中断し、翌日以降 or 夜間の差分運転が続きを焼くのだ。下の進捗で追えるのだ。",
+      );
+    } catch (e) {
+      // free プラン/未設定（400）・実行中（409）も ApiError の message で拾って表示する。
+      setNetCashNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setNetCashBusy(false);
     }
   }
 
@@ -276,6 +312,32 @@ export default function SettingsPage() {
             {edinetBusy ? "起動中…" : "EDINET 差分を今すぐ実行"}
           </button>
           {edinetNote && <p className="mt-2 text-[12px] text-ink-muted">{edinetNote}</p>}
+        </Card>
+
+        {/* 清原式ネットキャッシュ 全銘柄取得（ADR-083）。全普通株の net_cash を pro で一括バックフィル。 */}
+        <Card title="清原式ネットキャッシュ 全銘柄取得">
+          <p className="mb-2 text-[12px] text-ink-muted">
+            低 PER×小型×ネットキャッシュ比率≥1
+            の割安株を発掘するため、全上場普通株のネットキャッシュ
+            （流動資産＋投資有価証券×0.7−総負債）を edinetdb.jp から一括で焼く。
+            <strong className="text-ink">free プランでは実行できない</strong>
+            （日100/月600 では全 4000 銘柄を焼き切れない）。初回だけ pro
+            で実行すれば、以降は決算開示があった銘柄だけ差分取得されるのだ。
+          </p>
+          <button
+            type="button"
+            onClick={onBackfillNetCash}
+            disabled={netCashBusy || running || planIsFree}
+            className="rounded-md border border-hairline bg-surface-2 px-3 py-1.5 text-[13px] font-medium hover:bg-surface-3 disabled:opacity-50"
+          >
+            {netCashBusy ? "起動中…" : "全銘柄取得を今すぐ実行"}
+          </button>
+          {planIsFree && (
+            <p className="mt-2 text-[12px] text-ink-subtle">
+              現在 free プランなのだ。上の「EDINET DB 設定」で pro に切り替えると実行できるのだ。
+            </p>
+          )}
+          {netCashNote && <p className="mt-2 text-[12px] text-ink-muted">{netCashNote}</p>}
         </Card>
 
         {/* Discord 疎通テスト（冪等回避＝毎回飛ぶ・ADR-011） */}

@@ -36,6 +36,7 @@ from app.batch.jobs import (
     investigate_dossier,
     notify_cost_warn,
     notify_digest,
+    resolve_edinet_codes,
     run_advisor,
     score_ai_alpha,
     score_proposal_outcomes,
@@ -53,9 +54,14 @@ NIGHTLY_JOBS = [
     fetch_index.run,
     fetch_financials.run,
     calc_valuation.run,  # ADR-031: 財務取得後に全銘柄のバリュエーションを焼く（screen の土台）
-    # ADR-064 #2: 売掛/在庫の質を watchlist/holdings に焼く。calc_valuation が as_of_date 込みで
-    # 行を作った直後に置き、その既存行へ edinetdb.jp 由来の DSO/DIO・受取債権/在庫 YoY を UPDATE
-    # する（行が無ければ no-op）。cadence＋月予算ガードで edinetdb の無料枠（日100/月600）を守る。
+    # ADR-083: sec_code→edinet_code の全件スイープ。calc_receivables_inventory の直前に置き、
+    # 焼き込み対象の edinet_code を先に解決する。月次 cadence（edinetdb_sweep_interval_days）で
+    # 毎晩は skip し、実際にスイープするのは月 1 回（新規上場は稀・レート予算節約）。
+    resolve_edinet_codes.run,
+    # ADR-064 #2 ＋ ADR-079/083: JP 普通株の全ユニバースに売掛/在庫の質＋清原式 net_cash を焼く。
+    # calc_valuation が as_of_date 込みで行を作った直後に置き、その既存行へ edinetdb.jp 由来の
+    # DSO/DIO・受取債権/在庫 YoY・net_cash を UPDATE する（行が無ければ no-op）。定常は「初回 or
+    # 新規開示」だけ焼き、cadence＋月予算ガードで edinetdb の予算（free 日100/月600）を守る。
     calc_receivables_inventory.run,
     calc_signals.run,
     # Phase 7: 日米業種リードラグを焼く。calc_signals の後・run_advisor の前に置き、夜の分析AI が

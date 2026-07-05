@@ -1,8 +1,9 @@
-"""calc_receivables_inventory（JP #2 売掛/在庫の質）ジョブの担保（ADR-064・ADR-018）。
+"""calc_receivables_inventory（#2 売掛/在庫＋清原式 net_cash）の担保（ADR-064/079/083）。
 
 未設定なら静かに skip（ok=True）・設定済みなら edinetdb.jp の財務（fake 注入）から既存
-valuation_snapshots 行へ #2 列を UPDATE する・cadence（fetch_meta）で再取得を抑える、を固定する。
-ネットに出ず一時 SQLite で回す（testing-strategy）。
+valuation_snapshots 行へ #2 列＋net_cash を UPDATE する・cadence（fetch_meta）で再取得を抑える・
+母集団は全普通株で full_backfill は watchlist 外の net_cash NULL も焼く（ADR-083）・選別純関数
+（初回一括／開示差分）を固定する。ネットに出ず一時 SQLite で回す（testing-strategy）。
 """
 
 from __future__ import annotations
@@ -114,3 +115,86 @@ def test_cadence_skips_recently_fetched(temp_db, monkeypatch) -> None:
     assert result.ok is True
     assert result.rows == 0
     assert fake.resolved == []  # cadence skip ＝ resolve も呼ばれない
+
+
+# 清原式ネットキャッシュの full BS 行（JP 簡略式: current − total = 8000 − 3000 = 5000・ADR-079）
+_FULL_BS_FINS = [
+    {
+        "fiscal_year": 2025,
+        "disclosed_date": "2025-06-18",
+        "receivables": 150.0,
+        "inventory": 260.0,
+        "revenue": 1100.0,
+        "gross_profit": 330.0,
+        "cost_of_sales": None,
+        "current_assets": 8000.0,
+        "total_liabilities": 3000.0,
+        "cash": 500.0,
+    },
+]
+
+
+def test_select_targets_full_backfill_picks_missing_net_cash() -> None:
+    """初回一括: net_cash NULL かつ cadence 外だけを対象にする純関数（ADR-083）。"""
+    targets = calc_receivables_inventory._select_targets(
+        ["1", "2", "3", "4"],
+        full_backfill=True,
+        net_cash_missing={"1", "2", "3"},  # 4 は焼済み（NULL でない）
+        last_fetched={"2": "2026-07-01"},  # 2 は interval_days=7 内で最近焼いた
+        disclosed={},
+        today="2026-07-05",
+        interval_days=7,
+    )
+    # 1: NULL・未取得→焼く / 2: NULL だが cadence 内→skip / 3: NULL・未取得→焼く / 4: 焼済み→skip
+    assert targets == ["1", "3"]
+
+
+def test_select_targets_differential_new_disclosure_only() -> None:
+    """定常: 初回（未取得）か 新規開示（disclosed > 前回焼き）だけを対象にする純関数（ADR-083）。"""
+    targets = calc_receivables_inventory._select_targets(
+        ["1", "2", "3"],
+        full_backfill=False,
+        net_cash_missing=set(),
+        last_fetched={"1": "2026-06-01", "2": "2026-06-01"},  # 3 は未取得
+        disclosed={"1": "2026-06-20", "2": "2026-05-01"},  # 1 は新規開示・2 は前回焼きより古い
+        today="2026-07-05",
+        interval_days=7,
+    )
+    # 1: 開示>前回焼き→焼く / 2: 開示<前回焼き→skip / 3: 初回（未取得）→焼く
+    assert targets == ["1", "3"]
+
+
+def test_full_backfill_burns_universe_missing_net_cash(temp_db, monkeypatch) -> None:
+    """full_backfill=True は watchlist 外でも net_cash NULL の全普通株を焼く（ADR-083）。"""
+    with get_engine().begin() as conn:
+        repo.upsert_edinetdb_config(conn, {"api_key": "edb_test", "plan": "pro"})
+    _seed_stock_with_snapshot("61980")  # watchlist にも holdings にも入れない発掘対象
+    fake = _FakeAdapter(_FULL_BS_FINS)
+    monkeypatch.setattr(calc_receivables_inventory, "build_edinetdb_adapter", lambda conn: fake)
+
+    result = calc_receivables_inventory.run(full_backfill=True)
+    assert result.ok is True
+    assert result.rows == 1
+
+    with get_engine().connect() as conn:
+        snap = repo.get_valuation_snapshot(conn, "61980")
+    assert snap is not None
+    assert snap["net_cash"] == 5000.0  # 全ユニバース化で watchlist 外でも焼けた（ADR-083）
+
+
+def test_differential_skips_already_burned_without_new_disclosure(temp_db, monkeypatch) -> None:
+    """定常: 既に net_cash が焼けていて新規開示も無い銘柄は再取得しない（予算節約・ADR-083）。"""
+    with get_engine().begin() as conn:
+        repo.upsert_edinetdb_config(conn, {"api_key": "edb_test", "plan": "pro"})
+    _seed_stock_with_snapshot("61980")
+    # 既に焼けている状態を作る（net_cash NOT NULL・fetch_meta あり・開示は前回焼きより古い）
+    with get_engine().begin() as conn:
+        repo.update_valuation_receivables_inventory(conn, "61980", {"net_cash": 5000.0})
+    repo.upsert_fetch_meta("edinetdb_quality:61980", "2026-07-01")
+    fake = _FakeAdapter(_FULL_BS_FINS)
+    monkeypatch.setattr(calc_receivables_inventory, "build_edinetdb_adapter", lambda conn: fake)
+
+    result = calc_receivables_inventory.run()  # 定常（full_backfill=False）
+    assert result.ok is True
+    assert result.rows == 0
+    assert fake.resolved == []  # 開示差分なし＝叩かない

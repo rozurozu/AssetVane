@@ -21,6 +21,14 @@ export function runEdinetDifferential(): Promise<BatchRunResponse> {
   return postJSON<BatchRunResponse>("/edinet/run-differential", {});
 }
 
+/** 清原式ネットキャッシュの全銘柄バックフィルを手動起動（ADR-083・POST /valuation/backfill-net-cash）。
+ * sec_code→edinet_code の全件スイープ → 全普通株の net_cash 焼き込みを full_backfill=true で run_jobs に
+ * 回す。進捗は getBatchStatus で追う（夜間と同じ state・ADR-011/036）。free プラン/未設定は backend が
+ * 400、既に実行中なら 409（いずれも ApiError の detail）。以降の更新は夜間の差分運転で自動（ADR-083）。 */
+export function backfillNetCash(): Promise<BatchRunResponse> {
+  return postJSON<BatchRunResponse>("/valuation/backfill-net-cash", {});
+}
+
 /** バッチ実行状態（GET /batch/status・batch.py・ADR-036）。batch.state と 1:1。 */
 export type BatchStatusResponse = {
   running: boolean;

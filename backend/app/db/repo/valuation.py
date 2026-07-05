@@ -500,3 +500,14 @@ def update_valuation_receivables_inventory(
         update(valuation_snapshots).where(valuation_snapshots.c.code == code).values(**values)
     )
     return res.rowcount or 0
+
+
+def list_codes_missing_net_cash(conn: Connection) -> set[str]:
+    """net_cash が未焼き（NULL）の銘柄コード集合を返す（初回バックフィルの対象選定・ADR-083）。
+
+    valuation_snapshots は code 1 行（最新のみ・ADR-031）。net_cash IS NULL＝清原式の焼き込みが
+    まだ通っていない行（ADR-079 追加前に焼かれた行や未処理の新規上場を含む）。全銘柄バックフィル
+    （full_backfill）はこの集合を cadence 外で優先的に焼く（ADR-083）。set で O(1) 突合。
+    """
+    stmt = select(valuation_snapshots.c.code).where(valuation_snapshots.c.net_cash.is_(None))
+    return set(conn.execute(stmt).scalars().all())

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import Connection
 
 from app.batch import lock, run_jobs, run_nightly, state
+from app.db.engine import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +113,50 @@ def run_edinet_differential(background: BackgroundTasks) -> BatchRunResponse:
         run_jobs,
         [fetch_edinet_descriptions.run, tag_jp_themes.run],
         label="EDINET 差分タグ付け",
+    )
+    return BatchRunResponse(started=True, job_id=None)
+
+
+@router.post("/valuation/backfill-net-cash", response_model=BatchRunResponse, status_code=202)
+def backfill_net_cash(
+    background: BackgroundTasks, conn: Connection = Depends(get_conn)
+) -> BatchRunResponse:
+    """清原式ネットキャッシュの全銘柄バックフィルを非同期で起動し 202 を返す（ADR-083）。
+
+    /settings の「全銘柄取得ボタン」からのオンデマンド起動口。sec_code→edinet_code の全件スイープ
+    （resolve_edinet_codes）→ 全普通株の net_cash 焼き込み（calc_receivables_inventory）を
+    full_backfill=True で run_jobs に回す（ADR-011「1つの脳・2つの起動口」＝run_nightly と同じ
+    lock/state/通知を共有）。full_backfill はソフトキャップを日次予算まで上げ、net_cash 未焼き
+    （NULL）を数日で埋める。1 回で日次予算まで焼いて中断し、翌日以降 or 夜間の差分運転が続きを焼く。
+
+    **free では拒否**（日100/月600 で全4000銘柄を焼き切れず非現実的＝ADR-083）。未設定も拒否。
+    起動前に flock を非ブロッキングで試し、取れなければ既に実行中なので 409（run_batch 同型）。
+    """
+    from app.batch.jobs import calc_receivables_inventory, resolve_edinet_codes
+    from app.services.edinetdb_config import current_plan, resolve_edinetdb_config
+
+    if resolve_edinetdb_config(conn) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="EDINET DB が未設定です。/settings の「EDINET DB 設定」で登録してください。",
+        )
+    if current_plan(conn) == "free":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "全銘柄取得は pro プランが必要です（free の日100/月600 では全銘柄を焼けません）。"
+                "/settings の「EDINET DB 設定」で pro に切り替えて実行してください。以降の更新は "
+                "free でも決算開示があった銘柄だけ差分取得されます。"
+            ),
+        )
+
+    _reject_if_running()  # run_batch 同型の受付ゲート（#20）
+    background.add_task(
+        _guard_concurrent_start,
+        run_jobs,
+        [resolve_edinet_codes.run, calc_receivables_inventory.run],
+        label="清原式ネットキャッシュ 全銘柄取得",
+        full_backfill=True,
     )
     return BatchRunResponse(started=True, job_id=None)
 

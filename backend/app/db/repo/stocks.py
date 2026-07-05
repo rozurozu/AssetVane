@@ -166,6 +166,23 @@ def get_fetch_meta(conn: Connection, source: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def get_fetch_metas_by_prefix(conn: Connection, prefix: str) -> dict[str, str]:
+    """`prefix` で始まる fetch_meta を {code: last_fetched_date} で一括で返す（ADR-083）。
+
+    per-code カーソル（例 "edinetdb_quality:72030"）を全銘柄ぶん 1 クエリで引く下ごしらえ（ADR-016・
+    ループ内 N クエリを避ける）。last_fetched_date が NULL の行は含めない（未取得＝呼び出し側で
+    「初回」扱い）。キーは source から prefix を除いた残り（＝銘柄コード）。
+    """
+    stmt = select(fetch_meta.c.source, fetch_meta.c.last_fetched_date).where(
+        fetch_meta.c.source.like(f"{prefix}%")
+    )
+    out: dict[str, str] = {}
+    for source, last in conn.execute(stmt).all():
+        if last is not None:
+            out[source[len(prefix) :]] = last
+    return out
+
+
 def get_max_quote_date(conn: Connection) -> str | None:
     """SELECT MAX(date) FROM daily_quotes（spec §3.2）。
 
@@ -194,6 +211,19 @@ def list_jp_universe_codes(conn: Connection) -> set[str]:
 def get_max_financial_disclosed_date(conn: Connection) -> str | None:
     """SELECT MAX(disclosed_date) FROM financials（fetch_financials の自己修復用・ADR-031）。"""
     return conn.execute(select(func.max(financials.c.disclosed_date))).scalar()
+
+
+def get_max_disclosed_date_by_code(conn: Connection) -> dict[str, str]:
+    """{code: MAX(disclosed_date)} を financials から集計して返す（開示差分の下ごしらえ）。
+
+    定常運転で「前回焼いた日より新しい開示がある銘柄だけ再取得」を判定するための一括読み（ADR-016）。
+    disclosed_date は 'YYYY-MM-DD'（文字列比較で時系列順＝fetch_meta の last_fetched_date と同型）。
+    財務行が無い銘柄は dict に含めない（呼び出し側で「開示なし」扱い）。
+    """
+    stmt = select(financials.c.code, func.max(financials.c.disclosed_date)).group_by(
+        financials.c.code
+    )
+    return {code: d for code, d in conn.execute(stmt).all() if d is not None}
 
 
 # --- signals（シグナル事前計算・Phase 1・spec §3.2・ADR-002・ADR-026） ---
