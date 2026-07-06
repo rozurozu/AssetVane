@@ -177,6 +177,29 @@ def _extract_trade_proposals(tool_runs: list[dict[str, Any]]) -> list[dict[str, 
     return out
 
 
+# 確信度の canonical 集合と別名（日本語 高/中/低・大小文字・mid 揺れを吸収＝ADR-084）。
+_CONVICTION_ALIASES: dict[str, str] = {
+    "high": "high",
+    "medium": "medium",
+    "mid": "medium",
+    "low": "low",
+    "高": "high",
+    "中": "medium",
+    "低": "low",
+}
+
+
+def _normalize_conviction(raw: object) -> str | None:
+    """確信度の自由入力を canonical 'high'/'medium'/'low' に正規化する（ADR-084）。
+
+    CORE 要素⑤は AI に「高/中/低」で述べさせるが、Tool 引数の揺れ（日本語・大文字・mid 等）を
+    吸収して canonical に寄せ、未知/空は None に倒す（メタ不備で提案を drop しない＝ADR-018）。
+    """
+    if not isinstance(raw, str):
+        return None
+    return _CONVICTION_ALIASES.get(raw.strip().lower())
+
+
 def persist_trade_proposals_from_tool_runs(
     conn: Connection,
     *,
@@ -221,10 +244,21 @@ def persist_trade_proposals_from_tool_runs(
             )
             continue
 
-        body = json.dumps(
-            {"code": args.code, "company_name": target["company_name"], "market": target["market"]},
-            ensure_ascii=False,
-        )
+        # body は kind 依存 JSON（buy/sell）。code/company_name/market に加え、判断属性（ADR-084）を
+        # 揃ったものだけ載せる（無い提案は従来どおり最小の 3 キー＝後方互換）。conviction は正規化。
+        payload: dict[str, Any] = {
+            "code": args.code,
+            "company_name": target["company_name"],
+            "market": target["market"],
+        }
+        conviction = _normalize_conviction(args.conviction)
+        if conviction is not None:
+            payload["conviction"] = conviction
+        if args.invalidation and args.invalidation.strip():
+            payload["invalidation"] = args.invalidation.strip()
+        if args.catalyst and args.catalyst.strip():
+            payload["catalyst"] = args.catalyst.strip()
+        body = json.dumps(payload, ensure_ascii=False)
         proposal_id = repo.insert_proposal(
             conn,
             created_date=date,

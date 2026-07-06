@@ -204,6 +204,52 @@ def test_persist_rejected_allows_repropose(temp_db: None) -> None:
         assert len(repo.list_proposals(conn)) == 2
 
 
+def test_persist_captures_conviction_and_judgment_attrs(temp_db: None) -> None:
+    """ADR-084: propose_trade の conviction/invalidation/catalyst が body に構造化して載る。
+
+    conviction は persist が正規化する（日本語 高→high）。invalidation/catalyst は自由文字列で温存。
+    """
+    _seed_stocks()
+    run = {
+        "name": "propose_trade",
+        "args": {
+            "action": "buy",
+            "code": "72030",
+            "reason": "上方修正",
+            "conviction": "高",
+            "invalidation": "来期ガイダンスが下方修正されたら撤回",
+            "catalyst": "第2四半期決算",
+        },
+    }
+    with get_engine().begin() as conn:
+        ids = journaling.persist_trade_proposals_from_tool_runs(
+            conn, tool_runs=[run], date="2026-07-06"
+        )
+    assert len(ids) == 1
+    with get_engine().connect() as conn:
+        body = json.loads(repo.list_proposals(conn)[0]["body"])
+    assert body["conviction"] == "high"  # 高→high に正規化
+    assert body["invalidation"] == "来期ガイダンスが下方修正されたら撤回"
+    assert body["catalyst"] == "第2四半期決算"
+
+
+def test_persist_unknown_conviction_keeps_trade_without_conviction(temp_db: None) -> None:
+    """ADR-084/018: 不明な conviction は捨てるが提案は起票する（drop しない）。"""
+    _seed_stocks()
+    run = {
+        "name": "propose_trade",
+        "args": {"action": "buy", "code": "72030", "reason": "材料", "conviction": "とても高い"},
+    }
+    with get_engine().begin() as conn:
+        ids = journaling.persist_trade_proposals_from_tool_runs(
+            conn, tool_runs=[run], date="2026-07-06"
+        )
+    assert len(ids) == 1  # 起票される（提案は失わない）
+    with get_engine().connect() as conn:
+        body = json.loads(repo.list_proposals(conn)[0]["body"])
+    assert "conviction" not in body  # 不明値は載せない（採点で NULL バケットに落ちる）
+
+
 def test_persist_links_journal_id(temp_db: None) -> None:
     _seed_stocks()
     with get_engine().begin() as conn:

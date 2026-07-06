@@ -938,6 +938,9 @@ proposal_outcomes = Table(
         "source", String, nullable=False
     ),  # 'nightly'/'chat'（proposal は journal 由来・NULL→chat）
     Column("kind", String, nullable=False),  # 'buy'/'sell'/'notable'（notable は非方向＝hit なし）
+    # 提案時の確信度 'high'/'medium'/'low'（body から非正規化・notable/legacy は NULL＝ADR-084）。
+    # CHECK は張らない（kind/source/status 同様アプリ層で正規化＝house style・news.polarity 前例）。
+    Column("conviction", String),
     Column("code", String, nullable=False),  # JP 5 桁 / US ティッカー
     Column("market", String, nullable=False),  # 'JP'/'US'（notable は常に JP）
     Column(

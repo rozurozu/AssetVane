@@ -138,6 +138,8 @@ REGISTRY: dict[str, ToolDef] = {
             "『自分の提案は当たっているか』と問われたときに呼ぶ。source(nightly/chat)・"
             "kind(buy/sell/notable)・horizon(20/60 営業日) で絞れる。実 P/L ではなく提案日終値"
             "起点の提示ベース評価で、notable は非方向のためリターンのみ（hit なし）。"
+            "併せて calibration（確信度別の的中率）も返る。"
+            "『高確信』ほど当たっているかを確認し確信度を較正する（ADR-084）。"
         ),
         parameters=_schema(GetTrackRecordArgs),
         handler=handlers.handle_get_track_record,
@@ -337,8 +339,10 @@ REGISTRY: dict[str, ToolDef] = {
             "get_news_context などで根拠（3 層の文脈）を掴んだうえで、明確な買い/売り材料が"
             "あるときだけ呼ぶ（無ければ呼ばなくてよい・毎回出さない）。"
             "渡すのは方向（action=buy/sell）・銘柄（code＝JP 5 桁または US ティッカー）・根拠"
-            "（reason）だけ。株数・金額・目標価格などの数値は出さない（サイズは別途最適化に委ねる"
-            "＝ADR-014）。承認しても発注はしない（ユーザーが手動約定）。"
+            "（reason）に加え、分かれば確信度（conviction=high/medium/low）・前提崩れ条件"
+            "（invalidation）・catalyst も併せて渡す（要素⑤の判断を構造化して残す＝ADR-084）。"
+            "株数・金額・目標価格などの数値は出さない（サイズは別途最適化に委ねる＝ADR-014）。"
+            "承認しても発注はしない（ユーザーが手動約定）。"
         ),
         parameters=_schema(ProposeTradeArgs),
         handler=handlers.handle_propose_trade,

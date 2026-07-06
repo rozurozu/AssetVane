@@ -123,8 +123,11 @@ def format_material_for_prompt(material: dict[str, Any]) -> str:
             if len(rationale) > 120:
                 rationale = rationale[:120] + "…"
             head = f"根拠『{rationale}』" if rationale else "根拠なし"
+            # 確信度を bookend に添える（ADR-084・「高確信なのに外した」を reviewer が蒸留できる）。
+            conv = o.get("conviction")
+            conv_txt = f" 確信度={conv}" if conv else ""
             lines.append(
-                f"- [{o['source']}/{o['kind']} {o['horizon']}営業日] {name}({o['code']})"
+                f"- [{o['source']}/{o['kind']} {o['horizon']}営業日{conv_txt}] {name}({o['code']})"
                 f" 起点{o['entry_date']} {head}"
                 f" → 実現{_pct(o.get('realized_return'))} 超過{_pct(o.get('excess_return'))}"
                 f" 的中={_hit_mark(o.get('hit'))}"

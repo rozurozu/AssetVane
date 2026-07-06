@@ -88,6 +88,11 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
         news_uniques = {u["name"] for u in inspect(conn).get_unique_constraints("news")}
         assert "uq_news_url" in news_uniques, "news に url UNIQUE が無い（0013 未適用）"
 
+        # ADR-084（0040）: 確信度キャリブレーションの非正規化列。alembic 経路でも
+        # conviction 列が付くことを固定する（create_schema とのドリフト検知＝本テストの主旨）。
+        po_cols = {c["name"] for c in inspect(conn).get_columns("proposal_outcomes")}
+        assert "conviction" in po_cols, "proposal_outcomes.conviction が無い（0040 未適用）"
+
         # notifications は Phase 6（0010_notifications）で追加。(notify_key, channel) 複合 PK。
         notif_pk = {
             c for c in inspect(conn).get_pk_constraint("notifications")["constrained_columns"]

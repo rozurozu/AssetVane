@@ -50,12 +50,39 @@ function bodySummary(body: unknown, kind: Proposal["kind"]): string | null {
   }
 }
 
+// buy/sell の body に載る判断属性（ADR-084）。承認者が確信度・前提崩れ条件を見て判断できるよう表示。
+type Judgment = { conviction?: string; invalidation?: string; catalyst?: string };
+function bodyJudgment(body: unknown, kind: Proposal["kind"]): Judgment {
+  if ((kind === "buy" || kind === "sell") && body != null && typeof body === "object") {
+    const b = body as Judgment;
+    return {
+      conviction: typeof b.conviction === "string" ? b.conviction : undefined,
+      invalidation: typeof b.invalidation === "string" ? b.invalidation : undefined,
+      catalyst: typeof b.catalyst === "string" ? b.catalyst : undefined,
+    };
+  }
+  return {};
+}
+
+// 確信度バッジ（good/bad ではなく確からしさなので up/down は使わず accent/中立トークンで表す）。
+const CONVICTION_LABEL: Record<string, string> = {
+  high: "確信度 高",
+  medium: "確信度 中",
+  low: "確信度 低",
+};
+const CONVICTION_CLS: Record<string, string> = {
+  high: "bg-accent-weak text-accent",
+  medium: "bg-surface-2 text-ink-muted",
+  low: "bg-surface-2 text-ink-subtle",
+};
+
 export function ProposalCard({ proposal, dependencyMet, busy, onApprove, onReject }: Props) {
   const p = proposal;
   const isPending = p.status === "pending";
   // 依存提案が未承認なら承認できない（承認順制御・決定4）。
   const approveDisabled = busy || !dependencyMet;
   const body = bodySummary(p.body, p.kind);
+  const j = bodyJudgment(p.body, p.kind);
 
   return (
     <div className="rounded-lg border border-hairline bg-surface-1 p-3">
@@ -64,6 +91,15 @@ export function ProposalCard({ proposal, dependencyMet, busy, onApprove, onRejec
           {KIND_LABEL[p.kind]}
         </span>
         {body && <span className="font-semibold text-[13px]">{body}</span>}
+        {j.conviction && CONVICTION_LABEL[j.conviction] && (
+          <span
+            className={`rounded-sm px-1.5 py-0.5 font-medium text-[11px] ${
+              CONVICTION_CLS[j.conviction] ?? "bg-surface-2 text-ink-subtle"
+            }`}
+          >
+            {CONVICTION_LABEL[j.conviction]}
+          </span>
+        )}
         <span className="num ml-auto text-[11px] text-ink-subtle">
           #{p.id} ・ {p.created_date}
         </span>
@@ -71,6 +107,14 @@ export function ProposalCard({ proposal, dependencyMet, busy, onApprove, onRejec
 
       {p.rationale && (
         <div className="my-1.5 text-[13px] text-ink-muted leading-[1.45]">{p.rationale}</div>
+      )}
+
+      {/* 判断属性（ADR-084）＝AI が示した catalyst・前提崩れ条件を承認判断の材料に見せる。 */}
+      {(j.catalyst || j.invalidation) && (
+        <div className="mb-1.5 space-y-0.5 text-[11px] text-ink-subtle leading-[1.4]">
+          {j.catalyst && <div>catalyst: {j.catalyst}</div>}
+          {j.invalidation && <div>前提崩れ: {j.invalidation}</div>}
+        </div>
       )}
 
       {/* 依存注記（承認順制御）。 */}

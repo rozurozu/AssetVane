@@ -161,6 +161,50 @@ def aggregate_track_record(
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
+def aggregate_calibration(conn: Connection) -> list[dict[str, Any]]:
+    """確信度キャリブレーションを kind×conviction×horizon で集計する（ADR-084・確信度較正）。
+
+    directional な buy/sell だけ（notable は非方向＝hit が無い）・conviction を申告した final のみ
+    を対象に、count／hit_rate(AVG hit)／平均超過/実現リターンを返す。AI が「高確信ほど当たって
+    いるか（キャリブレーションのズレ）」を横並びで確認する材料（get_track_record が calibration
+    として返す）。source/kind/horizon では絞らない（全母集団の比較が目的）。集約は
+    type_coerce(Float()) で Float 化し Decimal を LLM/MCP 境界に流さない（backend-repo-pattern）。
+    """
+    stmt = (
+        select(
+            proposal_outcomes.c.kind,
+            proposal_outcomes.c.conviction,
+            proposal_outcomes.c.horizon,
+            func.count().label("count"),
+            type_coerce(func.avg(proposal_outcomes.c.hit), Float()).label("hit_rate"),
+            type_coerce(func.avg(proposal_outcomes.c.realized_return), Float()).label(
+                "avg_realized_return"
+            ),
+            type_coerce(func.avg(proposal_outcomes.c.excess_return), Float()).label(
+                "avg_excess_return"
+            ),
+        )
+        .where(
+            and_(
+                proposal_outcomes.c.status == "final",
+                proposal_outcomes.c.kind.in_(["buy", "sell"]),
+                proposal_outcomes.c.conviction.isnot(None),
+            )
+        )
+        .group_by(
+            proposal_outcomes.c.kind,
+            proposal_outcomes.c.conviction,
+            proposal_outcomes.c.horizon,
+        )
+        .order_by(
+            proposal_outcomes.c.kind,
+            proposal_outcomes.c.conviction,
+            proposal_outcomes.c.horizon,
+        )
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
 def list_recent_final_outcomes(
     conn: Connection,
     *,
@@ -267,6 +311,7 @@ def list_new_final_outcomes(
             proposal_outcomes.c.origin_id,
             proposal_outcomes.c.source,
             proposal_outcomes.c.kind,
+            proposal_outcomes.c.conviction,  # 確信度を教材へ（ADR-084・reviewer が較正を蒸留）
             proposal_outcomes.c.code,
             company_name,
             proposal_outcomes.c.market,

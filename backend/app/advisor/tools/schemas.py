@@ -457,16 +457,31 @@ def coerce_policy_change(raw: object) -> dict[str, object] | None:
 
 
 class ProposeTradeArgs(_ToolArgs):
-    """propose_trade の引数（ADR-052・ニュース起点の売買アイデア起票）。
+    """propose_trade の引数（ADR-052・ニュース起点の売買アイデア起票／ADR-084・判断属性の構造化）。
 
-    提示専用（ADR-009）。方向（action）と銘柄（code）と根拠（reason）だけを受け、株数・金額・
-    目標価格などの数値は持たない（数値は AI に計算させない＝ADR-014）。code は JP 5 桁または
-    US ティッカー。受理側（persist）が stocks→us_stocks で解決し、未知コードは起票しない。
+    提示専用（ADR-009）。方向（action）と銘柄（code）と根拠（reason）に加え、CORE 要素⑤が
+    述べさせる判断属性（確信度・invalidation・catalyst）を任意で構造化して受け取り、散文に
+    埋もれさせず永続する（ADR-084）。株数・金額・目標価格などの数値は持たない（数値は AI に
+    計算させない＝ADR-014）。code は JP 5 桁または US ティッカー。受理側（persist）が
+    stocks→us_stocks で解決し、未知コードは起票しない。conviction は persist が正規化し、
+    不明値は None に倒す（メタ不備で提案を drop しない＝ADR-018）。
     """
 
     action: Literal["buy", "sell"] = Field(description="売買の方向（buy=買い / sell=売り）。")
     code: str = Field(description="JP は 5 桁コード（例 72030）、US はティッカー（例 AAPL）。")
     reason: str = Field(description="ニュース起点の根拠（なぜ買い/売りかの説明・数値は含めない）。")
+    conviction: str | None = Field(
+        default=None,
+        description="確信度（high/medium/low。日本語の 高/中/低 も可）。分からなければ省略可。",
+    )
+    invalidation: str | None = Field(
+        default=None,
+        description="前提が崩れたら見立てを変える条件（invalidation）を 1 つ。数値は含めない。",
+    )
+    catalyst: str | None = Field(
+        default=None,
+        description="論点が動くきっかけ（catalyst：決算・ガイダンス・政策・需給 等）の名指し。",
+    )
 
 
 class ProposeProfileNoteArgs(_ToolArgs):
