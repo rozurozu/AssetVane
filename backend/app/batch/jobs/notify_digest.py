@@ -28,6 +28,7 @@ from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
+from app.ml import model_store
 from app.services.notable import build_notable_candidates
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,21 @@ def _failed_index_line(conn: Connection) -> str | None:
     if not failed:
         return None
     return f"📉 取得できなかった指数: {', '.join(failed)}"
+
+
+def _ai_alpha_status_line() -> str | None:
+    """AI Alpha Scorer の学習モデル未配置を 1 行で知らせる情報行（ADR-006/066）。
+
+    `<kind>-latest.json` が無い＝まだ別 PC で学習・rsync していない状態。score_ai_alpha 自体は
+    ok=True で skip し runner の失敗通知（ADR-018 の偽アラート）は鳴らさないが、それだと毎晩沈黙で
+    「未配置」に気づけない（利用者要望）。失敗にはせず digest の情報行として毎朝可視化する
+    （failed_index 同型・DB を触らずファイル存在チェックのみ）。配置済みなら None（＝pkl を置けば
+    自動で消える）。情報行なので has_content には含めない（未配置だけの夜に digest を新規発火
+    させない＝reviewer/profile 下書き・取得失敗指数と同じ扱い）。
+    """
+    if model_store.is_configured("ai_alpha"):
+        return None
+    return "🤖 AI決算スコア: 学習モデル未配置（pkl 無し）でスキップ"
 
 
 def _holding_risk_lines(conn: Connection) -> list[str]:
@@ -192,6 +208,10 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
     # digest を新規発火させない＝静けさ維持。毎朝送信時はその本文に乗る）。
     failed_index = _failed_index_line(conn)
 
+    # AI Alpha モデル未配置の情報行（非アラート・ADR-066）。failed_index と同じく has_content に
+    # 含めない（未配置だけの夜に digest を新規発火させない）。配置済みなら None。
+    ai_alpha_status = _ai_alpha_status_line()
+
     # 夜AI 当日提案（Phase 3 生成済み文を引用・ADR-014）。
     journal = repo.get_journal_for_date(conn, today)
     proposal = (journal or {}).get("proposal")
@@ -250,6 +270,10 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
 
     if failed_index:
         lines.append(failed_index)
+        lines.append("")
+
+    if ai_alpha_status:
+        lines.append(ai_alpha_status)
         lines.append("")
 
     # 当日サマリ（検知ゼロでも届く＝完了条件・ADR-067 の極薄サマリ）。

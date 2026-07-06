@@ -223,6 +223,51 @@ def test_build_digest_no_failed_line_when_all_ok(
 
 
 # ---------------------------------------------------------------------------
+# ADR-066: AI Alpha Scorer のモデル未配置を情報行で可視化（沈黙にしない・failed_index 同型）
+# ---------------------------------------------------------------------------
+
+
+def test_build_digest_includes_ai_alpha_unconfigured_line(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """AI Alpha モデル未配置（pkl 無し）なら digest に情報行が出る（沈黙にしない・ADR-066）。"""
+    monkeypatch.setattr(notify_digest.model_store, "is_configured", lambda *a, **k: False)
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+
+    assert content is not None
+    assert "AI決算スコア" in content
+    assert "モデル未配置" in content
+
+
+def test_build_digest_no_ai_alpha_line_when_configured(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """モデル配置済みなら情報行は出ない（pkl を置けば自動で消える・ADR-066）。"""
+    monkeypatch.setattr(notify_digest.model_store, "is_configured", lambda *a, **k: True)
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+
+    assert content is not None
+    assert "AI決算スコア" not in content
+
+
+def test_build_digest_ai_alpha_line_not_in_has_content(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """AI Alpha 情報行は has_content に含めない（未配置だけの夜は digest を新規発火させない）。"""
+    monkeypatch.setattr(settings, "always_daily_digest", False)
+    monkeypatch.setattr(notify_digest.model_store, "is_configured", lambda *a, **k: False)
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+
+    assert content is None
+
+
+# ---------------------------------------------------------------------------
 # ADR-051: ②保有銘柄の悪材料アラート（決定論セクション・ADR-067 で維持）
 # ---------------------------------------------------------------------------
 
