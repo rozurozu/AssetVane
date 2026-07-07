@@ -22,6 +22,7 @@ from app.adapters.us_equity import (
     UsEquityNotSupported,
     UsEquitySource,
     YahooUsEquitySource,
+    _normalize_us_symbol,
 )
 
 # ── サンプル NASDAQ Trader directory（実形式・パイプ区切り・末尾フッタ行付き） ──────────
@@ -35,12 +36,15 @@ ZTEST|Nasdaq Test Issue - Common Stock|Q|Y|N|100|N|N
 File Creation Time: 0601202612:00|||||||
 """
 
-# otherlisted.txt: 列順が異なる（ACT Symbol／ETF／Test Issue の位置が違う）。NYSE 普通株 BRK と
-# ユニット（名称で除外）。
+# otherlisted.txt: 列順が異なる（ACT Symbol／ETF／Test Issue の位置が違う）。NYSE 普通株 BRK・
+# ユニット（名称で除外）・クラス株 BF.A（ドット→ハイフンへ正規化・ADR-090）・記号だけで非普通株と
+# わかる優先株 FOO$A（名称は preferred 等を含まず _is_non_common をすり抜けるが $ で除外）。
 _OTHERLISTED = """\
 ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|Test Issue|NASDAQ Symbol
 BRK|Berkshire Hathaway Inc. Common Stock|N|BRK|N|100|N|BRK
 XYZ.U|Some SPAC - Units|N|XYZ.U|N|100|N|XYZ.U
+BF.A|Brown-Forman Corporation Class A Common Stock|N|BF.A|N|100|N|BF.A
+FOO$A|Foo Capital Series A|N|FOOpA|N|100|N|
 File Creation Time: 0601202612:00|||||||
 """
 
@@ -60,19 +64,44 @@ def test_fetch_universe_extracts_common_stocks_and_etf_flag() -> None:
     rows = adapter.fetch_universe()
     by_symbol = {r["symbol"]: r for r in rows}
 
-    # 普通株（NASDAQ AAPL・NYSE BRK）と ETF（QQQ）が残る。
-    assert set(by_symbol) == {"AAPL", "QQQ", "BRK"}
+    # 普通株（NASDAQ AAPL・NYSE BRK）・ETF（QQQ）・クラス株（BF.A→BF-A に正規化）が残る。
+    assert set(by_symbol) == {"AAPL", "QQQ", "BRK", "BF-A"}
     # 優先株・ユニット・試験銘柄は除外され、File Creation Time フッタも入らない。
     assert "ABCpA" not in by_symbol
     assert "XYZ.U" not in by_symbol
     assert "ZTEST" not in by_symbol
     assert not any("File Creation Time" in (r["symbol"] or "") for r in rows)
+    # クラス株はドット表記のまま残らず（Yahoo 表記へ正規化・ADR-090）、記号だけで非普通株と
+    # わかる優先株 FOO$A は $ で除外される（_is_non_common をすり抜けても記号で落とす）。
+    assert "BF.A" not in by_symbol
+    assert "FOO$A" not in by_symbol
+    assert "FOO-A" not in by_symbol
 
-    # is_etf フラグ: AAPL/BRK=0・QQQ=1。
+    # is_etf フラグ: AAPL/BRK/BF-A=0・QQQ=1。
     assert by_symbol["AAPL"]["is_etf"] == 0
     assert by_symbol["QQQ"]["is_etf"] == 1
     assert by_symbol["BRK"]["is_etf"] == 0
+    assert by_symbol["BF-A"]["is_etf"] == 0
     assert by_symbol["AAPL"]["company_name"] == "Apple Inc. - Common Stock"
+    assert by_symbol["BF-A"]["company_name"] == "Brown-Forman Corporation Class A Common Stock"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("AAPL", "AAPL"),  # 普通株はそのまま
+        ("BF.A", "BF-A"),  # クラス株のドットはハイフンへ
+        ("BRK.B", "BRK-B"),
+        (" BF.A ", "BF-A"),  # 前後空白は落とす
+        ("BAC$L", None),  # 優先株（$）は除外
+        ("FOO+", None),  # ワラント（+）は除外
+        ("ABC=", None),  # ユニット/権利（=）は除外
+        ("", None),  # 空は除外
+    ],
+)
+def test_normalize_us_symbol(raw: str, expected: str | None) -> None:
+    """NASDAQ Trader 表記→Yahoo 表記の正規化（ドット→ハイフン・特殊記号は除外・ADR-090）。"""
+    assert _normalize_us_symbol(raw) == expected
 
 
 def test_fetch_fundamentals_normalizes_info_fields() -> None:
