@@ -6,7 +6,7 @@
 だけの薄い層で、解決ロジックは services/edinetdb_config、クエリは db/repo/edinetdb_config が持つ
 （ADR-005/014）。秘密の api_key は GET では必ずマスクし、更新は write-only（空送信は据え置き＝
 jquants_config と同方針）。疎通テストは POST /diagnostics/edinetdb-test を流用する（このルータには
-持たない）。公式 EDINET（env の edinet_api_key）とは別系統。
+持たない）。公式 EDINET（DB の edinet_config・/edinet/config・ADR-087）とは別系統。
 """
 
 from __future__ import annotations

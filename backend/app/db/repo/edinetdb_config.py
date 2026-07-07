@@ -4,7 +4,7 @@
 
 api_key と契約プラン名（free/pro）を単一行（id=1）で持つ（jquants_config 同型）。本モジュールは
 生の dict を返すだけで、未設定の意味づけ・マスク・プラン正規化は services/edinetdb_config と router
-の責務（backend-repo / backend-router）。公式 EDINET（env の edinet_api_key）とは別系統。
+の責務（backend-repo / backend-router）。公式 EDINET（DB の edinet_config・ADR-087）とは別系統。
 
 [書き込みのトランザクション規律] upsert は引数の `conn` 上で execute するだけで commit しない
 （W2・jquants_config.py と同じ）。呼び出し側（router）が `with get_engine().begin() as conn:` で

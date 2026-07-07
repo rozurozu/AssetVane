@@ -1,6 +1,7 @@
 """backfill_edinet script の検証（テーマタグ段階 C・ADR-056・review-2026-06-12 §3 のテスト穴）。
 
-担保: EDINET_API_KEY 未設定は return 2（クロールしない）・`--from` は窓/カーソルより優先・
+担保: 公式 EDINET 未登録（DB の edinet_config が空＝ADR-087）は return 2（クロールしない）・
+`--from` は窓/カーソルより優先・
 カーソル無しは窓頭（today − window）起点・**カーソル有りは cursor+1 から再開（中断再開）**・
 start > today は未クロールなしで return 0（crawl 不発）・crawl の失敗ありは return 1／無しは
 return 0・KeyboardInterrupt は return 130（再実行で続きから）。crawl と _today_jst を fake に
@@ -15,8 +16,8 @@ from typing import Any
 import pytest
 
 from app.batch.jobs import fetch_edinet_descriptions as edinet_job
-from app.config import settings
 from app.db import repo
+from app.db.engine import get_engine
 from app.scripts import backfill_edinet
 
 _CRAWL_SOURCE = "edinet:crawl"
@@ -41,15 +42,16 @@ def _result(**overrides: Any) -> dict[str, Any]:
 
 @pytest.fixture
 def script_env(temp_db, monkeypatch) -> dict[str, Any]:
-    """main() の副作用を封じる: init_db 無効化・API キー設定・today 固定・crawl を fake 化。
+    """main() の副作用を封じる: init_db 無効化・公式 EDINET キー seed・today 固定・crawl fake 化。
 
     temp_db は create_schema 済みで、init_db（alembic upgrade）と併用すると "table already
-    exists" で落ちる（testing-strategy）。_resolve_start は実 DB（temp_db）の fetch_meta を読むので
-    差し替えず、カーソルは fetch_meta を直接撒いて検証する。crawl は呼び出し kwargs を
-    captured に記録する。
+    exists" で落ちる（testing-strategy）。公式 EDINET の接続値は DB 解決＝ADR-087 なので
+    ダミーキーを撒いて「設定済み」にする。_resolve_start は実 DB（temp_db）の fetch_meta を読むため
+    差し替えず、カーソルは fetch_meta を撒いて検証。crawl は呼び出し kwargs を captured に記録。
     """
     monkeypatch.setattr(backfill_edinet, "init_db", lambda: None)
-    monkeypatch.setattr(settings, "edinet_api_key", "dummy-key")
+    with get_engine().begin() as conn:
+        repo.upsert_edinet_config(conn, {"api_key": "dummy-key"})
     monkeypatch.setattr(backfill_edinet, "_today_jst", lambda: _TODAY)
 
     captured: dict[str, Any] = {"calls": [], "result": _result(), "raise": None}
@@ -64,9 +66,10 @@ def script_env(temp_db, monkeypatch) -> dict[str, Any]:
     return captured
 
 
-def test_main_missing_api_key_returns_2(script_env, monkeypatch) -> None:
-    """EDINET_API_KEY 未設定は return 2 でクロールに進まない。"""
-    monkeypatch.setattr(settings, "edinet_api_key", "")
+def test_main_missing_api_key_returns_2(script_env) -> None:
+    """公式 EDINET 未登録（DB の api_key 空）は return 2 でクロールに進まない（ADR-087）。"""
+    with get_engine().begin() as conn:
+        repo.upsert_edinet_config(conn, {"api_key": ""})  # 設定済み seed を空に上書き
 
     rc = backfill_edinet.main([])
 

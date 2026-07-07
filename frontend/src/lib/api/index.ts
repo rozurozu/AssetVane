@@ -16,5 +16,6 @@ export * from "./us";
 export * from "./llm-config";
 export * from "./jquants-config";
 export * from "./edinetdb-config";
+export * from "./edinet-config";
 export * from "./cards";
 export * from "./profile";

@@ -659,7 +659,7 @@ LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settin
 
 ### EDINET DB 接続設定 — `edinetdb_config`（[ADR-064](decisions.md)・`0030_edinetdb_config`）
 
-**`edinetdb_config`**（第三者サービス edinetdb.jp 接続・単一行運用＝`jquants_config` 同型）。公式 EDINET（`api.edinet-fsa.go.jp`・env の `edinet_api_key`・テーマタグ段階C／#7）とは**別系統**で、#2 売掛/在庫の質の構造化財務取得に使う。
+**`edinetdb_config`**（第三者サービス edinetdb.jp 接続・単一行運用＝`jquants_config` 同型）。公式 EDINET（`api.edinet-fsa.go.jp`・DB の `edinet_config`／[ADR-087](decisions.md)・テーマタグ段階C／#7）とは**別系統**で、#2 売掛/在庫の質の構造化財務取得に使う。
 
 | カラム | 型 | 説明 |
 |---|---|---|
@@ -669,6 +669,18 @@ LLM の provider/api_key/base_url/model と面別割当を DB に持ち `/settin
 | `updated_at` | TEXT | ISO8601 |
 
 > `/settings` の「EDINET DB 設定」カードで編集（api_key は write-only）。plan 別のレート目安（free=日100/月600）は `services/edinetdb_config.py` の `_PLAN_LIMITS` が持つが、**実予算の enforce はレスポンスの `x-ratelimit-*-remaining` ヘッダ**で行う（[ADR-064](decisions.md)）。未登録（鍵空）なら #2 取得は静かに skip。
+
+### EDINET（公式）接続設定 — `edinet_config`（[ADR-087](decisions.md)・`0041_edinet_config`）
+
+**`edinet_config`**（公式 EDINET＝`api.edinet-fsa.go.jp` 接続・単一行運用＝`edinetdb_config` 同型）。旧・env `EDINET_API_KEY` を DB+WebUI（`/settings`）へ移管（[ADR-061](decisions.md)/[ADR-064](decisions.md) と同型）。動機＝「公式キーだけ env・edinetdb キーは DB」の非対称で実機がキーを貼り間違え、公式 EDINET が拒否して夜バッチ `fetch_edinet_descriptions` が停止した（`documents.json` が `metadata.status=None`）。第三者 edinetdb.jp（`edinetdb_config`）とは**別系統**で、有報「事業の内容」テキスト源（テーマタグ段階C・[ADR-056](decisions.md)）に使う。
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `id` | INTEGER PK | 1 行運用（id 固定） |
+| `api_key` | TEXT | 公式 EDINET の Subscription-Key。平文（GET ではマスク）。空可（未設定） |
+| `updated_at` | TEXT | ISO8601 |
+
+> `/settings` の「EDINET（公式）設定」カードで編集（api_key は write-only）。**plan 列は持たない**（公式 EDINET は回数クォータ無し・レート制限のみ＝スロットル間隔等の非秘密つまみは `config.py`／env に残す）。未登録（鍵空）なら段階C 取得は静かに skip。env シードはしない＝初回は `/settings` 登録まで動かない。
 
 ---
 

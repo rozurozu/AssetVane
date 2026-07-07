@@ -191,11 +191,11 @@ class Settings(BaseSettings):
     # より十分大きく保つこと（一周しきる前に健全なタグが prune される事故防止）。
     theme_prune_days: int = 90
 
-    # --- EdinetAdapter（有報「事業の内容」・テーマタグ段階C・ADR-010/050/056） ---
+    # --- EdinetAdapter（有報「事業の内容」・テーマタグ段階C・ADR-010/050/056/087） ---
     # JP 全ユニバースの grounded テーマタグの信号源＝EDINET 有報「事業の内容」。価格・財務は
-    # J-Quants のまま（ADR-008）、EDINET はテキスト専用の additive ソース（ADR-056）。秘密情報は
-    # backend の .env のみ（ADR-005）。直結ハードコード禁止＝値は config 経由で渡す（ADR-010）。
-    edinet_api_key: str = ""  # EDINET API v2 のサブスクリプションキー（無料登録・Subscription-Key）
+    # J-Quants のまま（ADR-008）、EDINET はテキスト専用の additive ソース（ADR-056）。秘密の api_key
+    # （Subscription-Key）は env でなく DB（edinet_config）＋/settings で管理する＝ADR-087（旧
+    # edinet_api_key は撤去）。以下は非秘密の運用つまみで env のまま残す（ADR-010）。
     edinet_base_url: str = "https://api.edinet-fsa.go.jp/api/v2"  # 書類一覧/取得 API のベース URL
     edinet_http_timeout_seconds: float = 30.0  # documents.json / ZIP GET のタイムアウト（秒）
     edinet_min_interval_seconds: float = 1.0  # 取得スロットル間隔（秒・Free 系に優しく）
@@ -251,16 +251,15 @@ class Settings(BaseSettings):
 
         未設定でも Phase 0 は動く。実データ取得や AI を使う段階で必要になる。
         """
-        # LLM・embedding・J-Quants の充足は env ではなく DB（面別設定 / embedding_config /
-        # jquants_config）で決まるため env_status からは外す（ADR-058/059/061）。画面は
-        # GET /llm/faces・/llm/embedding・/jquants/config の configured フラグで設定状況を表示する。
+        # LLM・embedding・J-Quants・EDINET 系の充足は env ではなく DB（面別設定 / embedding_config /
+        # jquants_config / edinetdb_config / edinet_config）で決まるため env_status からは外す
+        # （ADR-058/059/061/064/087）。画面は各 GET /*/config の configured フラグで状況を表示する
+        # （公式 EDINET は /edinet/config・段階C＝ADR-087）。
         return {
             "discord_webhook_url": {
                 "set": bool(self.discord_webhook_url),
                 "required_from_phase": 6,
             },
-            # EDINET 有報の事業の内容（テーマタグ段階C・ADR-056）。未設定なら段階C 取得は機能オフ。
-            "edinet_api_key": {"set": bool(self.edinet_api_key), "required_from_phase": 7},
         }
 
 

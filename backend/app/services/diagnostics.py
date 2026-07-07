@@ -15,15 +15,21 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Connection
 
+from app.adapters.edinet import EdinetAdapterError
 from app.adapters.edinetdb import EdinetDbAdapterError
 from app.adapters.jquants import JQuantsError
+from app.services.edinet_config import build_edinet_adapter, resolve_edinet_config
 from app.services.edinetdb_config import build_edinetdb_adapter, resolve_edinetdb_config
 from app.services.jquants_config import build_jquants_adapter, resolve_jquants_config
 
 logger = logging.getLogger(__name__)
+
+_JST = ZoneInfo("Asia/Tokyo")
 
 
 @dataclass(frozen=True)
@@ -120,4 +126,51 @@ def check_edinetdb(conn: Connection) -> EdinetDbCheckResult:
     budget_note = f"・月残 {mo_rem}/{mo_lim}" if mo_rem is not None else ""
     return EdinetDbCheckResult(
         configured=True, ok=True, detail=f"認証OK・収載 {total} 社{budget_note}"
+    )
+
+
+@dataclass(frozen=True)
+class EdinetCheckResult:
+    """公式 EDINET（api.edinet-fsa.go.jp）疎通テストの結果（CLI/REST/WebUI 共通の戻り値・ADR-087）。
+
+    configured: API キーが設定されているか（False なら呼ばずに未設定で返す）。
+    ok:         Subscription-Key 認証が通り書類一覧が取れたか（configured=False なら常に False）。
+    detail:     人間向けメッセージ（成功＝当日書類件数／失敗＝エラー要旨。誤キーは metadata.status
+                =None の異常応答＝今回の実機不具合をここで即検知できる）。
+    """
+
+    configured: bool
+    ok: bool
+    detail: str
+
+
+def check_edinet(conn: Connection) -> EdinetCheckResult:
+    """公式 EDINET に認証ピングを 1 発投げて生死を返す（接続値は DB 解決・ADR-056/087）。
+
+    キー未設定（edinet_config 未登録）なら configured=False で即返す。当日（JST）の書類一覧
+    `list_documents` を叩き、EdinetAdapterError（キー不正＝status 異常・HTTP 失敗）も予期せぬ
+    例外も握って ok=False＋要旨に畳む（ADR-018）。誤ったキー（第三者 edinetdb.jp の edb_ キー等）を
+    貼っていると異常応答が detail に出るので、貼り間違いを WebUI で即座に見つけられる。
+    """
+    if resolve_edinet_config(conn) is None:
+        logger.warning("公式 EDINET 未設定のため疎通テストをスキップ")
+        return EdinetCheckResult(
+            configured=False,
+            ok=False,
+            detail="公式 EDINET（api.edinet-fsa.go.jp）API キーが未設定です",
+        )
+
+    iso = datetime.now(_JST).date().isoformat()
+    try:
+        docs = build_edinet_adapter(conn).list_documents(iso)
+    except EdinetAdapterError as exc:
+        return EdinetCheckResult(configured=True, ok=False, detail=str(exc)[:200])
+    except Exception as exc:  # noqa: BLE001 — 疎通確認は例外を握って結果に畳む（ADR-018）
+        logger.exception("公式 EDINET 疎通テストで予期せぬ失敗")
+        return EdinetCheckResult(
+            configured=True, ok=False, detail=f"{type(exc).__name__}: {exc}"[:200]
+        )
+
+    return EdinetCheckResult(
+        configured=True, ok=True, detail=f"認証OK・{iso} の書類 {len(docs)} 件"
     )

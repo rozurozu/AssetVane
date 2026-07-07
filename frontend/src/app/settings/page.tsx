@@ -1,5 +1,6 @@
 "use client";
 
+import { EdinetSettings } from "@/components/settings/EdinetSettings";
 import { EdinetdbSettings } from "@/components/settings/EdinetdbSettings";
 import { JquantsSettings } from "@/components/settings/JquantsSettings";
 import { LlmSettings } from "@/components/settings/LlmSettings";
@@ -28,11 +29,11 @@ import { useEffect, useState } from "react";
 // しきい値は .env 固定で UI から編集しない（L-25）。
 
 // env キーの日本語ラベル（順序固定・config.py env_status のキーに対応）。
-// LLM・J-Quants のキーは env ではなく DB へ移したので env_status からは外れた（ADR-058/059/061）。
-// 設定状況は LLM=下の「面別 LLM 割当」、J-Quants=下の「J-Quants 設定」カードの configured で見る。
+// LLM・J-Quants・EDINET 系のキーは env ではなく DB へ移したので env_status からは外れた
+// （ADR-058/059/061/064/087）。設定状況は LLM=下の「面別 LLM 割当」、J-Quants=「J-Quants 設定」、
+// 公式 EDINET=「EDINET（公式）設定」、edinetdb=「EDINET DB 設定」各カードの configured で見る。
 const ENV_LABELS: { key: string; label: string }[] = [
   { key: "discord_webhook_url", label: "Discord Webhook URL（通知）" },
-  { key: "edinet_api_key", label: "EDINET API キー（テーマタグ段階C）" },
 ];
 
 /** started_at（ISO8601・UTC）からの経過分。未走行・解析不能は null。 */
@@ -240,6 +241,9 @@ export default function SettingsPage() {
 
         {/* J-Quants 接続設定（api_key/plan を DB+WebUI で管理＋疎通テスト・ADR-061） */}
         <JquantsSettings />
+
+        {/* 公式 EDINET 接続設定（有報「事業の内容」テキスト源・段階C・api_key を DB+WebUI 管理・ADR-087） */}
+        <EdinetSettings />
 
         {/* EDINET DB（edinetdb.jp）接続設定（#2 売掛/在庫の質の財務源・公式 EDINET とは別系統・ADR-064） */}
         <EdinetdbSettings />

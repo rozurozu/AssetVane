@@ -7,6 +7,7 @@ cron/CLI と同じ脳を別口で叩く（ADR-011「1つの脳・複数の起動
 - POST /diagnostics/jquants-test … J-Quants 認証ピング（check_jquants・接続値は DB 解決・ADR-061）。
 - POST /diagnostics/edinetdb-test … EDINET DB 認証ピング（check_edinetdb・接続値は DB 解決・
 ADR-064）。
+- POST /diagnostics/edinet-test … 公式 EDINET 認証ピング（check_edinet・DB 解決・ADR-087）。
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from sqlalchemy import Connection
 
 from app.batch.notify import send_test_notification
 from app.db.engine import get_conn
-from app.services.diagnostics import check_edinetdb, check_jquants
+from app.services.diagnostics import check_edinet, check_edinetdb, check_jquants
 
 router = APIRouter(tags=["diagnostics"])
 
@@ -70,3 +71,20 @@ def edinetdb_test(conn: Connection = Depends(get_conn)) -> EdinetDbTestResponse:
     """
     result = check_edinetdb(conn)
     return EdinetDbTestResponse(configured=result.configured, ok=result.ok, detail=result.detail)
+
+
+class EdinetTestResponse(BaseModel):
+    configured: bool  # API キーが設定されているか（false なら呼ばずに未設定で返す）
+    ok: bool  # Subscription-Key 認証が通り書類一覧が取れたか（configured=false のときは常に false）
+    detail: str  # 人間向けメッセージ（成功＝当日書類件数／失敗＝エラー要旨・貼り間違い検知）
+
+
+@router.post("/diagnostics/edinet-test", response_model=EdinetTestResponse)
+def edinet_test(conn: Connection = Depends(get_conn)) -> EdinetTestResponse:
+    """公式 EDINET に認証ピングを 1 発投げ、結果を返す（接続値は DB 解決・ADR-056/087）。
+
+    未設定（configured=false）も疎通失敗（ok=false）も例外にせず 200 で結果フラグとして返す
+    （Web UI が両者を区別して表示するため）。実体・判定は services/diagnostics.py が持つ。
+    """
+    result = check_edinet(conn)
+    return EdinetTestResponse(configured=result.configured, ok=result.ok, detail=result.detail)

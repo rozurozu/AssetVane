@@ -28,6 +28,10 @@ from app.db.repo.advisor import (
     update_proposal_status,
     upsert_policy,
 )
+from app.db.repo.edinet_config import (
+    get_edinet_config,
+    upsert_edinet_config,
+)
 from app.db.repo.edinetdb_config import (
     get_edinetdb_config,
     upsert_edinetdb_config,
@@ -451,6 +455,8 @@ __all__ = [
     "upsert_jquants_config",
     "get_edinetdb_config",
     "upsert_edinetdb_config",
+    "get_edinet_config",
+    "upsert_edinet_config",
     "get_investor_profile",
     "upsert_investor_profile",
     "list_knowledge_cards",

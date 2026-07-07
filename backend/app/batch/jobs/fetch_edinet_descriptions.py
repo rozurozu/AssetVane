@@ -47,6 +47,7 @@ from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
 from app.db.engine import get_engine
+from app.services.edinet_config import build_edinet_adapter, resolve_edinet_config
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ def crawl(
         集計 dict（n_summarized/n_skip_dossier/n_skip_existing/n_no_business/failures/
         cap_reached/last_cursor/dates_done）。呼び出し側（run/script）が JobResult や print に整形。
     """
-    adapter = adapter or EdinetAdapter()
+    adapter = adapter or build_edinet_adapter()  # DB 解決（ADR-087・未設定なら EdinetAdapterError）
     summarize_fn = summarize_fn or _default_summarize
     emit = log or (lambda m: logger.info("%s", m))
 
@@ -272,17 +273,19 @@ def _resolve_start(*, no_cursor_fallback: date) -> date:
 def run() -> JobResult:
     """夜間差分: カーソル翌日〜今日(JST) をクロールし夜天井まで要約する（ADR-056/033/018）。
 
-    EDINET_API_KEY 未設定なら静かに skip（ok=True・ADR-006/018 の「未設定は機能オフ」流儀）。
-    カーソルが無ければ今日から追跡を始める（履歴は app.scripts.backfill_edinet が埋める）。
-    書類境界の失敗は握って継続し、1 件でも失敗があれば ok=False（runner が Discord 集約通知）。
+    公式 EDINET キー未設定（edinet_config 未登録）なら静かに skip（ok=True・ADR-006/018 の「未設定は
+    機能オフ」流儀・接続値は DB 解決＝ADR-087）。カーソルが無ければ今日から追跡を始める（履歴は
+    app.scripts.backfill_edinet が埋める）。書類境界の失敗は握って継続し、1 件でも失敗があれば
+    ok=False（runner が Discord 集約通知）。
     """
-    if not settings.edinet_api_key:
-        return JobResult(
-            name="fetch_edinet_descriptions",
-            ok=True,
-            rows=0,
-            detail="EDINET_API_KEY 未設定のため skip（段階C 機能オフ）",
-        )
+    with get_engine().connect() as conn:
+        if resolve_edinet_config(conn) is None:
+            return JobResult(
+                name="fetch_edinet_descriptions",
+                ok=True,
+                rows=0,
+                detail="公式 EDINET キー未設定のため skip（段階C 機能オフ・/settings で登録）",
+            )
 
     today = _today_jst()
     start = _resolve_start(no_cursor_fallback=today)
@@ -296,7 +299,7 @@ def run() -> JobResult:
 
     cap = settings.edinet_nightly_max
     try:
-        result = crawl(start_date=start, end_date=today, cap=cap)
+        result = crawl(start_date=start, end_date=today, cap=cap, adapter=build_edinet_adapter())
     except Exception as exc:  # noqa: BLE001 — ジョブ境界で握り runner に返す
         logger.exception("fetch_edinet_descriptions: クロールに失敗")
         return JobResult(

@@ -827,7 +827,7 @@ jquants_config = Table(
 )
 
 # EDINET DB（edinetdb.jp・第三者サービス）接続設定（ADR-064・0030_edinetdb_config）。
-# 公式 EDINET（api.edinet-fsa.go.jp・ADR-056・env の edinet_api_key）とは別系統。#2 売掛/在庫の質の
+# 公式 EDINET（ADR-056/087・DB の edinet_config）とは別系統。#2 売掛/在庫の質の
 # 構造化財務取得に使う。api_key/plan を env でなく DB+WebUI（/settings）
 # で管理する＝jquants_config と
 # 同型（ADR-061）。plan は free/pro（当面 free・pro 検討）。実レート予算は adapter が
@@ -838,6 +838,20 @@ edinetdb_config = Table(
     Column("id", Integer, primary_key=True),  # 1 行運用（id 固定）
     Column("api_key", String, nullable=False, server_default=""),  # 平文・GET でマスク
     Column("plan", String, nullable=False, server_default="free"),  # free/pro
+    Column("updated_at", String),  # ISO8601
+)
+
+# 公式 EDINET（第三者 edinetdb.jp とは別）接続設定（ADR-087・0041_edinet_config）。Subscription-Key
+# （api_key）を env（旧 edinet_api_key）から DB+WebUI（/settings）へ移す＝jquants/edinetdb_config
+# 同型（ADR-061/064）。動機は「公式は env・edinetdb は DB」の非対称で実機がキーを貼り間違え、
+# 公式 EDINET が拒否して夜バッチが停止したこと。plan 列は持たない（公式 EDINET は回数クォータ無し・
+# レート制限のみ＝スロットル間隔等の非秘密つまみは config に残す）。api_key は平文（ADR-001・GET で
+# マスク）。env シードはしない＝初回は未登録（鍵空）で段階C は静かに skip。
+edinet_config = Table(
+    "edinet_config",
+    metadata,
+    Column("id", Integer, primary_key=True),  # 1 行運用（id 固定）
+    Column("api_key", String, nullable=False, server_default=""),  # 平文・GET でマスク
     Column("updated_at", String),  # ISO8601
 )
 

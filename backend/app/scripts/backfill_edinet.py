@@ -28,7 +28,8 @@ from datetime import date, timedelta
 
 from app.batch.jobs.fetch_edinet_descriptions import _resolve_start, _today_jst, crawl
 from app.config import settings
-from app.db.engine import init_db
+from app.db.engine import get_engine, init_db
+from app.services.edinet_config import resolve_edinet_config
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,13 +59,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not settings.edinet_api_key:
-        print(
-            "✖ EDINET_API_KEY が未設定です（backend の .env に設定してください）", file=sys.stderr
-        )
-        return 2
-
+    # 公式 EDINET の接続値は DB 解決＝ADR-087。schema が要るので init_db を先に呼ぶ。
     init_db()
+
+    with get_engine().connect() as conn:
+        if resolve_edinet_config(conn) is None:
+            print(
+                "✖ 公式 EDINET キーが未設定です"
+                "（/settings の「EDINET 設定」から登録してください・ADR-087）",
+                file=sys.stderr,
+            )
+            return 2
 
     today = _today_jst()
     if args.from_date:

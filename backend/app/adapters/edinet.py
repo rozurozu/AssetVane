@@ -10,7 +10,9 @@ ADR-056: 価格・財務・銘柄マスタは J-Quants V2 のまま（ADR-008）
         EDINET 書類一覧 API は提出日でしか引けないため、銘柄単位の最新解決はクロールの帰結になる。
 ADR-010: 外部 API アクセス・「外部キー名→内部列名」の正規化・リトライ/スロットルをこの 1 ファイルに
         閉じ込める。adapter は DB にも LLM にも触らない（要約は呼び出し側 advisor/edinet_summary）。
-ADR-005: API キー（Subscription-Key）は backend の .env のみ（settings 経由・ハードコード禁止）。
+ADR-087: API キー（Subscription-Key）は env でなく DB（edinet_config）+/settings で管理する。
+        adapter は settings を読まず、services/edinet_config.build_edinet_adapter が DB 解決して
+        api_key を渡す（jquants/edinetdb 同型）。base/timeout/間隔は settings のまま。
 
 EDINET API v2:
   - 書類一覧 API: GET {base}/documents.json?date=YYYY-MM-DD&type=2&Subscription-Key=<key>
@@ -63,7 +65,7 @@ class EdinetAdapterError(RuntimeError):
     """EdinetAdapter の取得エラー（書類一覧/取得そのものの失敗＝ハード失敗）。
 
     呼び出し側（batch ジョブ）が docID 境界・提出日境界で握って後続を止めない（ADR-018）。
-    メッセージには対処（.env の EDINET_API_KEY 設定等）を含める。
+    メッセージには対処（/settings の「EDINET 設定」で公式 EDINET キーを登録・ADR-087）を含める。
     """
 
 
@@ -90,8 +92,11 @@ class EdinetAdapter:
     （要約 LLM だけ呼び出し側が asyncio.run する＝tag_jp_themes 同型）。
     """
 
-    def __init__(self, *, api_key: str | None = None) -> None:
-        self._api_key = api_key if api_key is not None else settings.edinet_api_key
+    def __init__(self, *, api_key: str) -> None:
+        # api_key（Subscription-Key）は DB 解決の必須引数（ADR-087）。全構成点は
+        # services/edinet_config.build_edinet_adapter 経由で DB から渡す。base_url/timeout/
+        # スロットル間隔は非秘密の運用つまみとして引き続き settings（env）から解決する。
+        self._api_key = api_key
         self._base_url = settings.edinet_base_url
         self._timeout = settings.edinet_http_timeout_seconds
         self._throttle = Throttle(settings.edinet_min_interval_seconds)
@@ -116,7 +121,7 @@ class EdinetAdapter:
             throttle=self._throttle,
             on_http_error=lambda r: EdinetAdapterError(
                 f"GET {path} が {r.status_code}: {r.text[:200]}"
-                "（EDINET_API_KEY 未設定/誤りの可能性）"
+                "（公式 EDINET キー未設定/誤りの可能性。/settings の EDINET 設定で確認・ADR-087）"
             ),
             on_exhausted=lambda e: EdinetAdapterError(
                 f"GET {path} が {DEFAULT_MAX_RETRIES} 回失敗しました（最後: {e}）。"
