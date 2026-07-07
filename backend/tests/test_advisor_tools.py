@@ -92,6 +92,8 @@ def test_registry_handlers_are_registered() -> None:
         "optimize_portfolio",
         # ADR-085: ポジションサイズ／ポートフォリオ影響 what-if（min_phase=2）。
         "simulate_trade_impact",
+        # ADR-088: 保有の前提崩れ監視（min_phase=2）。
+        "get_position_reviews",
         "get_financials",
         # ADR-048: バリュエーション判断（min_phase=2）。
         "get_valuation",

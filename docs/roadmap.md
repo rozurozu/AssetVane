@@ -102,6 +102,7 @@
 - **売買アイデア起票（[ADR-052](decisions.md)）は実装済み（2026-06-11）**＝専用 Tool `propose_trade` で `proposals(kind=buy/sell)` へ承認制起票（方向と根拠のみ・数値ゼロ・未知コード drop・pending dedup・承認しても約定なし・migration 不要）。
 - **RAG 活用の線引き・能動配信（[ADR-049](decisions.md)/[ADR-051](decisions.md)）は実装済み（2026-06-13）**＝`news.polarity` 列〔0020〕／夜間 `tag_news_polarity`〔`embed_news` 同型・`level='stock'` のみ判定〕／`notify_digest` に①急騰落の自動説明〔注目シグナルへ直近ニュース attach〕＋②保有銘柄の悪材料アラート〔JP holdings の負 `polarity`・24h 窓〕。
 - **テーマタグ**は [ADR-050](decisions.md) 改訂＋[ADR-056](decisions.md) で「全ユニバース grounded 事前タグ（EDINET/longBusinessSummary 信号源）」へ方針転換し独立化（上記「テーマタグ」段階 A/B/C を参照）。
+- **保有の前提崩れ監視＋棚卸しレビュー（AI 投資判断改善 #3+#5・[ADR-088](decisions.md)/[ADR-089](decisions.md)）は実装済み（2026-07-07）**＝守り（保有の点検・撤退）の層。#3 は決定論の候補ビルダー `services/position_review.py` が各保有の前提崩れ材料（含み損・悪材料・会社予想の未達/下方修正・訂正報告）と記録済み thesis（[ADR-084](decisions.md)）を突き合わせ、digest「⚠ 保有の前提崩れの疑い」＋Tool `get_position_reviews`〔min_phase=2〕に出す（thesis-aware ゲートで [ADR-051](decisions.md) の②と差別化）。#5 は `run_advisor` を拡張して flagged 保有を夜AI に注入し、`propose_trade(action='sell')` で棚卸しの売り提案を承認制起票する（新面/新表/migration なし）。
 
 ---
 

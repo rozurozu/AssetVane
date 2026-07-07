@@ -39,6 +39,7 @@ from app.advisor.tools.schemas import (
     GetNewsContextArgs,
     GetNotableCandidatesArgs,
     GetPortfolioMetricsArgs,
+    GetPositionReviewsArgs,
     GetSignalsArgs,
     GetStockThemesArgs,
     GetTrackRecordArgs,
@@ -86,6 +87,7 @@ from app.services.portfolio import (
     simulate_trade_impact,
     value_holdings,
 )
+from app.services.position_review import build_position_reviews
 from app.services.us_holdings import value_us_holdings
 
 logger = logging.getLogger(__name__)
@@ -346,6 +348,24 @@ async def handle_simulate_trade_impact(args: dict[str, object]) -> dict[str, Any
         return result
     except Exception as exc:
         logger.exception("handle_simulate_trade_impact 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_get_position_reviews(args: dict[str, object]) -> dict[str, Any]:
+    """get_position_reviews（ADR-088・#3）。保有の前提崩れの疑いを決定論で組んで返す（読み取り専用）。
+
+    services.position_review.build_position_reviews への薄い橋渡し（ADR-014）。is_delayed は as_of
+    から handler で付与する（quant/services は today を知らない＝ADR-071・get_portfolio_metrics と
+    同型）。例外は握って {"error": ...} に倒す（dispatch ループを落とさない）。
+    """
+    try:
+        pid_arg = GetPositionReviewsArgs.model_validate(args).portfolio_id
+        with get_engine().connect() as conn:
+            result = build_position_reviews(conn, portfolio_id=pid_arg)
+        result["is_delayed"] = freshness.is_delayed(result.get("as_of"))
+        return result
+    except Exception as exc:
+        logger.exception("handle_get_position_reviews 失敗")
         return {"error": str(exc)}
 
 

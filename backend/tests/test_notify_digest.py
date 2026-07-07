@@ -403,3 +403,90 @@ def test_run_catches_exception(monkeypatch: pytest.MonkeyPatch, temp_db: None) -
     result = notify_digest.run()
     assert result.ok is False
     assert "DB 障害" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# ADR-088（#3）: ③保有の前提崩れの疑い（決定論・thesis-aware）
+# ---------------------------------------------------------------------------
+
+
+def _seed_quote(code: str, close: float, date: str = TODAY) -> None:
+    repo.upsert_daily_quotes(
+        [
+            {
+                "code": code,
+                "date": date,
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "volume": 1000.0,
+                "adj_close": close,
+            }
+        ]
+    )
+
+
+def _seed_buy_proposal(code: str, invalidation: str) -> None:
+    with get_engine().begin() as conn:
+        repo.insert_proposal(
+            conn,
+            created_date="2026-06-01",
+            kind="buy",
+            body=json.dumps(
+                {
+                    "code": code,
+                    "company_name": "銘柄",
+                    "market": "JP",
+                    "invalidation": invalidation,
+                },
+                ensure_ascii=False,
+            ),
+            rationale="根拠",
+            status="pending",
+        )
+
+
+def test_build_digest_thesis_watch_section(temp_db: None) -> None:
+    """含み損＋記録済み thesis の保有が『前提崩れの疑い』セクションで出る（ADR-088）。"""
+    repo.upsert_stocks([STOCK])
+    _seed_holdings("72030")  # shares=100 / avg_cost=1000
+    _seed_quote("72030", 700.0)  # -30% 含み損
+    _seed_buy_proposal("72030", "営業利益が下方修正されたら")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+    assert content is not None
+    assert "保有の前提崩れの疑い" in content
+    assert "72030" in content
+    assert "前提: 営業利益が下方修正されたら" in content
+
+
+def test_build_digest_thesis_watch_triggers_send_when_not_always(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """前提崩れの疑いがあれば always_daily_digest=False でも送る（has_content に含む・ADR-088）。"""
+    monkeypatch.setattr(settings, "always_daily_digest", False)
+    repo.upsert_stocks([STOCK])
+    _seed_holdings("72030")
+    _seed_quote("72030", 700.0)
+    _seed_buy_proposal("72030", "崩れたら")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+    assert content is not None
+    assert "保有の前提崩れの疑い" in content
+
+
+def test_build_digest_thesis_watch_absent_for_news_only_without_thesis(temp_db: None) -> None:
+    """thesis 無・生ニュース単独は #3 では鳴らさず ADR-051 の②だけに出る（二重掲載回避）。"""
+    repo.upsert_stocks([STOCK])
+    _seed_holdings("72030")
+    _seed_quote("72030", 1000.0)  # 含み損なし（材料は news 1 次元のみ）
+    _insert_stock_news("https://x/neg", "72030", title="トヨタにリコール", polarity="negative")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+    assert content is not None
+    assert "保有の前提崩れの疑い" not in content  # #3 は鳴らない
+    assert "保有銘柄の悪材料" in content  # ADR-051 の②には出る

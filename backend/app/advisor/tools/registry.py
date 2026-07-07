@@ -30,6 +30,7 @@ from app.advisor.tools.schemas import (
     GetNewsContextArgs,
     GetNotableCandidatesArgs,
     GetPortfolioMetricsArgs,
+    GetPositionReviewsArgs,
     GetSignalsArgs,
     GetStockThemesArgs,
     GetTrackRecordArgs,
@@ -223,6 +224,20 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(SimulateTradeImpactArgs),
         handler=handlers.handle_simulate_trade_impact,
+        min_phase=2,
+    ),
+    "get_position_reviews": ToolDef(
+        name="get_position_reviews",
+        description=(
+            "保有ポジションの前提崩れ監視（ADR-088）。各保有について、含み損・悪材料ニュース・"
+            "会社予想の未達/下方修正・訂正報告といった『前提が崩れた疑い』の材料を Python が決定論"
+            "で集約し、記録済みの thesis（買い提案時の確信度・invalidation・catalyst）を添えて、"
+            "見直しが要る保有だけを返す。『持ち続けてよいか』『前提は崩れていないか』を保有起点で"
+            "点検するとき、売り判断の前に呼ぶ。数値は事実（材料タグ）で、崩れ判断・売買は自分が行う"
+            "（ADR-014）。日本株のみ・省略時は先頭ポートフォリオ。"
+        ),
+        parameters=_schema(GetPositionReviewsArgs),
+        handler=handlers.handle_get_position_reviews,
         min_phase=2,
     ),
     "get_financials": ToolDef(

@@ -142,7 +142,7 @@ AI Advisor の知識は **4 つの資産**に宿る。**CORE**（不変・規律
 | [docs/screens.md](docs/screens.md) | 画面設計（IA）・ナビ方針・Dashboard 構成・常駐 Advisor チャット・画面コンテキスト |
 | [docs/advisor.md](docs/advisor.md) | AI Advisor 設計（CORE/POLICYプロンプト・Tool・相談フロー）|
 | [docs/api.md](docs/api.md) | REST API 契約（Next ↔ FastAPI の境界）|
-| [docs/decisions.md](docs/decisions.md) | 主要な設計判断とその理由（ADR-001〜086） |
+| [docs/decisions.md](docs/decisions.md) | 主要な設計判断とその理由（ADR-001〜089） |
 | [docs/data-model.md](docs/data-model.md) | DB スキーマ・J-Quants データ対応 |
 | [docs/jquants.md](docs/jquants.md) | J-Quants API V2 の認証・エンドポイント・プラン |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 0〜7 の開発ロードマップ |

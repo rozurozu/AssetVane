@@ -170,6 +170,38 @@ def pending_trade_proposal_exists(conn: Connection, kind: str, code: str) -> boo
     return False
 
 
+def get_latest_trade_thesis(conn: Connection, code: str) -> dict[str, Any] | None:
+    """指定 code の最新の買い提案 body から判断属性（thesis）を返す（ADR-088・#3）。
+
+    保有と提案の物理リンクは無い（ADR-052/084）ため、body.code 一致で最新の買い提案を近似的に
+    引く（pending_trade_proposal_exists と同じ body スキャン・migration 不要）。返すのは
+    `{proposed_date, conviction?, invalidation?, catalyst?}`（値が無い属性はキーごと落とす）。
+    同 code の買い提案が無ければ None。status は問わない（承認は約定を起こさないが＝ADR-001/019、
+    記録された thesis は最新の買い判断の根拠として前提崩れ監視に使う＝ADR-088）。
+    """
+    stmt = (
+        select(proposals.c.body, proposals.c.created_date)
+        .where(proposals.c.kind == "buy")
+        .order_by(proposals.c.created_date.desc(), proposals.c.id.desc())
+    )
+    for body_raw, created_date in conn.execute(stmt).all():
+        if not body_raw:
+            continue
+        try:
+            body = json.loads(body_raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(body, dict) or body.get("code") != code:
+            continue
+        thesis: dict[str, Any] = {"proposed_date": created_date}
+        for key in ("conviction", "invalidation", "catalyst"):
+            val = body.get(key)
+            if val:
+                thesis[key] = val
+        return thesis
+    return None
+
+
 def pending_profile_note_exists(conn: Connection, text: str) -> bool:
     """同一 text の pending な profile_note 提案が既にあるか（ADR-082・重複起票防止）。
 

@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     )
     notable_digest_max: int = 8  # digest に載せる AI 選別の上限（残りは「…ほか N 件」）
 
+    # --- 保有の前提崩れ監視（ADR-088・#3 Thesis ライフサイクル監視） ---
+    # 夜 digest の「前提崩れの疑い」＋Tool get_position_reviews に載せる保有レビューの件数上限
+    # （超過は件数のみ記録＝No silent caps）。手法閾値（含み損率・予想未達率 等）は
+    # services/position_review.py の定数（ADR-016/027）。ここは運用つまみ（表示上限）だけ持つ。
+    position_review_cap: int = 8
+
     # --- 経験蒸留（reviewer 面・自己改善ループ ④・ADR-081） ---
     # 夜バッチの distill_experience が採点済み outcome を知識カード draft に蒸留する（テーマ B）。
     # 活動量ゲート＝新規 final（scored_at がカーソル超）がこの数未満の晩は LLM を呼ばず skip。

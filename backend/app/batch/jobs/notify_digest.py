@@ -30,6 +30,7 @@ from app.db import repo
 from app.db.engine import get_engine
 from app.ml import model_store
 from app.services.notable import build_notable_candidates
+from app.services.position_review import build_position_reviews, summarize_flags
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,34 @@ def _holding_risk_lines(conn: Connection) -> list[str]:
         lines.append(f"・{name} ({r['code']}) {headline}")
     if remaining > 0:
         lines.append(f"　…ほか {remaining} 件")
+    return lines
+
+
+def _thesis_watch_lines(conn: Connection) -> list[str]:
+    """③保有の前提崩れの疑い（ADR-088・#3）を決定論で組む digest 行。
+
+    build_position_reviews が既定 PF の各保有から集約した「前提崩れ材料」（含み損・悪材料・会社
+    予想の未達/下方修正・訂正報告）が閾値に達し、記録済み thesis と突き合わせるべき保有を列挙する。
+    ADR-051 の②保有悪材料（生ニュース）とは thesis-aware ゲートで差別化する（生ニュース単独は #3
+    では鳴らない＝二重掲載回避）。疑いが無ければ空リスト（セクションごと省略）。has_content に含めて
+    「疑いがある夜は always_daily_digest=False でも送る」を満たす（決定論アラート＝risk_lines と
+    同格・注目シグナルより前に置き 1900 字截断から守る）。
+    """
+    result = build_position_reviews(conn)
+    reviews = result.get("reviews") or []
+    if not reviews:
+        return []
+    lines = [f"⚠️ 保有の前提崩れの疑い（{len(reviews)} 件）"]
+    for r in reviews:
+        name = r.get("company_name") or r["code"]
+        line = f"・{name} ({r['code']}) — {summarize_flags(r.get('flags') or {})}"
+        thesis = r.get("thesis") or {}
+        if thesis.get("invalidation"):
+            line += f"｜前提: {thesis['invalidation']}"
+        lines.append(line)
+    dropped = (result.get("counts") or {}).get("dropped") or 0
+    if dropped:
+        lines.append(f"　…ほか {dropped} 件")
     return lines
 
 
@@ -240,6 +269,9 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
     # ある夜は always_daily_digest=False でも送る」を満たす。
     risk_lines = _holding_risk_lines(conn)
 
+    # ③保有の前提崩れの疑い（ADR-088・#3）。決定論アラート＝risk_lines と同格で has_content に含む。
+    thesis_watch = _thesis_watch_lines(conn)
+
     # 経験レビューの下書き件数（ADR-081・Q9）。情報行なので has_content には含めない。
     reviewer_drafts = _reviewer_drafts_line(conn, today)
     # 投資家プロファイルの傾向メモ件数（ADR-082）。同じく情報行（has_content に含めない）。
@@ -247,7 +279,7 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
     # 提案の反証レビュー件数（ADR-086）。同じく情報行（has_content に含めない）。
     skeptic_reviews = _skeptic_reviews_line(conn, today)
 
-    has_content = bool(n_picks or rebalance or proposal or risk_lines)
+    has_content = bool(n_picks or rebalance or proposal or risk_lines or thesis_watch)
     if not has_content and not settings.always_daily_digest:
         return None  # 好機がある日だけ送る設定で、何も無い日（[OPEN-N]）
 
@@ -257,6 +289,11 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
     # ②は能動配信の主眼。Discord の 1900 字截断で末尾が切れても残るよう注目シグナルより前に置く。
     if risk_lines:
         lines.extend(risk_lines)
+        lines.append("")
+
+    # ③保有の前提崩れの疑い（ADR-088・#3）。②と同じ決定論安全網ブロックで注目シグナルより前に置く。
+    if thesis_watch:
+        lines.extend(thesis_watch)
         lines.append("")
 
     # 注目シグナル（AI 選別）。

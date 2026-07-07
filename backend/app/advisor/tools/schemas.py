@@ -110,6 +110,12 @@ class OptimizePortfolioArgs(_ToolArgs):
     portfolio_id: int | None = None
 
 
+class GetPositionReviewsArgs(_ToolArgs):
+    """get_position_reviews の引数（ADR-088・保有の前提崩れ監視）。省略時は先頭ポートフォリオ。"""
+
+    portfolio_id: int | None = None
+
+
 class GetFinancialsArgs(_ToolArgs):
     """get_financials の引数（spec §4.4）。"""
 

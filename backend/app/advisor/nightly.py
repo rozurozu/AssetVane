@@ -35,6 +35,10 @@ from app.advisor.tools.registry import CURRENT_PHASE
 from app.db import repo
 from app.services.knowledge_cards import load_card_texts_for_injection
 from app.services.notable import build_notable_candidates, format_candidates_for_prompt
+from app.services.position_review import (
+    build_position_reviews,
+    format_position_reviews_for_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,14 @@ _NIGHTLY_INSTRUCTION = (
     "本当に無ければ空でよい）。深掘りが要る候補は get_dossier / get_news_context / search_news で"
     "調べてから理由を書け。より広く候補を見たいときは get_notable_candidates を呼べる（生の全 "
     "signals を score 降順で舐めるのは避ける＝上昇トレンドの山で埋もれる・ADR-067）。\n\n"
+    "指示文の末尾にはもう一つ、Python が決定論で拾った『保有の前提崩れの疑い』（含み損・悪材料・"
+    "会社予想の未達/下方修正・訂正報告などの材料と、買った時に記録した前提〔invalidation/catalyst/"
+    "確信度〕）を渡す。各保有について get_position_reviews / get_valuation / get_news_context / "
+    "get_indicators で今日の事実を取り直し、記録された前提と突き合わせて棚卸しせよ。**前提が崩れて"
+    "いると判断したら propose_trade(action='sell', code, reason, invalidation) で売り提案を起票**"
+    "（承認制で約定しない・数値は出さない＝ADR-052/009）、崩れていなければ継続保有の理由を "
+    "submit_journal の所見に短く記せ。疑いが無ければ（末尾が『なし』なら）何もしなくてよい"
+    "（ADR-088/089）。\n\n"
     "最後に必ず submit_journal で所見（observations）・提案（proposal）・方針変更案"
     "（proposed_policy_change）を提出すること。強い買い/売り材料がある銘柄があれば propose_trade で"
     "方向と根拠を起票せよ（無ければ出さなくてよい・数値は出さない＝ADR-052）。"
@@ -95,15 +107,25 @@ async def run_nightly_advisor(conn: Connection) -> str | None:
     recent = repo.get_recent_journal_summary(conn)
     profile = repo.get_investor_profile(conn)["body"]  # 記述の第3層（鏡・反追従・ADR-082）
 
-    # 合流ゲート済みの注目候補をプロンプトに直接注入（ツール依存なしで堅牢＝ADR-067/018）。
+    # 合流ゲート済みの注目候補＋保有の前提崩れの疑いをプロンプトに直接注入（ツール依存なしで堅牢＝
+    # ADR-067/088/018）。前提崩れは決定論で拾い、崩れ判断・売り提案は夜AI に委ねる（ADR-014/089）。
     candidates = build_notable_candidates(conn)
-    instruction = _NIGHTLY_INSTRUCTION + "\n\n" + format_candidates_for_prompt(candidates)
+    reviews = build_position_reviews(conn)
+    briefing["position_reviews"] = reviews  # 監査用に journal の situation_briefing に残す
+    instruction = (
+        _NIGHTLY_INSTRUCTION
+        + "\n\n"
+        + format_candidates_for_prompt(candidates)
+        + "\n\n"
+        + format_position_reviews_for_prompt(reviews)
+    )
 
-    # 夜 AI は focus が無い（単発分析）ので、注目候補の code ぶんの銘柄ノートを exact-match で
-    # 決定論注入する（ADR-062 追補・④＝AI に掘らせず取りこぼさない・ADR-067 の直接注入精神）。
-    # {候補} ∩ {ノート持ち} は保有/ウォッチ中心の少数なので実質数枚（weight 降順で
-    # _STOCK_INJECT_LIMIT）。
+    # 夜 AI は focus が無い（単発分析）ので、注目候補＋前提崩れ保有の code ぶんの銘柄ノートを
+    # exact-match で決定論注入する（ADR-062 追補・④＝AI に掘らせず取りこぼさない・ADR-067/088 の
+    # 直接注入精神）。順序維持で重複排除する（{候補∪前提崩れ} ∩ {ノート持ち} は少数）。
     candidate_codes = [str(c["code"]) for c in candidates.get("candidates", []) if c.get("code")]
+    review_codes = [str(r["code"]) for r in reviews.get("reviews", []) if r.get("code")]
+    candidate_codes = list(dict.fromkeys(candidate_codes + review_codes))
 
     messages = build_messages(
         core_prompt=CORE,
