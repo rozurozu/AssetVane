@@ -76,6 +76,31 @@ const CONVICTION_CLS: Record<string, string> = {
   low: "bg-surface-2 text-ink-subtle",
 };
 
+// buy/sell の body に載る skeptic 反証（ADR-086）。夜バッチの独立面が提案を反証した注記。
+type Skeptic = { verdict?: string; refutation?: string; reviewed_at?: string };
+function bodySkeptic(body: unknown, kind: Proposal["kind"]): Skeptic | null {
+  if ((kind === "buy" || kind === "sell") && body != null && typeof body === "object") {
+    const b = body as { skeptic?: unknown };
+    if (b.skeptic != null && typeof b.skeptic === "object") {
+      const s = b.skeptic as Skeptic;
+      if (typeof s.refutation === "string" && s.refutation) return s;
+    }
+  }
+  return null;
+}
+
+// 反証 verdict バッジ（holds=筋が通る/weak=論拠が弱い/fragile=前提が脆い）。深刻度で色を強める。
+const VERDICT_LABEL: Record<string, string> = {
+  holds: "反証: 筋は通る",
+  weak: "反証: 論拠が弱い",
+  fragile: "反証: 前提が脆い",
+};
+const VERDICT_CLS: Record<string, string> = {
+  holds: "bg-surface-2 text-ink-muted",
+  weak: "bg-surface-2 text-warning",
+  fragile: "bg-down-weak text-down",
+};
+
 export function ProposalCard({ proposal, dependencyMet, busy, onApprove, onReject }: Props) {
   const p = proposal;
   const isPending = p.status === "pending";
@@ -83,6 +108,7 @@ export function ProposalCard({ proposal, dependencyMet, busy, onApprove, onRejec
   const approveDisabled = busy || !dependencyMet;
   const body = bodySummary(p.body, p.kind);
   const j = bodyJudgment(p.body, p.kind);
+  const skeptic = bodySkeptic(p.body, p.kind);
 
   return (
     <div className="rounded-lg border border-hairline bg-surface-1 p-3">
@@ -114,6 +140,25 @@ export function ProposalCard({ proposal, dependencyMet, busy, onApprove, onRejec
         <div className="mb-1.5 space-y-0.5 text-[11px] text-ink-subtle leading-[1.4]">
           {j.catalyst && <div>catalyst: {j.catalyst}</div>}
           {j.invalidation && <div>前提崩れ: {j.invalidation}</div>}
+        </div>
+      )}
+
+      {/* 提案前 red-team 反証（ADR-086）＝独立面の反証を承認判断の材料に見せる（自動却下しない）。 */}
+      {skeptic && (
+        <div className="mb-1.5 rounded-md border border-hairline bg-surface-2 p-2">
+          <div className="flex items-center gap-2">
+            {skeptic.verdict && (
+              <span
+                className={`rounded-sm px-1.5 py-0.5 font-medium text-[11px] ${
+                  VERDICT_CLS[skeptic.verdict] ?? "bg-surface-2 text-ink-muted"
+                }`}
+              >
+                {VERDICT_LABEL[skeptic.verdict] ?? "反証"}
+              </span>
+            )}
+            <span className="text-[11px] text-ink-subtle">red-team レビュー</span>
+          </div>
+          <div className="mt-1 text-[12px] text-ink-muted leading-[1.45]">{skeptic.refutation}</div>
         </div>
       )}
 

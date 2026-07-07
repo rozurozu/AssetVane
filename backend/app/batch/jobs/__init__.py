@@ -36,6 +36,7 @@ from app.batch.jobs import (
     investigate_dossier,
     notify_cost_warn,
     notify_digest,
+    red_team_proposals,
     resolve_edinet_codes,
     run_advisor,
     score_ai_alpha,
@@ -147,6 +148,12 @@ NIGHTLY_JOBS = [
     # 傾向メモ draft を蒸留する（distill_experience と対の backward-looking 蒸留）。活動量ゲート
     # （新規 SELL < 閾値）と profiler 面 未設定は健全 skip（ok=True）。下書き件数は digest が出す。
     distill_investor_profile.run,
+    # ADR-086: 提案前 red-team 反証（skeptic 面）。当夜 pending の buy/sell 提案（run_advisor 生成
+    # ／昼 chat 起票）を独立面で反証し body.skeptic に注記する。tag_news_polarity や
+    # investigate_dossier で enrich された後・通知系の前に置き、当夜の文脈で反証し、digest に反証
+    # 件数を 1 行出せるようにする。skeptic 面 未設定・未反証 0 件は健全 skip（ok=True）。
+    # 自動却下せず注記のみ（ADR-009）。
+    red_team_proposals.run,
     # ADR-028: warn 超過時、その月最初の夜に 1 通だけ警告（通知系を digest と並べる）。
     notify_cost_warn.run,
     notify_digest.run,  # Phase 6: ⑦⑧＋夜AI 提案を 1 通の Discord digest に束ねる（phase6-spec §3）

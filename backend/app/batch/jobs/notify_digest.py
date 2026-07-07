@@ -180,6 +180,18 @@ def _profile_notes_line(conn: Connection, today: str) -> str | None:
     return f"🪞 投資家プロファイルの傾向メモ下書き {n} 件（/profile で確認）"
 
 
+def _skeptic_reviews_line(conn: Connection, today: str) -> str | None:
+    """当夜 skeptic が提案に注記した反証件数を 1 行にする（ADR-086）。
+
+    情報行（reviewer 下書きと同型）＝has_content には含めない（反証だけの夜に digest を新規発火
+    させない）。0 件なら None（行を出さない）。反証は /proposals の承認判断材料になる。
+    """
+    n = repo.count_skeptic_reviews_on(conn, today)
+    if n <= 0:
+        return None
+    return f"🧠 提案の反証レビュー {n} 件（/proposals で確認）"
+
+
 def build_digest_content(conn: Connection, today: str) -> str | None:
     """当日の注目（AI 選別）＋⑦＋夜AI 提案を 1 通の digest 本文に組み立てる（spec §3・ADR-067）。
 
@@ -232,6 +244,8 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
     reviewer_drafts = _reviewer_drafts_line(conn, today)
     # 投資家プロファイルの傾向メモ件数（ADR-082）。同じく情報行（has_content に含めない）。
     profile_notes = _profile_notes_line(conn, today)
+    # 提案の反証レビュー件数（ADR-086）。同じく情報行（has_content に含めない）。
+    skeptic_reviews = _skeptic_reviews_line(conn, today)
 
     has_content = bool(n_picks or rebalance or proposal or risk_lines)
     if not has_content and not settings.always_daily_digest:
@@ -266,6 +280,10 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
 
     if profile_notes:
         lines.append(profile_notes)
+        lines.append("")
+
+    if skeptic_reviews:
+        lines.append(skeptic_reviews)
         lines.append("")
 
     if failed_index:

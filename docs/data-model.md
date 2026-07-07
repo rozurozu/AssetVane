@@ -425,7 +425,7 @@ yfinance `JPY=X` 日足終値を `FxAdapter`（`adapters/fx.py`・`UsEquityAdapt
 | `id` | INTEGER PK | |
 | `created_date` | TEXT | 提案日 |
 | `kind` | TEXT | `policy_change` / `buy` / `sell` / `rebalance` / `card_weight` / `profile_note`（[ADR-082](decisions.md)）|
-| `body` | TEXT | 提案内容（JSON・`kind` 依存）。`policy_change`=`{field, to, from?, reason?}`／`buy`・`sell`=`{code, company_name, market}`（ニュース起点の売買アイデア・[ADR-052](decisions.md)。**株数・金額などの数値は持たない**＝[ADR-014](decisions.md)）|
+| `body` | TEXT | 提案内容（JSON・`kind` 依存）。`policy_change`=`{field, to, from?, reason?}`／`buy`・`sell`=`{code, company_name, market}`（ニュース起点の売買アイデア・[ADR-052](decisions.md)。**株数・金額などの数値は持たない**＝[ADR-014](decisions.md)）。`buy`/`sell` は任意で判断属性 `conviction`/`invalidation`/`catalyst`（[ADR-084](decisions.md)）と反証注記 `skeptic={verdict, refutation, reviewed_at}`（[ADR-086](decisions.md)）も同じ JSON に載る（新列を作らず body に構造化）|
 | `rationale` | TEXT | 根拠（AI の説明）|
 | `status` | TEXT | `pending` / `approved` / `rejected` |
 | `outcome` | TEXT | 採否後の結果メモ（任意・振り返り用）|
@@ -437,6 +437,7 @@ yfinance `JPY=X` 日足終値を `FxAdapter`（`adapters/fx.py`・`UsEquityAdapt
 - `depends_on` は提案間の承認順制御に使う（例: `policy_change` を承認してから `buy` を承認）。Dashboard が「依存」を表現する（[screens.md §3](screens.md)・`_arbitration.md` 決定4）。`0006_advisor_state` の DDL に含める。
 - **`buy`/`sell` の起票（[ADR-052](decisions.md)）**: Advisor の `propose_trade` Tool から承認制で起票する（migration なし＝既存列で表現）。`body.code` は `stocks`→`us_stocks` で解決済み（未知コードは起票しない）。同一 `(kind, code)` の `pending` は重複起票しない（`reject`/`approve` 済みは再提案可）。`depends_on` は現状 None（自動リンクなし）。承認しても約定しない＝`status` 遷移のみ（提示専用・[ADR-009](decisions.md)）。
 - **`profile_note` の起票（[ADR-082](decisions.md)）**: 夜バッチ profiler 面が取引台帳の行動信号から投資家プロファイルの傾向メモを承認制で起票する（`body`＝`{text, evidence}`）。同一 `text` の `pending` は重複起票しない。承認すると `resolve_proposal`→`apply_profile_note` が `investor_profile.body` へ日付付きで**追記**する（却下は本文に触れない）。承認/却下は既存 `/proposals/{id}/approve|reject`（kind 非依存）を流用。
+- **`buy`/`sell` への反証注記（[ADR-086](decisions.md)）**: 夜バッチ skeptic 面（`red_team_proposals`）が当夜 pending の売買提案を独立面で反証し、`body.skeptic`（`{verdict(holds/weak/fragile), refutation, reviewed_at}`）を merge UPDATE する（新列なし・migration 不要）。**status は変えない**（自動却下せず注記のみ＝人間が `/proposals` で判断）。未反証（`body.skeptic` 無し）の pending 提案だけを対象にして冪等（カーソル不要）。
 
 ### `investor_profile` — 投資家プロファイル（記述・単一行・[ADR-082](decisions.md)）
 `policy`（規範＝どうすべきか）と分離した「この投資家はどういう人か＝行動の癖の記述」の層。単一行を育てる（版管理機構なし・第二の policy にしない）。夜バッチ profiler が台帳から傾向メモ（`proposals.kind='profile_note'`）を承認制で起票し、人間が `/profile` で承認すると `body` に追記される（[ADR-009](decisions.md)）。注入は CORE→POLICY に続く第 3 層（鏡・反追従＝AI は癖を打ち消す方向に使う）。`knowledge_cards` とは別物（アイデンティティを市場知識の RAG に混ぜない）。`0039_investor_profile` の DDL。

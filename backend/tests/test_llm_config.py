@@ -66,7 +66,7 @@ def test_resolve_face_model_falls_back_to_provider_default(temp_db: None) -> Non
 
 
 def test_describe_faces_returns_all(temp_db: None) -> None:
-    """describe_faces は全面を返し configured を付ける（reviewer/profiler 含む・ADR-081/082）。"""
+    """describe_faces は全面を返し configured を付ける（reviewer/profiler/skeptic 含む）。"""
     with get_engine().connect() as conn:
         faces = llm_config.describe_faces(conn)
     assert {f["face"] for f in faces} == {
@@ -77,6 +77,7 @@ def test_describe_faces_returns_all(temp_db: None) -> None:
         "triage",
         "reviewer",
         "profiler",
+        "skeptic",
     }
     assert all(f["configured"] for f in faces)
 

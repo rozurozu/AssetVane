@@ -500,6 +500,26 @@ class ProposeTradeArgs(_ToolArgs):
     )
 
 
+class SubmitRefutationArgs(_ToolArgs):
+    """submit_refutation の引数（ADR-086・提案前 red-team の反証を当夜 pending 提案に注記）。
+
+    skeptic 面が当夜 pending の buy/sell 提案を反証し、その結果を提案に**注記**する（自動却下は
+    しない＝承認判断は人間・ADR-009）。proposal_id は素材で渡された対象提案の id、verdict は反証の
+    強さ（holds=筋が通る/weak=弱い/fragile=脆い）、refutation は反証本文（最強の反対筋・弱点・
+    前提崩れ）。数値は Tool の事実のみ（自分で計算しない＝ADR-014）。
+    """
+
+    proposal_id: int = Field(
+        description="反証対象の提案 id（素材で渡された当夜 pending の buy/sell）。"
+    )
+    verdict: Literal["holds", "weak", "fragile"] = Field(
+        description="反証の帰結（holds=筋が通る / weak=論拠が弱い / fragile=前提が脆い）。"
+    )
+    refutation: str = Field(
+        description="反証本文（最強の反対筋・弱点・前提崩れ。数値は Tool の事実）。"
+    )
+
+
 class ProposeProfileNoteArgs(_ToolArgs):
     """propose_profile_note の引数（ADR-082・投資家プロファイルの傾向メモを承認制で起票）。
 

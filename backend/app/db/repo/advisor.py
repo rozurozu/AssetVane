@@ -211,6 +211,91 @@ def get_proposal(conn: Connection, proposal_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def list_pending_unreviewed_trade_proposals(conn: Connection) -> list[dict[str, Any]]:
+    """まだ反証（body.skeptic）が無い pending の buy/sell 提案を返す（ADR-086・skeptic の教材）。
+
+    proposals は code 専用列を持たず body(JSON) に詰めるため、pending かつ kind in (buy,sell) を
+    引いて Python 側で body をパースし、`skeptic` キーが無い行だけ返す
+    （pending_trade_proposal_exists と同型・migration 不要）。カーソルは持たず body.skeptic の有無で
+    有界化する（冪等）。
+    返却は素材注入に要る平坦 dict＝{id, action(=kind), code, company_name, market,
+    reason(=rationale), conviction, invalidation, catalyst}。
+    """
+    stmt = (
+        select(proposals)
+        .where(proposals.c.status == "pending", proposals.c.kind.in_(["buy", "sell"]))
+        .order_by(proposals.c.id)
+    )
+    out: list[dict[str, Any]] = []
+    for row in conn.execute(stmt).mappings().all():
+        body_raw = row["body"]
+        try:
+            body = json.loads(body_raw) if body_raw else {}
+        except (ValueError, TypeError):
+            body = {}
+        if not isinstance(body, dict) or "skeptic" in body:
+            continue  # 既に反証済み（body.skeptic あり）は新着に数えない
+        out.append(
+            {
+                "id": row["id"],
+                "action": row["kind"],
+                "code": body.get("code"),
+                "company_name": body.get("company_name"),
+                "market": body.get("market"),
+                "reason": row["rationale"],
+                "conviction": body.get("conviction"),
+                "invalidation": body.get("invalidation"),
+                "catalyst": body.get("catalyst"),
+            }
+        )
+    return out
+
+
+def attach_skeptic_review(conn: Connection, proposal_id: int, skeptic: dict[str, Any]) -> None:
+    """提案の body(JSON) に `skeptic`（反証注記）を merge し UPDATE する（ADR-086・W2）。
+
+    proposals スキーマは無改変＝反証は body.skeptic に構造化して載せる（ADR-084 house style）。
+    status は変えない（自動却下しない＝人間が /proposals で判断・ADR-009）。conn は呼び出し側
+    （skeptic ジョブ）が begin() で所有する（commit しない）。
+    """
+    row = conn.execute(select(proposals.c.body).where(proposals.c.id == proposal_id)).first()
+    if row is None:
+        return
+    try:
+        body = json.loads(row[0]) if row[0] else {}
+    except (ValueError, TypeError):
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    body["skeptic"] = skeptic
+    conn.execute(
+        proposals.update()
+        .where(proposals.c.id == proposal_id)
+        .values(body=json.dumps(body, ensure_ascii=False))
+    )
+
+
+def count_skeptic_reviews_on(conn: Connection, date: str) -> int:
+    """指定日に注記された反証（body.skeptic.reviewed_at == date）の件数（ADR-086・digest 用）。
+
+    notify_digest が「🧠 提案の反証レビュー N 件」の 1 行を出すために読む。body(JSON) に載るので
+    buy/sell 提案の body を走査して reviewed_at を突き合わせる（count_profile_notes_on 同型）。
+    """
+    stmt = select(proposals.c.body).where(proposals.c.kind.in_(["buy", "sell"]))
+    n = 0
+    for (body_raw,) in conn.execute(stmt).all():
+        if not body_raw:
+            continue
+        try:
+            body = json.loads(body_raw)
+        except (ValueError, TypeError):
+            continue
+        skeptic = body.get("skeptic") if isinstance(body, dict) else None
+        if isinstance(skeptic, dict) and skeptic.get("reviewed_at") == date:
+            n += 1
+    return n
+
+
 def update_proposal_status(
     conn: Connection,
     proposal_id: int,

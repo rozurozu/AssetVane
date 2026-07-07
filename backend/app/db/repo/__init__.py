@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from app.db.repo._common import pack_embedding
 from app.db.repo.advisor import (
+    attach_skeptic_review,
     count_profile_notes_on,
+    count_skeptic_reviews_on,
     get_journal,
     get_policy,
     get_proposal,
@@ -17,6 +19,7 @@ from app.db.repo.advisor import (
     insert_llm_usage,
     insert_proposal,
     list_journal,
+    list_pending_unreviewed_trade_proposals,
     list_proposals,
     pending_profile_note_exists,
     pending_trade_proposal_exists,
@@ -338,9 +341,12 @@ __all__ = [
     "get_recent_journal_summary",
     "insert_proposal",
     "list_proposals",
+    "list_pending_unreviewed_trade_proposals",
     "pending_trade_proposal_exists",
     "pending_profile_note_exists",
     "count_profile_notes_on",
+    "count_skeptic_reviews_on",
+    "attach_skeptic_review",
     "set_journal_policy_snapshot",
     "get_proposal",
     "update_proposal_status",

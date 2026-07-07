@@ -26,8 +26,8 @@ _SEED_MODEL = "test-model"
 def seed_llm_config() -> None:
     """temp DB に openai provider 1 行＋全 FACES を seed する（ADR-058）。
 
-    `for face in FACES` で回すので面が増えても自動追従する（現在 chat/nightly/dossier/tagger/
-    triage/reviewer の 6 面・ADR-081）。現エンジン（差し替え済み database_path）に対して書く。
+    `for face in FACES` で回すので面が増えても自動追従する（chat/nightly/dossier/tagger/triage/
+    reviewer/profiler/skeptic・ADR-081/082/086）。現エンジン（差し替え済み database_path）に書く。
     冪等（既に在れば無視）。
     """
     from sqlalchemy import insert, select

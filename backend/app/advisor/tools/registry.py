@@ -53,6 +53,7 @@ from app.advisor.tools.schemas import (
     SimulateTradeImpactArgs,
     SubmitJournalArgs,
     SubmitNotableStocksArgs,
+    SubmitRefutationArgs,
 )
 
 # 現在の投入フェーズ（段2 の dispatch が openai_tools(phase) に渡す）。
@@ -109,10 +110,16 @@ REGISTRY: dict[str, ToolDef] = {
     "get_signals": ToolDef(
         name="get_signals",
         description=(
-            "夜間バッチが事前計算したシグナル（momentum / volume_spike / stealth_accum 等）を取る。"
+            "夜間バッチが事前計算したシグナル（momentum / volume_spike / stealth_accum / "
+            "ai_alpha 等）を取る。"
             "「今どんな兆候が出ているか」を尋ねられたとき・候補探しの起点に呼ぶ。"
             "type='stealth_accum' で機関のステルス仕込み（価格圧縮×出来高持続増・payload.phase で"
             "in_range=仕込み継続/breakout=上放れ）を絞れる（ADR-074）。"
+            "type='ai_alpha' で AI決算スコア（対 TOPIX 60 営業日超過リターンの機械学習予測を当日"
+            "ユニバース内でパーセンタイル化した 0..1・ADR-066）を絞れる。"
+            "**予測であって事実でない**・モデル未配置の日は行が無い（行が無い＝弱気材料ではない）。"
+            "読み方は "
+            "get_method_card('ai_alpha')。"
         ),
         parameters=_schema(GetSignalsArgs),
         handler=handlers.handle_get_signals,
@@ -454,6 +461,22 @@ REGISTRY: dict[str, ToolDef] = {
         handler=handlers.handle_adjust_card_weight,
         min_phase=4,
     ),
+    # --- 提案前 red-team 反証（skeptic 面専用・ADR-086）---
+    "submit_refutation": ToolDef(
+        name="submit_refutation",
+        description=(
+            "当夜 pending の買い/売り提案（素材で渡される）を反証した結果を、その提案に**注記**する"
+            "（ADR-086）。proposal_id＝対象提案の id、verdict＝反証の帰結"
+            "（holds=筋が通る/weak=論拠が弱い/fragile=前提が脆い）、"
+            "refutation＝反証本文（最強の反対筋・弱点・前提崩れ）。"
+            "**自動却下はしない**＝人間が /proposals で反証を見て承認/却下を判断する（ADR-009）。"
+            "数値は Tool の事実のみ（自分で計算しない＝ADR-014）。"
+        ),
+        parameters=_schema(SubmitRefutationArgs),
+        handler=handlers.handle_submit_refutation,
+        min_phase=1,
+        allowlist_only=True,  # skeptic 面（SKEPTIC_TOOLSET）でだけ露出・chat/nightly には見せない
+    ),
     # --- 投資家プロファイル蒸留（profiler 面専用・ADR-082）---
     "propose_profile_note": ToolDef(
         name="propose_profile_note",
@@ -596,6 +619,30 @@ PROFILER_TOOLSET: frozenset[str] = frozenset(
         "get_track_record",
         "search_judgments",
         "propose_profile_note",
+    }
+)
+
+
+# 提案前 red-team 反証（skeptic 面・ADR-086）に見せる最小 toolset。反証の裏取りに要る read-only
+# pull（成績・過去判断・シグナル〔ai_alpha 含む〕・バリュエーション・ニュース文脈・ドシエ・指標・
+# 業種リードラグ・テーマ・カード検索）＋反証の提出口 submit_refutation（allowlist_only で他面に隠す
+# ）だけ。書き込み系（propose_trade/submit_journal/propose_card 等）は見せず、末尾で
+# persist_skeptic_reviews_from_tool_runs が submit_refutation だけ拾って body に焼く（多重防御）。
+# ai_alpha を get_signals 経由で引かせ、ML と thesis のズレを反証材料にする（ADR-086 Part a）。
+SKEPTIC_TOOLSET: frozenset[str] = frozenset(
+    {
+        "get_track_record",
+        "search_judgments",
+        "get_signals",
+        "get_indicators",
+        "get_valuation",
+        "get_us_valuation",
+        "get_news_context",
+        "get_dossier",
+        "get_lead_lag",
+        "get_stock_themes",
+        "search_cards",
+        "submit_refutation",
     }
 )
 

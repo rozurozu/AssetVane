@@ -21,7 +21,18 @@ from app.db import repo
 # triage は知識カードの AI 審査（card_triage・ADR-062）が使う（低頻度・結果が重いので独立面）。
 # reviewer は経験蒸留（distill_experience・ADR-081）が使う（採点済み outcome→知識カード draft）。
 # profiler は投資家プロファイル蒸留（distill_investor_profile・ADR-082）が使う（台帳→傾向メモ）。
-FACES: tuple[str, ...] = ("chat", "nightly", "dossier", "tagger", "triage", "reviewer", "profiler")
+# skeptic は提案前の反証（red_team_proposals・ADR-086）が使う（当夜 pending の buy/sell を独立面で
+# 反証し body.skeptic に注記）。生成（nightly）と反証を別面にして red-team にする（別 model 推奨）。
+FACES: tuple[str, ...] = (
+    "chat",
+    "nightly",
+    "dossier",
+    "tagger",
+    "triage",
+    "reviewer",
+    "profiler",
+    "skeptic",
+)
 
 
 class FaceNotConfiguredError(RuntimeError):

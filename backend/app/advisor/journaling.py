@@ -29,6 +29,7 @@ from app.advisor.tools.schemas import (
     ProposeCardArgs,
     ProposeProfileNoteArgs,
     ProposeTradeArgs,
+    SubmitRefutationArgs,
     WatchlistCandidateArg,
     coerce_policy_change,
 )
@@ -318,6 +319,63 @@ def persist_profile_notes_from_tool_runs(
         inserted.append(proposal_id)
 
     return inserted
+
+
+def persist_skeptic_reviews_from_tool_runs(
+    conn: Connection,
+    *,
+    tool_runs: list[dict[str, Any]],
+    date: str,
+    allowed_ids: set[int],
+) -> list[int]:
+    """tool_runs から submit_refutation を拾い pending 提案の body に反証を注記する（ADR-086・W2）。
+
+    戻り値: 反証を注記した proposals の id 一覧（drop された分は含まない）。
+
+    手順（persist_profile_notes_from_tool_runs と同型・多重防御）:
+    1. submit_refutation の args を全件抽出（1 晩に複数可）。
+    2. SubmitRefutationArgs で検証（不備の 1 件だけ skip・per-item グレースフル・ADR-018）。
+    3. proposal_id が **allowed_ids（当夜集めた pending 未反証の buy/sell）に含まれる**か再確認
+       （素材外/幻覚 id を drop）。さらに DB で pending かつ buy/sell を確認（二重ガード）。
+    4. body に `{verdict, refutation, reviewed_at}` を merge（attach_skeptic_review）。status は
+       変えない（自動却下しない＝人間が判断・ADR-009）。同一 id は 1 度だけ（dedup）。
+
+    接続規約（W2）: commit はしない。呼び出し側（red_team_proposals ジョブ）が begin() を所有する。
+    """
+    reviewed: list[int] = []
+    seen: set[int] = set()
+    for raw in _extract_args(tool_runs, "submit_refutation"):
+        try:
+            args = SubmitRefutationArgs.model_validate(raw)
+        except ValidationError:
+            logger.warning("submit_refutation: 引数が不正（%s）。注記せずスキップ", raw)
+            continue
+        pid = args.proposal_id
+        if pid in seen:
+            continue
+        if pid not in allowed_ids:
+            # 素材で渡していない/幻覚の proposal_id は注記しない（多重防御・ADR-086）。
+            logger.warning("submit_refutation: proposal_id %s は対象外。注記せずスキップ", pid)
+            continue
+        refutation = args.refutation.strip()
+        if not refutation:
+            continue
+        prop = repo.get_proposal(conn, pid)
+        if (
+            prop is None
+            or prop.get("status") != "pending"
+            or prop.get("kind") not in ("buy", "sell")
+        ):
+            # 承認/却下済み・非 buy/sell は注記しない（状況変化後の反証は無意味）。
+            continue
+        seen.add(pid)
+        repo.attach_skeptic_review(
+            conn,
+            pid,
+            {"verdict": args.verdict, "refutation": refutation, "reviewed_at": date},
+        )
+        reviewed.append(pid)
+    return reviewed
 
 
 def _extract_notable_picks(tool_runs: list[dict[str, Any]]) -> dict[str, Any] | None:

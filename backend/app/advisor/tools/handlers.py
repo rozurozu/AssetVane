@@ -62,6 +62,7 @@ from app.advisor.tools.schemas import (
     SimulateTradeImpactArgs,
     SubmitJournalArgs,
     SubmitNotableStocksArgs,
+    SubmitRefutationArgs,
     coerce_policy_change,
 )
 from app.db import repo
@@ -1099,6 +1100,29 @@ async def handle_propose_profile_note(args: dict[str, object]) -> dict[str, Any]
     return {
         "ok": True,
         "message": "投資家プロファイルの傾向メモを pending で起票する（/profile で承認）。",
+    }
+
+
+async def handle_submit_refutation(args: dict[str, object]) -> dict[str, Any]:
+    """submit_refutation（ADR-086・検証 only）。提案前 red-team の反証を pending 提案に注記する。
+
+    propose_profile_note と同じ契約＝実際の注記（body.skeptic への UPDATE）は呼び出し側
+    （red_team_proposals ジョブ）が tool_runs から persist_skeptic_reviews_from_tool_runs で行う。
+    ここでは引数を検証し AI に手応えを返すだけ（自動却下せず注記のみ＝ADR-009）。例外は握って
+    {"error"} に倒す。
+    """
+    try:
+        parsed = SubmitRefutationArgs.model_validate(args)
+    except Exception as exc:
+        logger.warning("handle_submit_refutation: 引数が不正（%s）", args)
+        return {"error": str(exc)}
+    if not parsed.refutation.strip():
+        return {"error": "refutation が空です。反証の要点を入れてください。"}
+    return {
+        "ok": True,
+        "proposal_id": parsed.proposal_id,
+        "verdict": parsed.verdict,
+        "message": "反証を提案に注記する（自動却下はしない・人間が /proposals で判断）。",
     }
 
 
