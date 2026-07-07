@@ -1,6 +1,7 @@
 ---
 kind: strategy
 summary: 清原式ネットキャッシュ・バリュー株発掘（低PER×小型×ネットキャッシュ比率≥1）。割安な小型株を能動的に screen で探すときに引く。
+native_horizon: long（割安是正まで年単位のバリュー投資）
 ---
 # net_cash_value — 清原式ネットキャッシュ・バリュー株（screen 手法）
 

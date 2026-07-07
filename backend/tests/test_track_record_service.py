@@ -239,6 +239,7 @@ def test_get_track_record_empty_is_safe(temp_db):
         tr = track_record.get_track_record(conn)
     assert tr["summary"] == []
     assert tr["calibration"] == []
+    assert tr["horizon_calibration"] == []
     assert tr["recent"] == []
     assert tr["pending_count"] == 0
 
@@ -352,6 +353,122 @@ def test_get_track_record_calibration_by_conviction(temp_db, monkeypatch):
     assert all(c["conviction"] is not None for c in tr["calibration"])
     convictions = {c["conviction"] for c in tr["calibration"]}
     assert convictions == {"high", "low"}
+
+
+# --- ホライズンキャリブレーション（ADR-091） -------------------------------
+
+
+def test_default_horizons_include_long_250() -> None:
+    """既定の採点ホライズンに long=250 が入る（長期テーゼを本来の時間軸で採点＝ADR-091）。"""
+    assert track_record._HORIZONS == (20, 60, 250)
+
+
+def test_declared_horizon_denormalized_from_body_to_outcome(temp_db, monkeypatch):
+    """ADR-091: proposal.body の horizon が採点時 proposal_outcomes.declared_horizon に非正規化。
+
+    notable は想定保有期間を申告しないため NULL のまま（horizon_calibration は directional 限定）。
+    """
+    monkeypatch.setattr(track_record, "_HORIZONS", (1,))
+    with get_engine().begin() as conn:
+        conn.execute(schema.stocks.insert().values(code="7203", company_name="トヨタ"))
+        conn.execute(schema.stocks.insert().values(code="6758", company_name="ソニー"))
+        _seed_quotes(
+            conn,
+            schema.daily_quotes,
+            "code",
+            "7203",
+            [("2026-01-05", 100.0), ("2026-01-06", 120.0)],
+        )
+        _seed_quotes(
+            conn,
+            schema.daily_quotes,
+            "code",
+            "6758",
+            [("2026-01-05", 100.0), ("2026-01-06", 105.0)],
+        )
+        _seed_index(conn, "^TPX", [("2026-01-05", 200.0), ("2026-01-06", 202.0)])
+        repo.insert_proposal(
+            conn,
+            created_date="2026-01-05",
+            kind="buy",
+            body='{"code": "7203", "company_name": "トヨタ", "market": "JP", "horizon": "short"}',
+            status="pending",
+        )
+        repo.upsert_notable_pick(
+            conn, date="2026-01-05", code="6758", reason="出来高", source="nightly"
+        )
+        track_record.score_pending_outcomes(conn)
+
+    by_code = {r["code"]: r for r in _outcomes()}
+    assert by_code["7203"]["declared_horizon"] == "short"
+    assert by_code["6758"]["declared_horizon"] is None  # notable は非申告
+
+
+def test_scoring_guard_drops_noncanonical_body_horizon(temp_db, monkeypatch):
+    """ADR-091: body に想定外の horizon があっても採点は NULL に倒す（バケットを汚さない）。"""
+    monkeypatch.setattr(track_record, "_HORIZONS", (1,))
+    with get_engine().begin() as conn:
+        conn.execute(schema.stocks.insert().values(code="7203", company_name="トヨタ"))
+        _seed_quotes(
+            conn,
+            schema.daily_quotes,
+            "code",
+            "7203",
+            [("2026-01-05", 100.0), ("2026-01-06", 120.0)],
+        )
+        _seed_index(conn, "^TPX", [("2026-01-05", 200.0), ("2026-01-06", 202.0)])
+        repo.insert_proposal(
+            conn,
+            created_date="2026-01-05",
+            kind="buy",
+            body='{"code": "7203", "market": "JP", "horizon": "来月まで"}',
+            status="pending",
+        )
+        track_record.score_pending_outcomes(conn)
+
+    assert _outcomes()[0]["declared_horizon"] is None
+
+
+def test_get_track_record_horizon_calibration(temp_db, monkeypatch):
+    """ADR-091: horizon_calibration が kind×declared_horizon×horizon で集計し、未申告を除く。
+
+    「short と宣言した提案が採点 horizon で報われたか」が読める形を固定する。
+    """
+    monkeypatch.setattr(track_record, "_HORIZONS", (1,))
+    with get_engine().begin() as conn:
+        # short=上昇(hit 1)・long=下落(hit 0)・宣言なしの buy も 1 件（除外確認用）。
+        seeds = [("7203", "short", 130.0), ("6758", "long", 90.0), ("9984", None, 110.0)]
+        for code, horiz, exit_ in seeds:
+            conn.execute(schema.stocks.insert().values(code=code, company_name=code))
+            _seed_quotes(
+                conn,
+                schema.daily_quotes,
+                "code",
+                code,
+                [("2026-01-05", 100.0), ("2026-01-06", exit_)],
+            )
+            attrs = f', "horizon": "{horiz}"' if horiz else ""
+            repo.insert_proposal(
+                conn,
+                created_date="2026-01-05",
+                kind="buy",
+                body=f'{{"code": "{code}", "company_name": "{code}", "market": "JP"{attrs}}}',
+                status="pending",
+            )
+        _seed_index(conn, "^TPX", [("2026-01-05", 200.0), ("2026-01-06", 200.0)])  # ベンチ横ばい
+        track_record.score_pending_outcomes(conn)
+
+    with get_engine().connect() as conn:
+        tr = track_record.get_track_record(conn)
+
+    hcal = {(c["kind"], c["declared_horizon"], c["horizon"]): c for c in tr["horizon_calibration"]}
+    assert hcal[("buy", "short", 1)]["count"] == 1
+    assert hcal[("buy", "short", 1)]["hit_rate"] == pytest.approx(1.0)  # short が当たった
+    assert hcal[("buy", "long", 1)]["hit_rate"] == pytest.approx(0.0)  # long が外した
+    # 宣言なしの buy（9984）は horizon_calibration に出ない（declared_horizon NOT NULL 限定）。
+    assert all(c["declared_horizon"] is not None for c in tr["horizon_calibration"])
+    horizons = {c["declared_horizon"] for c in tr["horizon_calibration"]}
+    assert horizons == {"short", "long"}
 
 
 # --- 採点入口の有界化（ADR-077・final スキップ） ---

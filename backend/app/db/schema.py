@@ -955,12 +955,15 @@ proposal_outcomes = Table(
     # 提案時の確信度 'high'/'medium'/'low'（body から非正規化・notable/legacy は NULL＝ADR-084）。
     # CHECK は張らない（kind/source/status 同様アプリ層で正規化＝house style・news.polarity 前例）。
     Column("conviction", String),
+    # 提案時の想定保有期間 'short'/'medium'/'long'（body.horizon から非正規化・notable/legacy は
+    # NULL＝ADR-091）。CHECK は張らない（conviction 同様アプリ層で正規化）。
+    Column("declared_horizon", String),
     Column("code", String, nullable=False),  # JP 5 桁 / US ティッカー
     Column("market", String, nullable=False),  # 'JP'/'US'（notable は常に JP）
     Column(
         "entry_date", String, nullable=False
     ),  # 起点日=proposals.created_date / notable_picks.date
-    Column("horizon", Integer, nullable=False),  # 保有営業日数（20/60・系列 N 本先）
+    Column("horizon", Integer, nullable=False),  # 採点保有営業日数（20/60/250・系列 N 本先）
     Column("entry_priced_date", String),  # 実際に採用した起点バー日（forward で前進した場合ずれる）
     Column("entry_price", Float),  # 起点バーの adj_close
     Column("as_of_date", String),  # 到達バー日（pending は NULL）

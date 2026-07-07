@@ -250,6 +250,59 @@ def test_persist_unknown_conviction_keeps_trade_without_conviction(temp_db: None
     assert "conviction" not in body  # 不明値は載せない（採点で NULL バケットに落ちる）
 
 
+# --- 想定保有期間（horizon）の正規化と永続（ADR-091）---------------------------
+
+
+def test_normalize_horizon_aliases() -> None:
+    """短/中/長・短期/中期/長期・大小文字・mid を canonical short/medium/long に寄せる。"""
+    n = journaling._normalize_horizon
+    assert n("short") == "short"
+    assert n("Medium") == "medium"
+    assert n("mid") == "medium"
+    assert n("長") == "long"
+    assert n("短期") == "short"
+    assert n("中期") == "medium"
+    assert n("長期") == "long"
+    # 未知/非文字列は None に倒す（メタ不備で提案を drop しない＝ADR-018）。
+    assert n("来月まで") is None
+    assert n(None) is None
+    assert n(30) is None
+
+
+def test_persist_captures_horizon(temp_db: None) -> None:
+    """ADR-091: propose_trade の horizon が正規化されて body に載る（日本語 短→short）。"""
+    _seed_stocks()
+    run = {
+        "name": "propose_trade",
+        "args": {"action": "buy", "code": "72030", "reason": "材料", "horizon": "短"},
+    }
+    with get_engine().begin() as conn:
+        ids = journaling.persist_trade_proposals_from_tool_runs(
+            conn, tool_runs=[run], date="2026-07-07"
+        )
+    assert len(ids) == 1
+    with get_engine().connect() as conn:
+        body = json.loads(repo.list_proposals(conn)[0]["body"])
+    assert body["horizon"] == "short"
+
+
+def test_persist_unknown_horizon_keeps_trade_without_horizon(temp_db: None) -> None:
+    """ADR-091/018: 不明な horizon は捨てるが提案は起票する（drop しない・後方互換）。"""
+    _seed_stocks()
+    run = {
+        "name": "propose_trade",
+        "args": {"action": "buy", "code": "72030", "reason": "材料", "horizon": "来月まで"},
+    }
+    with get_engine().begin() as conn:
+        ids = journaling.persist_trade_proposals_from_tool_runs(
+            conn, tool_runs=[run], date="2026-07-07"
+        )
+    assert len(ids) == 1
+    with get_engine().connect() as conn:
+        body = json.loads(repo.list_proposals(conn)[0]["body"])
+    assert "horizon" not in body  # 不明値は載せない（採点で NULL バケットに落ちる）
+
+
 def test_persist_links_journal_id(temp_db: None) -> None:
     _seed_stocks()
     with get_engine().begin() as conn:

@@ -76,7 +76,7 @@ class GetTrackRecordArgs(_ToolArgs):
 
     source: str | None = None  # 'nightly'/'chat'
     kind: str | None = None  # 'buy'/'sell'/'notable'
-    horizon: int | None = None  # 20/60（営業日）
+    horizon: int | None = None  # 20/60/250（営業日・ADR-091 で 250 追加）
     recent_limit: int | None = None  # 直近個別 outcome の件数（既定 10）
 
 
@@ -503,6 +503,13 @@ class ProposeTradeArgs(_ToolArgs):
     catalyst: str | None = Field(
         default=None,
         description="論点が動くきっかけ（catalyst：決算・ガイダンス・政策・需給 等）の名指し。",
+    )
+    horizon: str | None = Field(
+        default=None,
+        description=(
+            "想定保有期間（short=短期≈1ヶ月 / medium=中期≈3ヶ月 / long=長期≈1年。"
+            "日本語の 短/中/長・短期/中期/長期 も可）。分からなければ省略可（ADR-091）。"
+        ),
     )
 
 

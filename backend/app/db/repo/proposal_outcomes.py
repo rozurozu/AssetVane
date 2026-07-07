@@ -205,6 +205,50 @@ def aggregate_calibration(conn: Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(stmt).mappings().all()]
 
 
+def aggregate_horizon_calibration(conn: Connection) -> list[dict[str, Any]]:
+    """ホライズンキャリブレーションを kind×declared_horizon×horizon で集計する（ADR-091）。
+
+    directional な buy/sell だけ（notable は非方向＝hit が無い）・想定保有期間を申告した final のみ
+    を対象に、count／hit_rate(AVG hit)／平均超過/実現リターンを返す。AI が「short と宣言した提案は
+    実際その時間軸（採点 horizon）で報われたか」を横並びで確認する材料（get_track_record が
+    horizon_calibration として返す）。conviction 版 aggregate_calibration と対称で、
+    source/kind/horizon では絞らない。集約は type_coerce(Float()) で Float 化し Decimal を流さない。
+    """
+    stmt = (
+        select(
+            proposal_outcomes.c.kind,
+            proposal_outcomes.c.declared_horizon,
+            proposal_outcomes.c.horizon,
+            func.count().label("count"),
+            type_coerce(func.avg(proposal_outcomes.c.hit), Float()).label("hit_rate"),
+            type_coerce(func.avg(proposal_outcomes.c.realized_return), Float()).label(
+                "avg_realized_return"
+            ),
+            type_coerce(func.avg(proposal_outcomes.c.excess_return), Float()).label(
+                "avg_excess_return"
+            ),
+        )
+        .where(
+            and_(
+                proposal_outcomes.c.status == "final",
+                proposal_outcomes.c.kind.in_(["buy", "sell"]),
+                proposal_outcomes.c.declared_horizon.isnot(None),
+            )
+        )
+        .group_by(
+            proposal_outcomes.c.kind,
+            proposal_outcomes.c.declared_horizon,
+            proposal_outcomes.c.horizon,
+        )
+        .order_by(
+            proposal_outcomes.c.kind,
+            proposal_outcomes.c.declared_horizon,
+            proposal_outcomes.c.horizon,
+        )
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
 def list_recent_final_outcomes(
     conn: Connection,
     *,
@@ -312,6 +356,7 @@ def list_new_final_outcomes(
             proposal_outcomes.c.source,
             proposal_outcomes.c.kind,
             proposal_outcomes.c.conviction,  # 確信度を教材へ（ADR-084・reviewer が較正を蒸留）
+            proposal_outcomes.c.declared_horizon,  # 想定保有期間も教材へ（ADR-091・horizon-aware）
             proposal_outcomes.c.code,
             company_name,
             proposal_outcomes.c.market,

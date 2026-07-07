@@ -77,4 +77,24 @@ def test_tool_empty_is_safe(temp_db: None) -> None:
     out = asyncio.run(handlers.handle_get_track_record({}))
     assert out["summary"] == []
     assert out["recent"] == []
+    assert out["horizon_calibration"] == []
     assert out["pending_count"] == 0
+
+
+def test_tool_returns_horizon_calibration(temp_db: None) -> None:
+    """ADR-091: 宣言した想定保有期間別（declared_horizon×horizon）の的中率を返す。"""
+    with get_engine().begin() as conn:
+        _seed_outcome(conn, origin_id=1, declared_horizon="short", hit=1)
+        _seed_outcome(conn, origin_id=2, declared_horizon="short", hit=0)
+        # 宣言なし（NULL）は horizon_calibration から除外される。
+        _seed_outcome(conn, origin_id=3, declared_horizon=None, hit=1)
+
+    out = asyncio.run(handlers.handle_get_track_record({}))
+    hcal = out["horizon_calibration"]
+    assert len(hcal) == 1
+    grp = hcal[0]
+    assert grp["kind"] == "buy"
+    assert grp["declared_horizon"] == "short"
+    assert grp["horizon"] == 20
+    assert grp["count"] == 2
+    assert grp["hit_rate"] == 0.5  # (1+0)/2

@@ -145,10 +145,11 @@ REGISTRY: dict[str, ToolDef] = {
             "自分の過去の買い/売り提案・注目選別が、その後の市場でどうだったかの成績（的中率・"
             "平均実現/超過リターン）を取得する（ADR-077）。同じ銘柄を再度 買い/売り/注目する前や、"
             "『自分の提案は当たっているか』と問われたときに呼ぶ。source(nightly/chat)・"
-            "kind(buy/sell/notable)・horizon(20/60 営業日) で絞れる。実 P/L ではなく提案日終値"
+            "kind(buy/sell/notable)・horizon(20/60/250 営業日) で絞れる。実 P/L ではなく提案日終値"
             "起点の提示ベース評価で、notable は非方向のためリターンのみ（hit なし）。"
-            "併せて calibration（確信度別の的中率）も返る。"
-            "『高確信』ほど当たっているかを確認し確信度を較正する（ADR-084）。"
+            "併せて calibration（確信度別の的中率・ADR-084）と horizon_calibration（宣言した想定"
+            "保有期間 short/medium/long 別の的中率・ADR-091）も返る。"
+            "『高確信』ほど・『宣言した時間軸』で当たっているかを確認し見立てを較正する。"
         ),
         parameters=_schema(GetTrackRecordArgs),
         handler=handlers.handle_get_track_record,
@@ -377,7 +378,8 @@ REGISTRY: dict[str, ToolDef] = {
             "あるときだけ呼ぶ（無ければ呼ばなくてよい・毎回出さない）。"
             "渡すのは方向（action=buy/sell）・銘柄（code＝JP 5 桁または US ティッカー）・根拠"
             "（reason）に加え、分かれば確信度（conviction=high/medium/low）・前提崩れ条件"
-            "（invalidation）・catalyst も併せて渡す（要素⑤の判断を構造化して残す＝ADR-084）。"
+            "（invalidation）・catalyst・想定保有期間（horizon=short/medium/long）も併せて渡す"
+            "（要素④/⑤の判断を構造化して残す＝ADR-084/091）。"
             "株数・金額・目標価格などの数値は出さない（サイズは別途最適化に委ねる＝ADR-014）。"
             "承認しても発注はしない（ユーザーが手動約定）。"
         ),

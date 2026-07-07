@@ -201,6 +201,34 @@ def _normalize_conviction(raw: object) -> str | None:
     return _CONVICTION_ALIASES.get(raw.strip().lower())
 
 
+# 想定保有期間の canonical 集合と別名（日本語 短/中/長・短期/中期/長期・mid 揺れを吸収＝ADR-091）。
+# 語彙は既存 policy.time_horizon（短/中/長）に整合させる（層は別だがドリフト回避）。
+_HORIZON_ALIASES: dict[str, str] = {
+    "short": "short",
+    "medium": "medium",
+    "mid": "medium",
+    "long": "long",
+    "短": "short",
+    "短期": "short",
+    "中": "medium",
+    "中期": "medium",
+    "長": "long",
+    "長期": "long",
+}
+
+
+def _normalize_horizon(raw: object) -> str | None:
+    """想定保有期間の自由入力を canonical 'short'/'medium'/'long' に正規化する（ADR-091）。
+
+    CORE 要素④は AI に short/medium/long（または 短/中/長）で述べさせるが、Tool 引数の揺れを
+    吸収して canonical に寄せ、未知/空は None に倒す（メタ不備で提案を drop しない＝ADR-018・
+    _normalize_conviction 同型）。
+    """
+    if not isinstance(raw, str):
+        return None
+    return _HORIZON_ALIASES.get(raw.strip().lower())
+
+
 def persist_trade_proposals_from_tool_runs(
     conn: Connection,
     *,
@@ -245,8 +273,9 @@ def persist_trade_proposals_from_tool_runs(
             )
             continue
 
-        # body は kind 依存 JSON（buy/sell）。code/company_name/market に加え、判断属性（ADR-084）を
-        # 揃ったものだけ載せる（無い提案は従来どおり最小の 3 キー＝後方互換）。conviction は正規化。
+        # body は kind 依存 JSON（buy/sell）。code/company_name/market に加え、判断属性（ADR-084）と
+        # 想定保有期間（horizon＝ADR-091）を揃ったものだけ載せる（無い提案は従来どおり最小の
+        # 3 キー＝後方互換）。conviction/horizon は正規化。
         payload: dict[str, Any] = {
             "code": args.code,
             "company_name": target["company_name"],
@@ -259,6 +288,9 @@ def persist_trade_proposals_from_tool_runs(
             payload["invalidation"] = args.invalidation.strip()
         if args.catalyst and args.catalyst.strip():
             payload["catalyst"] = args.catalyst.strip()
+        horizon = _normalize_horizon(args.horizon)
+        if horizon is not None:
+            payload["horizon"] = horizon
         body = json.dumps(payload, ensure_ascii=False)
         proposal_id = repo.insert_proposal(
             conn,

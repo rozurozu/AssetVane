@@ -1,6 +1,7 @@
 ---
 signal_type: momentum
 summary: モメンタム（SMA25/75・Wilder RSI14）。教科書指標。GC=買い転換の遅行サイン、RSI反転=売られすぎ反発。
+native_horizon: short〜medium（数日〜数週の値動き）
 ---
 # momentum — モメンタム
 

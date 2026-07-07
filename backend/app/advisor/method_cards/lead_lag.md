@@ -1,6 +1,7 @@
 ---
 signal_type: lead_lag
 summary: 日米業種リードラグ（米国当日の業種ショック→翌営業日の日本業種の相対強弱・部分空間正則化PCA）。
+native_horizon: day（翌営業日の相対強弱・保有ホライズンではない）
 ---
 # lead_lag — 日米業種リードラグ
 

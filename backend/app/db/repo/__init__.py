@@ -163,6 +163,7 @@ from app.db.repo.portfolio import (
 )
 from app.db.repo.proposal_outcomes import (
     aggregate_calibration,
+    aggregate_horizon_calibration,
     aggregate_track_record,
     count_final_outcomes_since,
     count_pending_outcomes,
@@ -382,6 +383,7 @@ __all__ = [
     "list_finalized_outcome_keys",
     "upsert_proposal_outcome",
     "aggregate_calibration",
+    "aggregate_horizon_calibration",
     "aggregate_track_record",
     "list_recent_final_outcomes",
     "count_pending_outcomes",

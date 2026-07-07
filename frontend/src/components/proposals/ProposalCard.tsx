@@ -50,8 +50,14 @@ function bodySummary(body: unknown, kind: Proposal["kind"]): string | null {
   }
 }
 
-// buy/sell の body に載る判断属性（ADR-084）。承認者が確信度・前提崩れ条件を見て判断できるよう表示。
-type Judgment = { conviction?: string; invalidation?: string; catalyst?: string };
+// buy/sell の body に載る判断属性（ADR-084・想定保有期間は ADR-091）。承認者が確信度・時間軸・
+// 前提崩れ条件を見て判断できるよう表示。
+type Judgment = {
+  conviction?: string;
+  invalidation?: string;
+  catalyst?: string;
+  horizon?: string;
+};
 function bodyJudgment(body: unknown, kind: Proposal["kind"]): Judgment {
   if ((kind === "buy" || kind === "sell") && body != null && typeof body === "object") {
     const b = body as Judgment;
@@ -59,6 +65,7 @@ function bodyJudgment(body: unknown, kind: Proposal["kind"]): Judgment {
       conviction: typeof b.conviction === "string" ? b.conviction : undefined,
       invalidation: typeof b.invalidation === "string" ? b.invalidation : undefined,
       catalyst: typeof b.catalyst === "string" ? b.catalyst : undefined,
+      horizon: typeof b.horizon === "string" ? b.horizon : undefined,
     };
   }
   return {};
@@ -75,6 +82,14 @@ const CONVICTION_CLS: Record<string, string> = {
   medium: "bg-surface-2 text-ink-muted",
   low: "bg-surface-2 text-ink-subtle",
 };
+
+// 想定保有期間バッジ（ADR-091）。時間軸なので good/bad ではなく中立の info トークンで表す。
+const HORIZON_LABEL: Record<string, string> = {
+  short: "短期",
+  medium: "中期",
+  long: "長期",
+};
+const HORIZON_CLS = "bg-surface-2 text-info";
 
 // buy/sell の body に載る skeptic 反証（ADR-086）。夜バッチの独立面が提案を反証した注記。
 type Skeptic = { verdict?: string; refutation?: string; reviewed_at?: string };
@@ -124,6 +139,11 @@ export function ProposalCard({ proposal, dependencyMet, busy, onApprove, onRejec
             }`}
           >
             {CONVICTION_LABEL[j.conviction]}
+          </span>
+        )}
+        {j.horizon && HORIZON_LABEL[j.horizon] && (
+          <span className={`rounded-sm px-1.5 py-0.5 font-medium text-[11px] ${HORIZON_CLS}`}>
+            {HORIZON_LABEL[j.horizon]}
           </span>
         )}
         <span className="num ml-auto text-[11px] text-ink-subtle">

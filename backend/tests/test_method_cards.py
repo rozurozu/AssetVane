@@ -81,6 +81,27 @@ def test_catalog_text_lists_cards() -> None:
     assert "stealth_accum" in catalog
 
 
+# --- native_horizon（ADR-091・手法ごとの想定時間軸）---------------------------
+
+
+def test_all_cards_declare_native_horizon() -> None:
+    """全カード（signal＋strategy）が native_horizon を宣言する（相談の時間軸に手法を合わせる）。"""
+    index = method_cards.method_card_index()
+    for c in index:
+        assert c["native_horizon"], f"{c['signal_type']} に native_horizon が無い"
+    # get_method_card 経由でも取れる（未指定既定の空文字ではない）。
+    assert method_cards.get_method_card("momentum")["native_horizon"]
+    assert method_cards.get_method_card("net_cash_value")["native_horizon"]
+
+
+def test_catalog_shows_native_horizon() -> None:
+    """カタログ（Tool description 常時露出）に時間軸が出て advisor が手法を選別できる。"""
+    catalog = method_cards.catalog_text()
+    assert "時間軸:" in catalog
+    # lead_lag は day（翌営業日）と明示され保有ホライズンでないと分かる。
+    assert "day" in catalog
+
+
 def test_handler_returns_card() -> None:
     """get_method_card(signal_type) は found=True＋本文を返す。"""
     out = asyncio.run(handlers.handle_get_method_card({"signal_type": "stealth_accum"}))

@@ -60,6 +60,9 @@ def _load() -> dict[str, dict[str, str]]:
             "signal_type": key,
             "kind": meta.get("kind", "signal"),
             "summary": meta.get("summary", ""),
+            # 手法が想定する時間軸（short/medium/long/day 等・自由文字列＝ADR-091）。相談の
+            # ホライズンに手法を合わせるため advisor がカタログで見る。未指定は空文字。
+            "native_horizon": meta.get("native_horizon", ""),
             "body": body,
         }
     return cards
@@ -70,9 +73,17 @@ _CARDS = _load()
 
 
 def method_card_index() -> list[dict[str, str]]:
-    """全カードの {signal_type, kind, summary} を signal_type 昇順で返す（Tool カタログ用）。"""
+    """全カードの {signal_type, kind, summary, native_horizon} を signal_type 昇順で返す。
+
+    native_horizon（ADR-091）は手法が想定する時間軸（Tool カタログでの選別材料）。
+    """
     return [
-        {"signal_type": c["signal_type"], "kind": c.get("kind", "signal"), "summary": c["summary"]}
+        {
+            "signal_type": c["signal_type"],
+            "kind": c.get("kind", "signal"),
+            "summary": c["summary"],
+            "native_horizon": c.get("native_horizon", ""),
+        }
         for c in sorted(_CARDS.values(), key=lambda c: c["signal_type"])
     ]
 
@@ -86,12 +97,15 @@ def catalog_text() -> str:
     """Tool description に常時露出するカタログ（複数行・ADR-075/079）。
 
     signal 種は `- key: summary`、strategy 種は `- key [strategy]: summary`（signal を見た流れで
-    引く手法か、能動的に screen で使う手法かを LLM が 1 行で見分けられるように）。
+    引く手法か、能動的に screen で使う手法かを LLM が 1 行で見分けられるように）。native_horizon が
+    あれば `（時間軸: …）` を付す＝相談のホライズンに手法を合わせる材料（ADR-091）。
     """
     lines = []
     for c in method_card_index():
         tag = " [strategy]" if c.get("kind") == "strategy" else ""
-        lines.append(f"- {c['signal_type']}{tag}: {c['summary']}")
+        horizon = c.get("native_horizon")
+        htag = f"（時間軸: {horizon}）" if horizon else ""
+        lines.append(f"- {c['signal_type']}{tag}: {c['summary']}{htag}")
     return "\n".join(lines)
 
 

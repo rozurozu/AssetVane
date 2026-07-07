@@ -1,6 +1,7 @@
 ---
 signal_type: stealth_accum
 summary: 機関のステルス仕込み（価格圧縮×出来高“持続”増）。phase=in_range(仕込み継続)/breakout(上放れ)。
+native_horizon: medium（仕込み継続〜上放れまで数週〜数ヶ月）
 ---
 # stealth_accum — 機関投資家のステルス仕込み
 

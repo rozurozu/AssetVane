@@ -1,6 +1,7 @@
 ---
 signal_type: volume_spike
 summary: 出来高急増（過去20営業日平均比）。単日の ratio が高いほど「何か起きている」目印。教科書。
+native_horizon: short（当日〜数日の需給イベント）
 ---
 # volume_spike — 出来高急増
 

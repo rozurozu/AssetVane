@@ -1,6 +1,7 @@
 ---
 signal_type: ai_alpha
 summary: AI決算スコア（LightGBMが予測する対TOPIX 60日超過リターンの、当日ユニバース内パーセンタイル順位0..1）。
+native_horizon: medium（対TOPIX 60営業日≈3ヶ月の学習ターゲット）
 ---
 # ai_alpha — AI Alpha Scorer（AI決算スコア）
 

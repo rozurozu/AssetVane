@@ -27,13 +27,17 @@ from app.services.freshness import is_delayed
 
 logger = logging.getLogger(__name__)
 
-# 採点する保有営業日数（short catalyst=20≈1 ヶ月／medium thesis=60≈ML の対 TOPIX 60 日規約）。
-_HORIZONS: tuple[int, ...] = (20, 60)
+# 採点する保有営業日数（short≈20/1 ヶ月・medium≈60/3 ヶ月・long≈250/1 年＝ADR-091 で 250 を追加）。
+# 提案の宣言ホライズン（short/medium/long）と 1:1 対応させ、長期テーゼも本来の時間軸で採点する。
+_HORIZONS: tuple[int, ...] = (20, 60, 250)
 # 市場ごとのベンチ symbol（index_quotes・^TPX=TOPIX/JP・^SPX=S&P500/US＝portfolio.py 同値）。
 _BENCHMARK_SYMBOL: dict[str, str] = {"JP": "^TPX", "US": "^SPX"}
 # 確信度の canonical 集合（ADR-084）。採点境界のガード＝body の想定外値を NULL に倒し、
 # proposal_outcomes.conviction には canonical か NULL しか入れない（集計バケットを汚さない）。
 _CONVICTIONS: frozenset[str] = frozenset({"high", "medium", "low"})
+# 想定保有期間の canonical 集合（ADR-091）。conviction と同型の採点境界ガード＝body の想定外値を
+# NULL に倒し、proposal_outcomes.declared_horizon には canonical か NULL しか入れない。
+_HORIZON_CATEGORIES: frozenset[str] = frozenset({"short", "medium", "long"})
 
 
 def _prices_for(
@@ -76,6 +80,7 @@ def _score_one(
     market: str,
     entry_date: str,
     conviction: str | None = None,
+    declared_horizon: str | None = None,
 ) -> tuple[int, int]:
     """1 提案 × 未 final の horizon を採点し UPSERT する（戻り値 = (upserted, finalized) 件数）。
 
@@ -104,6 +109,7 @@ def _score_one(
             market=market,
             entry_date=entry_date,
             conviction=conviction,  # 提案時の確信度を非正規化コピー（ADR-084・notable は None）
+            declared_horizon=declared_horizon,  # 提案時の想定保有期間（ADR-091・notable は None）
             horizon=horizon,
             entry_priced_date=out["entry_priced_date"],
             entry_price=out["entry_price"],
@@ -156,6 +162,9 @@ def score_pending_outcomes(conn: Connection) -> dict[str, int]:
         # conviction は persist 正規化済みだが想定外値は NULL に倒す（ADR-084・ガード）。
         raw_conviction = parsed.get("conviction")
         conviction = raw_conviction if raw_conviction in _CONVICTIONS else None
+        # 想定保有期間も persist 正規化済みだが想定外値は NULL に倒す（ADR-091・ガード）。
+        raw_horizon = parsed.get("horizon")
+        declared_horizon = raw_horizon if raw_horizon in _HORIZON_CATEGORIES else None
         u, f = _score_one(
             conn,
             prices_cache,
@@ -169,6 +178,7 @@ def score_pending_outcomes(conn: Connection) -> dict[str, int]:
             market=str(market),
             entry_date=str(row["created_date"]),
             conviction=conviction,
+            declared_horizon=declared_horizon,
         )
         upserted += u
         finalized += f
@@ -210,7 +220,8 @@ def get_track_record(
 
     返り値は JSON-safe な素の型のみ（Decimal は repo で Float 化・hit は bool・ADR-014/025）。
     summary の集計軸 = source × kind × horizon。加えて calibration（確信度キャリブレーション・
-    ADR-084）を kind×conviction×horizon で返す（directional のみ）。
+    ADR-084）を kind×conviction×horizon で、horizon_calibration（ホライズンキャリブレーション・
+    ADR-091）を kind×declared_horizon×horizon で返す（いずれも directional のみ）。
     数値は count と併記する（少サンプルの解釈は AI＝ADR-014）。
     """
     summary = [
@@ -261,12 +272,28 @@ def get_track_record(
         }
         for r in repo.aggregate_calibration(conn)
     ]
+    # ホライズンキャリブレーション（ADR-091）: buy/sell を declared_horizon×horizon で横並び集計。
+    # 「AI が short と宣言した提案は実際その時間軸（採点 horizon）で報われたか」を確認する材料。
+    # calibration（確信度）と対称の additive ブロック。
+    horizon_calibration = [
+        {
+            "kind": r["kind"],
+            "declared_horizon": r["declared_horizon"],
+            "horizon": r["horizon"],
+            "count": int(r["count"]),
+            "hit_rate": _round(r["hit_rate"]),
+            "avg_realized_return": _round(r["avg_realized_return"]),
+            "avg_excess_return": _round(r["avg_excess_return"]),
+        }
+        for r in repo.aggregate_horizon_calibration(conn)
+    ]
     as_of = repo.latest_final_as_of(conn)
     return {
         "as_of": as_of,
         "is_delayed": is_delayed(as_of),
         "summary": summary,
         "calibration": calibration,
+        "horizon_calibration": horizon_calibration,
         "recent": recent,
         "pending_count": repo.count_pending_outcomes(conn),
     }
