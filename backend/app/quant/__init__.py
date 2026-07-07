@@ -19,6 +19,8 @@ docs/data-model.md §4。
     … 相関・シャープ・MDD。
   - `portfolio.compute_deviations(weights, cash_ratio, sector_weights, policy, labels)`
     … policy 逸脱。
+  - `portfolio.compute_risk_contributions(price_panel, weights)`
+    … 各銘柄のリスク寄与分解（component/marginal contribution to risk・#4 what-if・ADR-085）。
   - `optimize.optimize_portfolio(price_panel, policy, sectors, objective, current_weights)`
     … 平均分散最適化。
   - `backtest.backtest_portfolio(price_panel, weights, benchmark, rebalance)`
@@ -36,7 +38,11 @@ from app.quant.indicators import compute_indicators
 from app.quant.lead_lag import compute_lead_lag_signal, validate_lead_lag
 from app.quant.momentum import compute_momentum
 from app.quant.optimize import optimize_portfolio
-from app.quant.portfolio import compute_deviations, compute_portfolio_metrics
+from app.quant.portfolio import (
+    compute_deviations,
+    compute_portfolio_metrics,
+    compute_risk_contributions,
+)
 from app.quant.volume_spike import compute_volume_spike
 
 __all__ = [
@@ -46,6 +52,7 @@ __all__ = [
     "compute_lead_lag_signal",
     "compute_momentum",
     "compute_portfolio_metrics",
+    "compute_risk_contributions",
     "compute_volume_spike",
     "optimize_portfolio",
     "validate_lead_lag",

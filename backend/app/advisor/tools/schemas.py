@@ -207,6 +207,22 @@ class GetFundHoldingsArgs(_ToolArgs):
     portfolio_id: int | None = None
 
 
+class SimulateTradeImpactArgs(_ToolArgs):
+    """simulate_trade_impact の引数（#4・ADR-085）。
+
+    仮の買い/売りサイズ amount_jpy（円）で pro-forma 影響を試算する。amount_jpy は「もし入れたら」の
+    仮定値で、永続も発注もしない（サイズは AI に決めさせず試算するだけ＝ADR-014）。日本株のみ
+    （code は JP 5 桁・米株は対象外＝市場分離 ADR-031）。省略時は先頭ポートフォリオ。
+    """
+
+    action: Literal["buy", "sell"] = Field(description="売買の方向（buy=買い / sell=売り）。")
+    code: str = Field(description="JP 5 桁コード（例 72030）。日本株のみ。")
+    amount_jpy: float = Field(
+        gt=0, description="仮の売買金額（円・正の値）。もし入れたらの試算用。"
+    )
+    portfolio_id: int | None = None
+
+
 class GetUsHoldingsArgs(_ToolArgs):
     """get_us_holdings の引数（ADR-057）。引数なし（単一ユーザー・global 保有・ADR-001）。"""
 

@@ -90,6 +90,8 @@ def test_registry_handlers_are_registered() -> None:
         "screen_stocks",
         "get_portfolio_metrics",
         "optimize_portfolio",
+        # ADR-085: ポジションサイズ／ポートフォリオ影響 what-if（min_phase=2）。
+        "simulate_trade_impact",
         "get_financials",
         # ADR-048: バリュエーション判断（min_phase=2）。
         "get_valuation",

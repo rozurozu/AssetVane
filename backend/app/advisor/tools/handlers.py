@@ -59,6 +59,7 @@ from app.advisor.tools.schemas import (
     SearchCardsArgs,
     SearchJudgmentsArgs,
     SearchNewsArgs,
+    SimulateTradeImpactArgs,
     SubmitJournalArgs,
     SubmitNotableStocksArgs,
     coerce_policy_change,
@@ -81,6 +82,7 @@ from app.services.portfolio import (
     build_price_panel,
     current_stock_weights,
     portfolio_deviations,
+    simulate_trade_impact,
     value_holdings,
 )
 from app.services.us_holdings import value_us_holdings
@@ -316,6 +318,33 @@ async def handle_optimize_portfolio(args: dict[str, object]) -> dict[str, Any]:
         }
     except Exception as exc:
         logger.exception("handle_optimize_portfolio 失敗")
+        return {"error": str(exc)}
+
+
+async def handle_simulate_trade_impact(args: dict[str, object]) -> dict[str, Any]:
+    """simulate_trade_impact（#4・ADR-085）。仮の buy/sell の pro-forma 影響を返す（読み取り専用）。
+
+    services.portfolio.simulate_trade_impact への薄い橋渡し（ADR-014）。is_delayed は as_of から
+    ここで付与する（quant/services は today を知らない＝ADR-071・get_portfolio_metrics と同型）。
+    例外は握って {"error": ...} に倒す（dispatch ループを落とさない）。
+    """
+    try:
+        parsed = SimulateTradeImpactArgs.model_validate(args)
+        with get_engine().connect() as conn:
+            portfolio_id = _resolve_portfolio_id(conn, parsed.portfolio_id)
+            if portfolio_id is None:
+                return {"error": "ポートフォリオが存在しません。"}
+            result = simulate_trade_impact(
+                conn,
+                portfolio_id=portfolio_id,
+                action=parsed.action,
+                code=parsed.code,
+                amount_jpy=parsed.amount_jpy,
+            )
+        result["is_delayed"] = freshness.is_delayed(result.get("as_of"))
+        return result
+    except Exception as exc:
+        logger.exception("handle_simulate_trade_impact 失敗")
         return {"error": str(exc)}
 
 

@@ -50,6 +50,7 @@ from app.advisor.tools.schemas import (
     SearchCardsArgs,
     SearchJudgmentsArgs,
     SearchNewsArgs,
+    SimulateTradeImpactArgs,
     SubmitJournalArgs,
     SubmitNotableStocksArgs,
 )
@@ -201,6 +202,20 @@ REGISTRY: dict[str, ToolDef] = {
         ),
         parameters=_schema(OptimizePortfolioArgs),
         handler=handlers.handle_optimize_portfolio,
+        min_phase=2,
+    ),
+    "simulate_trade_impact": ToolDef(
+        name="simulate_trade_impact",
+        description=(
+            "特定の買い/売りを実行する**前**に、その売買（仮の金額 amount_jpy 円）が"
+            "現ポートフォリオの集中度（max_position/sector_cap 逸脱）・既存保有との相関・"
+            "年率ボラティリティ・当該銘柄のリスク寄与にどう効くかを pro-forma で試算する。"
+            "『これを◯◯円買うと分散はどうなる？』『集中しすぎないか』を確かめるときに呼ぶ。"
+            "金額は仮定値で発注・永続はしない（サイズは AI が決めず試算するだけ＝ADR-014）。"
+            "日本株のみ（米株は対象外）。"
+        ),
+        parameters=_schema(SimulateTradeImpactArgs),
+        handler=handlers.handle_simulate_trade_impact,
         min_phase=2,
     ),
     "get_financials": ToolDef(

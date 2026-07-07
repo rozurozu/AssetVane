@@ -16,6 +16,7 @@ from __future__ import annotations
 from math import sqrt
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 
 from app.quant._frame import column_has_nulls
@@ -245,3 +246,95 @@ def compute_portfolio_metrics(
         "correlation": correlation,
         "deviations": deviations,
     }
+
+
+# ---------------------------------------------------------------------------
+# compute_risk_contributions（#4 what-if・ADR-085）
+# ---------------------------------------------------------------------------
+
+
+def compute_risk_contributions(
+    price_panel: pd.DataFrame,
+    weights: dict[str, float],
+) -> dict[str, Any]:
+    """各銘柄のリスク寄与（component / marginal contribution to risk）を分解して返す。
+
+    price_panel: index=date, columns=code, 値=adj_close。
+    weights: 構成比（0..1・合計 1 でなくてよい＝valid_cols で再正規化する）。
+
+    数式（component contribution to risk）:
+      Σ = 日次リターンの標本共分散 × 252（compute_portfolio_metrics の年率 vol と同じ標本ベース。
+          Ledoit-Wolf は逆行列を取る最適化専用で、逆行列を取らない寄与分解には使わない＝ADR-085）
+      σ_p = √(wᵀΣw)、MCR_i = (Σw)_i / σ_p、CCR_i = w_i·MCR_i（Σ CCR_i = σ_p）、
+      percent_i = CCR_i / σ_p（Σ percent_i = 1）
+
+    返却 dict（is_delayed は返さない＝ADR-071・鮮度は呼び出し側が as_of から判定）:
+    {
+        "as_of": <price_panel 最終 date 文字列 or None>,
+        "annual_volatility": float | None,   # σ_p（compute_portfolio_metrics の年率 vol と一致）
+        "contributions": [
+            {"code", "weight", "marginal", "component", "percent"}, ...  # percent 降順
+        ],
+    }
+
+    adj_close 窓内 null の銘柄・日は skip（compute_portfolio_metrics と同一規律・裁定 L-26）。
+    空・全 null・履歴不足（<2）・σ_p=0 は contributions を空にして返す（数値を捏造しない）。
+    （ADR-016: 純関数・DB 非依存・docs/decisions.md ADR-085）
+    """
+    as_of: str | None = None
+    if price_panel is not None and not price_panel.empty:
+        as_of = str(price_panel.index[-1])
+
+    def _empty(vol: float | None = None) -> dict[str, Any]:
+        return {"as_of": as_of, "annual_volatility": vol, "contributions": []}
+
+    if price_panel is None or price_panel.empty:
+        return _empty()
+
+    panel = price_panel.copy()
+    if len(panel) > _LOOKBACK:
+        panel = panel.iloc[-_LOOKBACK:]
+
+    valid_cols = [str(c) for c in panel.columns if not column_has_nulls(panel, str(c))]
+    if not valid_cols:
+        return _empty()
+    panel = panel[valid_cols]
+
+    ret = cast(pd.DataFrame, panel.pct_change().dropna())
+    if len(ret) < 2:
+        return _empty()
+
+    # 正規化ウェイト（valid_cols 基準・compute_portfolio_metrics と同じ再正規化）。
+    w_raw = {c: float(weights.get(c, 0.0)) for c in valid_cols}
+    w_sum = sum(w_raw.values())
+    if w_sum <= 0.0:
+        w_norm = {c: 1.0 / len(valid_cols) for c in valid_cols}
+    else:
+        w_norm = {c: v / w_sum for c, v in w_raw.items()}
+
+    cov = ret.cov() * _TRADING_DAYS  # 標本共分散 ×252（annual_volatility と厳密整合）
+    cols = [str(c) for c in cov.columns]  # = valid_cols（ret の列順）
+    w_arr = np.array([w_norm[c] for c in cols], dtype=float)
+    sigma_w = cov.to_numpy() @ w_arr  # Σw（各銘柄の限界寄与の分子）
+    var_p = float(w_arr @ sigma_w)
+    if var_p <= 0.0:
+        # 全リターンが定数等で分散 0 → σ_p=0。寄与は定義できないので空で返す。
+        return _empty(vol=0.0)
+    sigma_p = sqrt(var_p)
+
+    contributions: list[dict[str, Any]] = []
+    for i, c in enumerate(cols):
+        marginal = float(sigma_w[i]) / sigma_p  # MCR
+        component = float(w_arr[i]) * marginal  # CCR（Σ = σ_p）
+        contributions.append(
+            {
+                "code": c,
+                "weight": float(w_arr[i]),
+                "marginal": marginal,
+                "component": component,
+                "percent": component / sigma_p,  # Σ = 1
+            }
+        )
+    contributions.sort(key=lambda d: d["percent"], reverse=True)
+
+    return {"as_of": as_of, "annual_volatility": sigma_p, "contributions": contributions}
