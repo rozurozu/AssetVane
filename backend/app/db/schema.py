@@ -375,6 +375,30 @@ llm_usage = Table(
     Index("ix_llm_usage_created_at", "created_at"),
 )
 
+# AI Advisor 判断軌跡の観測台帳（ADR-092・0044_advisor_turns）。1 LLM ターン＝1 行。
+# Tool ループ（run_tool_loop）を通る 5 面（chat/nightly/reviewer/profiler/skeptic）が対象で、
+# generate_once の dossier/tagger/triage はループを通らず自然に対象外。reply 本文は残さず
+# tool_sequence（呼んだ Tool 名＋引数）だけ焼く（結果値は載せない＝ADR-025・生チャット非索引＝
+# ADR-029：プロセスは残すがコンテンツは残さない）。集計に効く規律 2 列だけ非正規化し
+# （proposal_outcomes.conviction/hit と同じ流儀＝純 SQL で充足率を集計）、「submit_journal を
+# 呼んだか」等の表示専用フラグは列にせず router が tool_sequence から read-time 導出する。
+advisor_turns = Table(
+    "advisor_turns",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("created_at", String, nullable=False),  # ISO8601 UTC（面別サマリの起点）
+    Column("source", String, nullable=False),  # 'chat'/'nightly'/'reviewer'/'profiler'/'skeptic'
+    Column("model", String),  # 面別に解決された実 model（監査用・ADR-058）
+    Column("tool_sequence", String),  # JSON [{name, args}]（結果値なし・ADR-025）
+    Column("n_rounds", Integer, nullable=False, server_default="0"),  # Tool 往復回数
+    Column("truncated", Integer, nullable=False, server_default="0"),  # 1=max_rounds 打ち切り
+    Column("called_propose_trade", Integer, nullable=False, server_default="0"),  # 1=起票 Tool 使用
+    # NULL=非該当（propose_trade を呼んでいない）/ 1=呼んだ全件が conviction+invalidation+catalyst
+    # +horizon 全備 / 0=1 件でも欠けあり（AVG で規律充足率を純 SQL 集計＝ADR-092）。
+    Column("propose_trade_disciplined", Integer),
+    Index("ix_advisor_turns_source_created", "source", "created_at"),
+)
+
 # ===== スクリーニング（/stocks スクリーナー・ADR-031・0007_screening） =====
 # 設計: 重い結合（daily_quotes × financials）を夜間ジョブ calc_valuation が
 # 「1 銘柄 1 行」に畳んで valuation_snapshots に焼く。/stocks/screen は読み取り時に

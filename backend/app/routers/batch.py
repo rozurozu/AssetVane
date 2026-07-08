@@ -19,6 +19,7 @@ from sqlalchemy import Connection
 
 from app.batch import lock, run_jobs, run_nightly, state
 from app.db.engine import get_conn
+from app.services.llm_config import FaceNotConfiguredError, resolve_face
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,41 @@ def backfill_net_cash(
         label="清原式ネットキャッシュ 全銘柄取得",
         full_backfill=True,
     )
+    return BatchRunResponse(started=True, job_id=None)
+
+
+@router.post("/batch/run-advisor", response_model=BatchRunResponse, status_code=202)
+def run_advisor_endpoint(
+    background: BackgroundTasks, conn: Connection = Depends(get_conn)
+) -> BatchRunResponse:
+    """夜AI（軸1 分析）だけを非同期で起動し 202 を返す（ADR-092・運用の解錠）。
+
+    /settings の「夜AI を今すぐ回す」からのオンデマンド起動口。全 NIGHTLY（重い全銘柄バックフィル
+    含む）を回す POST /batch/run と違い、advisor 部分（run_advisor ジョブ 1 本）だけを run_jobs で
+    軽く回す（ADR-011「1つの脳・2つの起動口」＝run_nightly と同じ lock/state/通知を共有）。
+    fetch/score は混ぜない（混ぜると重い口に逆戻り＝事実の鮮度は運用手順で担保する）。何度でも叩いて
+    /advisor-turns で判断軌跡を観測する（ADR-092）。
+
+    先頭で nightly 面を解決し、未設定なら 400 で /settings 誘導（backfill_net_cash が free/未設定を
+    400 で弾く前例）。これが唯一の停止経路で、依存先ジョブ未実行でも run_advisor.run はクラッシュ
+    しない（handler は {error}・builder は空構造）。起動前に flock を試し、実行中なら 409（run_batch
+    同型）。
+    """
+    from app.batch.jobs import run_advisor
+
+    try:
+        resolve_face(conn, "nightly")
+    except FaceNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "夜AI（nightly 面）の LLM が未設定です。/settings の「面別 LLM 割当」で "
+                "nightly に provider と model を割り当ててください。"
+            ),
+        ) from exc
+
+    _reject_if_running()  # run_batch 同型の受付ゲート（#20）
+    background.add_task(_guard_concurrent_start, run_jobs, [run_advisor.run], label="夜AI")
     return BatchRunResponse(started=True, job_id=None)
 
 

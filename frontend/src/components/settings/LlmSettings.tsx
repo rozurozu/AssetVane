@@ -35,6 +35,10 @@ const FACE_LABELS: Record<string, string> = {
   dossier: "ドシエ要約",
   tagger: "タグ付け（テーマ/極性）",
   triage: "カード審査（知識カードの振り分け）",
+  // 自己改善/反証の 3 面（ADR-081/082/086）。未割当だとその面が動かないので /settings で設定できるように。
+  reviewer: "経験蒸留（採点結果→知識カード下書き）",
+  profiler: "投資家プロファイル蒸留（台帳→傾向メモ）",
+  skeptic: "提案の反証（red-team・別 model 推奨）",
 };
 
 // reasoning_effort の選択肢（固定 enum・ADR-059）。"" = 既定（openai は送らない）。

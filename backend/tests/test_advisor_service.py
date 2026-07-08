@@ -51,8 +51,12 @@ def _stub_handler(monkeypatch: pytest.MonkeyPatch, name: str, handler: Any) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_run_tool_loop_resolves_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
-    """1 往復: tool_call → handler 実行 → tool ロール挿入 → 再 complete で最終テキスト。"""
+def test_run_tool_loop_resolves_tool_calls(temp_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """1 往復: tool_call → handler 実行 → tool ロール挿入 → 再 complete で最終テキスト。
+
+    temp_db は _record_turn（ADR-092）の best-effort insert 先を一時 DB に固定するため
+    （フックが実 DB を汚さない・create_schema が advisor_turns を用意する）。
+    """
     # 1 回目は tool_call、2 回目は最終テキストを返す complete モック。
     responses = [
         LLMResponse(
@@ -88,7 +92,9 @@ def test_run_tool_loop_resolves_tool_calls(monkeypatch: pytest.MonkeyPatch) -> N
     assert any(m["role"] == "assistant" and "tool_calls" in m for m in second)
 
 
-def test_run_tool_loop_unknown_tool_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_tool_loop_unknown_tool_does_not_crash(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """未知 Tool 名でもループは落ちず、{"error": "unknown tool"} を tool ロールに入れて続行。"""
     responses = [
         LLMResponse(
@@ -113,7 +119,7 @@ def test_run_tool_loop_unknown_tool_does_not_crash(monkeypatch: pytest.MonkeyPat
     assert json.loads(tool_msg["content"]) == {"error": "unknown tool"}
 
 
-def test_run_tool_loop_max_rounds_cutoff(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_tool_loop_max_rounds_cutoff(temp_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
     """tool_call が止まらない場合は max_rounds で打ち切る（無限ループ防止）。"""
 
     async def _always_tool(messages: Any, **_: Any) -> LLMResponse:
@@ -138,6 +144,7 @@ def test_run_tool_loop_max_rounds_cutoff(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_max_rounds_cutoff_nightly_empty_content_returns_empty(
+    temp_db: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """#13: nightly で content 空のまま打ち切ったら "" を返す（プレースホルダを流さない）。
@@ -165,7 +172,9 @@ def test_max_rounds_cutoff_nightly_empty_content_returns_empty(
     assert reply == ""  # 縮退へ倒す（journal スキップ）＝プレースホルダは返さない
 
 
-def test_max_rounds_cutoff_chat_keeps_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_max_rounds_cutoff_chat_keeps_placeholder(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """#13: chat で content 空のまま打ち切ったら利用者向け定型文を返す（空応答の UX を避ける）。"""
 
     async def _always_tool_no_content(messages: Any, **_: Any) -> LLMResponse:
@@ -185,6 +194,190 @@ def test_max_rounds_cutoff_chat_keeps_placeholder(monkeypatch: pytest.MonkeyPatc
         )
     )
     assert "打ち切り" in reply  # chat は定型文で UX を保つ
+
+
+# ---------------------------------------------------------------------------
+# _record_turn（判断軌跡の観測台帳・ADR-092）
+# ---------------------------------------------------------------------------
+
+
+def _recorded_turns() -> list[dict[str, Any]]:
+    """temp DB に焼かれた advisor_turns を新しい順で読む（_record_turn の検証用）。"""
+    with get_engine().connect() as conn:
+        return repo.list_recent_turns(conn)
+
+
+def test_records_turn_with_disciplined_propose_trade(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """propose_trade が 4 属性全備なら advisor_turns に disciplined=1 で 1 行焼く（ADR-092）。"""
+    responses = [
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c1",
+                    name="propose_trade",
+                    arguments={
+                        "action": "buy",
+                        "code": "7203",
+                        "reason": "好業績",
+                        "conviction": "high",
+                        "invalidation": "来期減益",
+                        "catalyst": "新製品",
+                        "horizon": "medium",
+                    },
+                )
+            ],
+        ),
+        LLMResponse(content="提案しました", tool_calls=[]),
+    ]
+
+    async def _fake_complete(messages: Any, **_: Any) -> LLMResponse:
+        return responses.pop(0)
+
+    async def _fake_handler(args: dict[str, object]) -> dict[str, object]:
+        return {"found": True}
+
+    monkeypatch.setattr(service, "complete", _fake_complete)
+    _stub_handler(monkeypatch, "propose_trade", _fake_handler)
+
+    _run(
+        service.run_tool_loop([{"role": "user", "content": "買い?"}], face=_FACE, source="nightly")
+    )
+
+    turns = _recorded_turns()
+    assert len(turns) == 1
+    t = turns[0]
+    assert t["source"] == "nightly"
+    assert t["model"] == "m"
+    assert t["n_rounds"] == 1
+    assert t["truncated"] == 0
+    assert t["called_propose_trade"] == 1
+    assert t["propose_trade_disciplined"] == 1
+    # tool_sequence は名前＋引数のみ（結果値 found は載らない＝ADR-025）。
+    seq = json.loads(t["tool_sequence"])
+    assert [c["name"] for c in seq] == ["propose_trade"]
+    assert "found" not in t["tool_sequence"]
+
+
+def test_records_undisciplined_propose_trade(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """catalyst 欠落など 4 属性が欠ければ disciplined=0（規律未充足・ADR-092）。"""
+    responses = [
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c1",
+                    name="propose_trade",
+                    arguments={
+                        "action": "buy",
+                        "code": "7203",
+                        "reason": "好業績",
+                        "conviction": "high",
+                        "invalidation": "来期減益",
+                        # catalyst / horizon が欠落
+                    },
+                )
+            ],
+        ),
+        LLMResponse(content="提案しました", tool_calls=[]),
+    ]
+
+    async def _fake_complete(messages: Any, **_: Any) -> LLMResponse:
+        return responses.pop(0)
+
+    async def _fake_handler(args: dict[str, object]) -> dict[str, object]:
+        return {"found": True}
+
+    monkeypatch.setattr(service, "complete", _fake_complete)
+    _stub_handler(monkeypatch, "propose_trade", _fake_handler)
+
+    _run(service.run_tool_loop([{"role": "user", "content": "買い?"}], face=_FACE, source="chat"))
+
+    t = _recorded_turns()[0]
+    assert t["called_propose_trade"] == 1
+    assert t["propose_trade_disciplined"] == 0
+
+
+def test_records_turn_without_propose_trade(temp_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """propose_trade を呼ばないターンは called=0・disciplined=NULL（非該当・ADR-092）。"""
+    responses = [
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCall(id="c1", name="get_signals", arguments={"type": "momentum"})],
+        ),
+        LLMResponse(content="所見", tool_calls=[]),
+    ]
+
+    async def _fake_complete(messages: Any, **_: Any) -> LLMResponse:
+        return responses.pop(0)
+
+    async def _fake_handler(args: dict[str, object]) -> dict[str, object]:
+        return {"signals": []}
+
+    monkeypatch.setattr(service, "complete", _fake_complete)
+    _stub_handler(monkeypatch, "get_signals", _fake_handler)
+
+    _run(service.run_tool_loop([{"role": "user", "content": "兆候?"}], face=_FACE, source="chat"))
+
+    t = _recorded_turns()[0]
+    assert t["called_propose_trade"] == 0
+    assert t["propose_trade_disciplined"] is None
+
+
+def test_records_truncated_turn(temp_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_rounds 打ち切りは truncated=1 で焼く（ADR-092・打ち切り率の観測）。"""
+
+    async def _always_tool(messages: Any, **_: Any) -> LLMResponse:
+        return LLMResponse(
+            content="続けたい", tool_calls=[ToolCall(id="c", name="get_signals", arguments={})]
+        )
+
+    async def _fake_handler(args: dict[str, object]) -> dict[str, object]:
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "complete", _always_tool)
+    _stub_handler(monkeypatch, "get_signals", _fake_handler)
+
+    _run(
+        service.run_tool_loop(
+            [{"role": "user", "content": "x"}], face=_FACE, source="nightly", max_rounds=2
+        )
+    )
+
+    t = _recorded_turns()[0]
+    assert t["truncated"] == 1
+    assert t["n_rounds"] == 2
+
+
+def test_summarize_propose_trade_discipline_pure() -> None:
+    """規律集計の純関数（DB 不要・drift 回避で永続経路と同じ抽出/正規化を使う・ADR-092）。"""
+    from app.advisor.journaling import summarize_propose_trade_discipline
+
+    # 呼んでいない → (0, None)
+    assert summarize_propose_trade_discipline([{"name": "get_signals", "args": {}}]) == (0, None)
+    # 全備 → (1, 1)。日本語/別名も正規化して充足扱い（conviction=高・horizon=短期）。
+    full = [
+        {
+            "name": "propose_trade",
+            "args": {
+                "action": "buy",
+                "code": "7203",
+                "reason": "r",
+                "conviction": "高",
+                "invalidation": "x",
+                "catalyst": "y",
+                "horizon": "短期",
+            },
+        }
+    ]
+    assert summarize_propose_trade_discipline(full) == (1, 1)
+    # 1 件でも欠ければ (1, 0)（空白 catalyst は欠落扱い＝永続経路の strip と同じ）。
+    partial = [full[0], {"name": "propose_trade", "args": {"conviction": "high", "catalyst": " "}}]
+    assert summarize_propose_trade_discipline(partial) == (1, 0)
 
 
 # ---------------------------------------------------------------------------

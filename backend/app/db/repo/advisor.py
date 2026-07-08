@@ -6,11 +6,12 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, func, select
+from sqlalchemy import Connection, Float, func, select, type_coerce
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.schema import (
     advisor_journal,
+    advisor_turns,
     llm_usage,
     policy,
     proposals,
@@ -372,3 +373,61 @@ def sum_llm_cost_month(conn: Connection, year_month: str) -> float:
         llm_usage.c.created_at.like(f"{year_month}%")
     )
     return float(conn.execute(stmt).scalar() or 0.0)
+
+
+# --- advisor_turns（AI Advisor 判断軌跡の観測台帳・ADR-092・0044_advisor_turns） ---
+
+
+def insert_turn(conn: Connection, **fields: Any) -> int:
+    """advisor_turns に 1 行（1 LLM ターン）積み、発行 id を返す（ADR-092）。
+
+    fields: created_at / source / model / tool_sequence / n_rounds / truncated /
+    called_propose_trade / propose_trade_disciplined。tool_sequence は呼び出し側で json.dumps 済み
+    の文字列。service._record_turn が best-effort（tx 外・独立接続）で呼ぶ（_record_usage 同型）。
+    """
+    fields.setdefault("created_at", datetime.now(UTC).isoformat())
+    result = conn.execute(advisor_turns.insert().values(**fields))
+    return int(result.lastrowid)
+
+
+def list_recent_turns(
+    conn: Connection, *, source: str | None = None, limit: int = 50
+) -> list[dict[str, Any]]:
+    """advisor_turns を created_at 降順で返す（source 指定で絞り込み・ADR-092）。
+
+    GET /advisor/turns の recent（軌跡カード）用。tool_sequence は JSON 文字列のまま返し、型変換は
+    router が担う（list_proposals と同型・薄い読み取り）。
+    """
+    stmt = select(advisor_turns)
+    if source:
+        stmt = stmt.where(advisor_turns.c.source == source)
+    stmt = stmt.order_by(advisor_turns.c.created_at.desc(), advisor_turns.c.id.desc()).limit(limit)
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]
+
+
+def aggregate_turns(conn: Connection) -> list[dict[str, Any]]:
+    """判断軌跡を source 別に集計する（ADR-092・GET /advisor/turns の summary）。
+
+    count（n_turns）・avg(n_rounds)・avg(truncated)＝打ち切り率・sum(called_propose_trade)＝起票
+    ターン数・avg(propose_trade_disciplined)＝規律充足率を返す。disciplined_rate は AVG が NULL
+    （propose_trade 非該当）を無視するので「起票したターンのうち 4 属性を全備した割合」になる
+    （proposal_outcomes の calibration と同じ NULL 無視の意味論・ADR-084）。AVG/SUM は
+    type_coerce(Float()) で Float 化し Decimal を LLM/MCP 境界に流さない（backend-repo-pattern）。
+    """
+    stmt = (
+        select(
+            advisor_turns.c.source,
+            func.count().label("n_turns"),
+            type_coerce(func.avg(advisor_turns.c.n_rounds), Float()).label("avg_rounds"),
+            type_coerce(func.avg(advisor_turns.c.truncated), Float()).label("truncated_rate"),
+            type_coerce(
+                func.coalesce(func.sum(advisor_turns.c.called_propose_trade), 0), Float()
+            ).label("n_propose_trade"),
+            type_coerce(func.avg(advisor_turns.c.propose_trade_disciplined), Float()).label(
+                "disciplined_rate"
+            ),
+        )
+        .group_by(advisor_turns.c.source)
+        .order_by(advisor_turns.c.source)
+    )
+    return [dict(r) for r in conn.execute(stmt).mappings().all()]

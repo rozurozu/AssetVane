@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.db.repo._common import pack_embedding
 from app.db.repo.advisor import (
+    aggregate_turns,
     attach_skeptic_review,
     count_profile_notes_on,
     count_skeptic_reviews_on,
@@ -19,9 +20,11 @@ from app.db.repo.advisor import (
     insert_journal,
     insert_llm_usage,
     insert_proposal,
+    insert_turn,
     list_journal,
     list_pending_unreviewed_trade_proposals,
     list_proposals,
+    list_recent_turns,
     pending_profile_note_exists,
     pending_trade_proposal_exists,
     set_journal_policy_snapshot,
@@ -359,6 +362,9 @@ __all__ = [
     "update_proposal_status",
     "insert_llm_usage",
     "sum_llm_cost_month",
+    "insert_turn",
+    "list_recent_turns",
+    "aggregate_turns",
     "upsert_dossier",
     "upsert_news",
     "news_exists",

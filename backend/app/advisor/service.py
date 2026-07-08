@@ -24,9 +24,11 @@ from typing import Literal
 
 from sqlalchemy import Connection
 
+from app.advisor.journaling import summarize_propose_trade_discipline
 from app.advisor.llm import complete
 from app.advisor.tools.registry import CURRENT_PHASE, REGISTRY, openai_tools
 from app.db import repo
+from app.db.engine import get_engine
 from app.services.llm_config import FaceNotConfiguredError, ResolvedFace, resolve_face
 from app.services.policy import DEFAULT_POLICY, encode_policy_field, normalize_policy_row
 
@@ -135,17 +137,59 @@ async def run_tool_loop(
         rounds += 1
         resp = await complete(messages, face=face, tools=tools, source=source)
 
-    if resp.tool_calls and rounds >= max_rounds:
+    truncated = bool(resp.tool_calls and rounds >= max_rounds)
+    if truncated:
         # 上限到達で Tool 要求が続く → 打ち切る。実 content があればそれを返す。content が空のときの
         # 合成プレースホルダは reply→observations に化けて縮退検知（ADR-018）を素通りし、nightly で
         # 偽成功＋ゴミ journal を残す（#13）。よって nightly は "" を返し縮退（journal スキップ）に
         # 倒し、chat は利用者向けの定型文を出す（空応答の UX を避ける）。
         if resp.content:
-            return resp.content, tool_runs
-        fallback = "" if source == "nightly" else "（応答が長すぎるため打ち切りました）"
-        return fallback, tool_runs
+            reply = resp.content
+        else:
+            reply = "" if source == "nightly" else "（応答が長すぎるため打ち切りました）"
+    else:
+        reply = resp.content or ""
 
-    return resp.content or "", tool_runs
+    # 判断軌跡を観測台帳へ best-effort で焼く（単一出口＝1 ターン 1 回・ADR-092）。rounds/truncated
+    # はこのループ内でしか見えないためフックはここに置く（_record_usage と同型・tx 外・独立接続で
+    # LLM 応答を壊さない）。dossier/tagger/triage は generate_once 経路でここを通らず自然に対象外。
+    _record_turn(
+        source=source, model=face.model, tool_runs=tool_runs, rounds=rounds, truncated=truncated
+    )
+    return reply, tool_runs
+
+
+def _record_turn(
+    *,
+    source: str,
+    model: str,
+    tool_runs: list[dict[str, object]],
+    rounds: int,
+    truncated: bool,
+) -> None:
+    """1 LLM ターンの判断軌跡を advisor_turns に best-effort で記録する（ADR-092）。
+
+    llm._record_usage（:132-160）と完全同型＝独立接続（get_engine().begin()）で insert し、失敗は
+    except で握って LLM 応答を壊さない。reply 本文は残さず tool_sequence（呼んだ Tool 名＋引数）
+    だけ焼く（結果値なし＝ADR-025・生チャット非索引＝ADR-029：プロセスは残すがコンテンツは残さない）。
+    集計に効く規律 2 列（called_propose_trade / propose_trade_disciplined）は journaling の単一の
+    真実（summarize_propose_trade_discipline）で非正規化する（drift 回避）。
+    """
+    try:
+        called, disciplined = summarize_propose_trade_discipline(tool_runs)
+        with get_engine().begin() as conn:
+            repo.insert_turn(
+                conn,
+                source=source,
+                model=model,
+                tool_sequence=json.dumps(tool_runs, ensure_ascii=False),
+                n_rounds=rounds,
+                truncated=1 if truncated else 0,
+                called_propose_trade=called,
+                propose_trade_disciplined=disciplined,
+            )
+    except Exception:
+        logger.exception("advisor_turns の記録に失敗（LLM 応答は返す）")
 
 
 async def run_turn_cancellable(

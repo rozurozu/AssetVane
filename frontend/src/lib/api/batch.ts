@@ -29,6 +29,15 @@ export function backfillNetCash(): Promise<BatchRunResponse> {
   return postJSON<BatchRunResponse>("/valuation/backfill-net-cash", {});
 }
 
+/** 夜AI（軸1 分析）だけを手動起動（ADR-092・POST /batch/run-advisor）。
+ * 全 NIGHTLY（重い全銘柄バックフィル含む）を回す runBatch と違い、advisor 部分（run_advisor ジョブ 1 本）
+ * だけを軽く回す。何度でも叩いて /advisor-turns で判断軌跡を観測する。進捗は getBatchStatus で追う
+ * （夜間と同じ state・ADR-011/036）。nightly 面が未設定なら backend が 400（/settings で LLM を登録）、
+ * 既に実行中なら 409（いずれも ApiError の detail）。 */
+export function runAdvisor(): Promise<BatchRunResponse> {
+  return postJSON<BatchRunResponse>("/batch/run-advisor", {});
+}
+
 /** バッチ実行状態（GET /batch/status・batch.py・ADR-036）。batch.state と 1:1。 */
 export type BatchStatusResponse = {
   running: boolean;

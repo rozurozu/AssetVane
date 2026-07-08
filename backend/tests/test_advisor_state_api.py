@@ -182,3 +182,107 @@ def test_approve_missing_returns_404(client: Any) -> None:
     """存在しない proposal の approve は 404。"""
     res = client.post("/proposals/9999/approve", json={})
     assert res.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# /advisor/turns（判断軌跡の観測層・ADR-092）
+# ---------------------------------------------------------------------------
+
+
+def _seed_turn(client: Any, **fields: Any) -> int:
+    """テスト用に advisor_turns を直接 DB へ焼く（LLM 不要・観測層の検証用・ADR-092）。"""
+    import json
+
+    from app.db import repo
+    from app.db.engine import get_engine
+
+    if isinstance(fields.get("tool_sequence"), list):
+        fields["tool_sequence"] = json.dumps(fields["tool_sequence"], ensure_ascii=False)
+    with get_engine().begin() as conn:
+        return repo.insert_turn(conn, **fields)
+
+
+def test_get_advisor_turns_summary_and_recent(client: Any) -> None:
+    """GET /advisor/turns: 面別サマリ（集計）＋直近の軌跡（導出フラグ込み）を返す。"""
+    # nightly: 規律を満たした起票ターン（disciplined=1）。
+    _seed_turn(
+        client,
+        source="nightly",
+        model="m",
+        tool_sequence=[
+            {"name": "get_signals", "args": {"type": "momentum"}},
+            {"name": "propose_trade", "args": {"code": "7203"}},
+            {"name": "submit_journal", "args": {"observations": "x"}},
+        ],
+        n_rounds=2,
+        truncated=0,
+        called_propose_trade=1,
+        propose_trade_disciplined=1,
+    )
+    # nightly: propose_trade 非該当（disciplined=NULL）。
+    _seed_turn(
+        client,
+        source="nightly",
+        model="m",
+        tool_sequence=[{"name": "submit_notable_stocks", "args": {"picks": []}}],
+        n_rounds=1,
+        truncated=1,
+        called_propose_trade=0,
+        propose_trade_disciplined=None,
+    )
+    # chat: 別面（サマリが source 別に割れることの確認）。
+    _seed_turn(
+        client,
+        source="chat",
+        model="m",
+        tool_sequence=[{"name": "get_signals", "args": {}}],
+        n_rounds=1,
+        truncated=0,
+        called_propose_trade=0,
+        propose_trade_disciplined=None,
+    )
+
+    body = client.get("/advisor/turns").json()
+
+    # サマリは source 別（chat, nightly の 2 行）。
+    by_source = {row["source"]: row for row in body["summary"]}
+    assert set(by_source) == {"chat", "nightly"}
+    nightly = by_source["nightly"]
+    assert nightly["n_turns"] == 2
+    assert nightly["avg_rounds"] == 1.5
+    assert nightly["truncated_rate"] == 0.5
+    assert nightly["n_propose_trade"] == 1
+    # disciplined_rate は起票ターン（NOT NULL）だけの平均＝1.0（NULL 無視・ADR-084 同型）。
+    assert nightly["disciplined_rate"] == 1.0
+
+    # recent は created_at 降順。導出フラグ（submit_journal/notable）が tool_sequence から立つ。
+    recent = body["recent"]
+    assert len(recent) == 3
+    disciplined_turn = next(t for t in recent if t["called_propose_trade"])
+    assert disciplined_turn["called_submit_journal"] is True
+    assert disciplined_turn["propose_trade_disciplined"] is True
+    assert [c["name"] for c in disciplined_turn["tool_sequence"]] == [
+        "get_signals",
+        "propose_trade",
+        "submit_journal",
+    ]
+    notable_turn = next(t for t in recent if t["truncated"])
+    assert notable_turn["called_submit_notable"] is True
+    assert notable_turn["propose_trade_disciplined"] is None
+
+
+def test_get_advisor_turns_source_filter(client: Any) -> None:
+    """GET /advisor/turns?source=chat は recent を絞るが summary は全面を返す。"""
+    _seed_turn(client, source="nightly", n_rounds=1, called_propose_trade=0)
+    _seed_turn(client, source="chat", n_rounds=1, called_propose_trade=0)
+
+    body = client.get("/advisor/turns", params={"source": "chat"}).json()
+    assert {t["source"] for t in body["recent"]} == {"chat"}
+    # summary は絞らない（全母集団の比較が目的）。
+    assert {row["source"] for row in body["summary"]} == {"chat", "nightly"}
+
+
+def test_get_advisor_turns_empty(client: Any) -> None:
+    """行が無ければ summary/recent とも空配列（500 にしない）。"""
+    body = client.get("/advisor/turns").json()
+    assert body == {"summary": [], "recent": []}

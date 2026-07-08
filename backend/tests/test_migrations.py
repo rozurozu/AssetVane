@@ -54,6 +54,8 @@ def test_upgrade_head_on_fresh_db(tmp_path, monkeypatch) -> None:
             "us_stocks",
             "us_daily_quotes",
             "us_valuation_snapshots",
+            # ADR-092（0044_advisor_turns）。AI Advisor 判断軌跡の観測台帳。
+            "advisor_turns",
             "alembic_version",
         } <= names
 

@@ -8,6 +8,7 @@ export * from "./signals";
 export * from "./batch";
 export * from "./portfolio";
 export * from "./advisor";
+export * from "./advisor-turns";
 export * from "./watchlist";
 export * from "./news";
 export * from "./lead-lag";

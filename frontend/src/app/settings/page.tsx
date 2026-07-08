@@ -14,6 +14,7 @@ import {
   getBatchStatus,
   getEdinetdbConfig,
   getHealth,
+  runAdvisor,
   runBatch,
   runEdinetDifferential,
   sendDiscordTest,
@@ -113,6 +114,26 @@ export default function SettingsPage() {
       setBatchNote(e instanceof Error ? e.message : String(e));
     } finally {
       setStopBusy(false);
+    }
+  }
+
+  // 夜AI 単体起動（ADR-092）。全 NIGHTLY を回さず advisor 1 本だけ軽く回す口。fetch/score は混ぜ
+  // ないので、事前に一度 /batch/run で事実を埋めておく前提（鮮度は運用手順で担保）。何度でも叩いて
+  // /advisor-turns で判断軌跡を観測する。進捗は上のバッチ状態ポーリングに相乗り（同じ state）。
+  const [advisorBusy, setAdvisorBusy] = useState(false);
+  const [advisorNote, setAdvisorNote] = useState<string | null>(null);
+
+  async function onRunAdvisor() {
+    setAdvisorBusy(true);
+    setAdvisorNote(null);
+    try {
+      await runAdvisor();
+      setAdvisorNote("夜AI を起動したのだ。判断軌跡は /advisor-turns で観測できるのだ。");
+    } catch (e) {
+      // 400（nightly 面 未設定）・409（実行中）も ApiError の message で拾って表示する。
+      setAdvisorNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdvisorBusy(false);
     }
   }
 
@@ -297,6 +318,27 @@ export default function SettingsPage() {
             </p>
           )}
           {batchNote && <p className="mt-2 text-[12px] text-ink-muted">{batchNote}</p>}
+
+          {/* 夜AI 単体起動（ADR-092）。advisor 1 本だけ軽く回す。事実は事前に /batch/run で埋める前提。 */}
+          <div className="mt-3 border-hairline-soft border-t pt-3">
+            <p className="mb-2 text-[12px] text-ink-muted">
+              夜AI（軸1 分析）だけを軽く回す。取得・採点は混ぜないので、先に上のバッチで事実を
+              埋めておくのだ。判断軌跡は{" "}
+              <a className="text-accent underline" href="/advisor-turns">
+                /advisor-turns
+              </a>{" "}
+              で観測できるのだ（nightly 面の LLM 設定が必要）。
+            </p>
+            <button
+              type="button"
+              onClick={onRunAdvisor}
+              disabled={advisorBusy || running}
+              className="rounded-md border border-hairline bg-surface-2 px-3 py-1.5 text-[13px] font-medium hover:bg-surface-3 disabled:opacity-50"
+            >
+              {advisorBusy ? "起動中…" : "夜AI を今すぐ回す"}
+            </button>
+            {advisorNote && <p className="mt-2 text-[12px] text-ink-muted">{advisorNote}</p>}
+          </div>
         </Card>
 
         {/* EDINET 差分タグ付け（テーマタグ段階C・ADR-056）。夜間と同じ差分を run_jobs で 1 回。 */}

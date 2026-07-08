@@ -48,6 +48,8 @@ export const nav: NavSection[] = [
       { label: "プロファイル", icon: "🪞", href: "/profile" },
       { label: "Journal", icon: "📓", href: "/journal" },
       { label: "Proposals", icon: "✓", href: "/proposals" },
+      // AI 判断軌跡の観測層（ADR-092）。呼んだ Tool 列・規律充足・ラウンド数・打ち切り率を数字で見る。
+      { label: "判断軌跡", icon: "🔬", href: "/advisor-turns" },
     ],
   },
   { group: "システム", items: [{ label: "Settings", icon: "⚙", href: "/settings" }] },

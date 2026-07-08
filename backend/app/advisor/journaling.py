@@ -229,6 +229,38 @@ def _normalize_horizon(raw: object) -> str | None:
     return _HORIZON_ALIASES.get(raw.strip().lower())
 
 
+def summarize_propose_trade_discipline(
+    tool_runs: list[dict[str, Any]],
+) -> tuple[int, int | None]:
+    """tool_runs の propose_trade から起票有無と規律充足を集計する（ADR-092・観測台帳の非正規化）。
+
+    戻り値: `(called_propose_trade, propose_trade_disciplined)`。
+    - called_propose_trade: 1=このターンで propose_trade を 1 回以上呼んだ / 0=呼ばなかった。
+    - propose_trade_disciplined: None（NULL＝非該当・呼んでいない）/ 1=呼んだ全 propose_trade が
+      判断属性 4 点（conviction・invalidation・catalyst・horizon）を全備 / 0=1 件でも欠けがある。
+
+    判定は永続経路（persist_trade_proposals_from_tool_runs）と同じ抽出（_extract_trade_proposals）
+    と同じ正規化（_normalize_conviction/_normalize_horizon）を再利用し、tool_runs 解釈の真実を一本化
+    する（drift 回避＝ADR-092）。invalidation/catalyst は永続経路の `.strip()` 空判定に揃える。
+    service._record_turn がこの 2 値を advisor_turns の集計列へ非正規化する。
+    """
+    proposals = _extract_trade_proposals(tool_runs)
+    if not proposals:
+        return 0, None
+    disciplined = 1
+    for raw in proposals:
+        conviction = _normalize_conviction(raw.get("conviction"))
+        horizon = _normalize_horizon(raw.get("horizon"))
+        invalidation = raw.get("invalidation")
+        catalyst = raw.get("catalyst")
+        has_invalidation = isinstance(invalidation, str) and bool(invalidation.strip())
+        has_catalyst = isinstance(catalyst, str) and bool(catalyst.strip())
+        if not (conviction and horizon and has_invalidation and has_catalyst):
+            disciplined = 0
+            break
+    return 1, disciplined
+
+
 def persist_trade_proposals_from_tool_runs(
     conn: Connection,
     *,

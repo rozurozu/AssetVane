@@ -352,3 +352,110 @@ def reject_proposal(proposal_id: int, body: ResolveBody | None = None) -> Resolv
     """提案を却下する（status のみ rejected に遷移・§8.2）。"""
     outcome = body.outcome if body else None
     return _resolve(proposal_id, decision="rejected", outcome=outcome)
+
+
+# ---------------------------------------------------------------------------
+# /advisor/turns（AI Advisor 判断軌跡の観測層・ADR-092）
+# ---------------------------------------------------------------------------
+
+
+class TurnToolCall(BaseModel):
+    """1 ターンで呼んだ Tool の 1 件（tool_sequence の要素・結果値なし＝ADR-025）。"""
+
+    name: str
+    args: dict[str, Any] = {}
+
+
+class TurnItem(BaseModel):
+    """advisor_turns の 1 行（ADR-092）。列＋tool_sequence 由来の read-time 導出フラグ。"""
+
+    id: int
+    created_at: str | None = None
+    source: str  # 'chat'/'nightly'/'reviewer'/'profiler'/'skeptic'
+    model: str | None = None
+    tool_sequence: list[TurnToolCall] = []
+    n_rounds: int
+    truncated: bool
+    called_propose_trade: bool
+    propose_trade_disciplined: bool | None = None  # None=非該当（propose_trade を呼んでいない）
+    # 表示専用の導出フラグ（列にせず tool_sequence を走査＝read-time・ADR-092）。
+    called_submit_journal: bool
+    called_submit_notable: bool
+
+
+class TurnsSummaryRow(BaseModel):
+    """面別の判断軌跡サマリ（aggregate_turns と 1:1・ADR-092）。"""
+
+    source: str
+    n_turns: int
+    avg_rounds: float | None = None
+    truncated_rate: float | None = None  # 0..1（打ち切りターンの割合）
+    n_propose_trade: int  # propose_trade を呼んだターン数
+    disciplined_rate: float | None = None  # 起票ターンのうち 4 属性全備の割合（NULL 無視・ADR-084）
+
+
+class TurnsResponse(BaseModel):
+    """GET /advisor/turns のレスポンス（面別サマリ＋直近の軌跡・ADR-092）。"""
+
+    summary: list[TurnsSummaryRow]
+    recent: list[TurnItem]
+
+
+def _turn_row_to_item(row: dict[str, Any]) -> TurnItem:
+    """advisor_turns の生 dict を TurnItem に整形（tool_sequence の JSON を型へ・§ADR-092）。
+
+    表示専用フラグ（called_submit_journal/notable）は tool_sequence を走査して read-time で導出する
+    （列にしない＝JournalEntry の JSON 復元と同型の薄い読み変換）。
+    """
+    seq_raw = _as_json_list(row.get("tool_sequence"))
+    dicts = [r for r in seq_raw if isinstance(r, dict)]
+    names = {r.get("name") for r in dicts}
+    tool_calls = [
+        TurnToolCall(
+            name=str(r.get("name") or ""),
+            args=r["args"] if isinstance(r.get("args"), dict) else {},
+        )
+        for r in dicts
+    ]
+    disciplined = row.get("propose_trade_disciplined")
+    return TurnItem(
+        id=int(row["id"]),
+        created_at=row.get("created_at"),
+        source=row["source"],
+        model=row.get("model"),
+        tool_sequence=tool_calls,
+        n_rounds=int(row.get("n_rounds") or 0),
+        truncated=bool(row.get("truncated")),
+        called_propose_trade=bool(row.get("called_propose_trade")),
+        propose_trade_disciplined=None if disciplined is None else bool(disciplined),
+        called_submit_journal="submit_journal" in names,
+        called_submit_notable="submit_notable_stocks" in names,
+    )
+
+
+@router.get("/advisor/turns", response_model=TurnsResponse)
+def get_advisor_turns(
+    source: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    conn: Connection = Depends(get_conn),
+) -> TurnsResponse:
+    """AI Advisor の判断軌跡を面別サマリ＋直近の軌跡で返す（ADR-092・観測層）。
+
+    summary は全期間の面別集計（aggregate_turns）、recent は created_at 降順の直近軌跡
+    （source 指定で絞り込み）。n_propose_trade は Float 化された集約値なので int に丸める。
+    """
+    summary = [
+        TurnsSummaryRow(
+            source=r["source"],
+            n_turns=int(r["n_turns"]),
+            avg_rounds=r.get("avg_rounds"),
+            truncated_rate=r.get("truncated_rate"),
+            n_propose_trade=int(r.get("n_propose_trade") or 0),
+            disciplined_rate=r.get("disciplined_rate"),
+        )
+        for r in repo.aggregate_turns(conn)
+    ]
+    recent = [
+        _turn_row_to_item(r) for r in repo.list_recent_turns(conn, source=source, limit=limit)
+    ]
+    return TurnsResponse(summary=summary, recent=recent)
