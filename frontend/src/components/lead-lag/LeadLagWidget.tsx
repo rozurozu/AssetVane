@@ -7,13 +7,17 @@
 // 保つ（FundNavSparkline と同じ理由付け）。GeneralNewsWidget は props 渡しだが loading/error を握り潰す形で、
 // props 化すると本 widget の三状態表示が後退するため非対称のまま据え置く。三分岐は StatusBlock に畳む。
 // 整形は lib/format.ts。数値（score/ic/hit_rate）は backend が事前計算した「事実」を読むだけ（ADR-014）。
-// meta.is_delayed=true（plan=free か model_as_of が約 3 ヶ月古い）のとき Free 低信頼バナーを出す。
+// meta.is_delayed=true（plan=free か model_as_of が約 3 ヶ月古い）のとき低信頼バナーを出す。バナーの
+// 理由はこの 2 つで別物なので、プラン由来の遅延（/health の jquants＝ADR-061）とモデルの陳腐化を
+// 書き分ける（旧実装は「{plan} プランの 12 週間遅延」固定で、Light 契約でモデルが古いときに嘘になった）。
+// プラン状態の取得も上記の内部 GET 例外に含める（自己完結 widget）。
 
 import { Card } from "@/components/ui/Card";
 import { DataTable, Td } from "@/components/ui/DataTable";
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import { getLeadLag } from "@/lib/api";
 import { fmtRatio, pct } from "@/lib/format";
+import { hasPlanDelay, jquantsSourceNote, useJquantsStatus } from "@/lib/jquants";
 import { useApi } from "@/lib/use-api";
 
 /** 表示する Top N（翌日強含み業種・score 降順）。 */
@@ -21,6 +25,7 @@ const TOP_N = 6;
 
 export function LeadLagWidget() {
   const { data, error, loading } = useApi((signal) => getLeadLag(signal), []);
+  const jquants = useJquantsStatus();
 
   const ranking = data?.ranking ?? [];
   const meta = data?.meta;
@@ -36,11 +41,20 @@ export function LeadLagWidget() {
 
   return (
     <Card title="業種リードラグ（翌日強含み）" meta={qualityMeta}>
-      {/* Free 低信頼バナー（is_delayed=true のときだけ・目立つ位置＝表の前）。 */}
+      {/* 低信頼バナー（is_delayed=true のときだけ・目立つ位置＝表の前）。 */}
       {meta?.is_delayed && (
         <div className="mb-3 rounded-md border border-warning border-l-2 border-l-warning bg-canvas px-3 py-2 text-[12px] text-warning leading-[1.5]">
-          {meta.plan} プランの 12 週間遅延により、モデル/検証が約 3
-          ヶ月古く、翌日予測は実用外なのだ。Light プラン推奨なのだ。
+          {hasPlanDelay(jquants) ? (
+            <>
+              {jquantsSourceNote(jquants)}のため、モデル/検証が約 3
+              ヶ月古く、翌日予測は実用外なのだ。Light プラン以上を推奨するのだ。
+            </>
+          ) : (
+            <>
+              モデル/検証が古い（{meta.model_as_of ?? "算出日不明"}
+              ）ため、翌日予測の信頼度が落ちているのだ。夜間バッチの実行を確認するのだ。
+            </>
+          )}
         </div>
       )}
 

@@ -32,6 +32,7 @@ import {
   runBatch,
 } from "@/lib/api";
 import { fmtJpy, pct } from "@/lib/format";
+import { delayReasonLabel, freshnessNote, useJquantsStatus } from "@/lib/jquants";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -95,13 +96,10 @@ export default function Dashboard() {
     }
   }
 
-  // 遅延注記（is_delayed=true かつ as_of がある場合に表示）
-  const delayNote =
-    overview?.is_delayed && overview.as_of
-      ? `12 週遅延・${overview.as_of} 基準`
-      : overview?.as_of
-        ? `${overview.as_of} 基準`
-        : "12 週遅延";
+  // 遅延注記（as_of がある場合に表示）。プラン名・遅延幅は焼き込まず /health の jquants から
+  // 組む（ADR-061）。遅延の有無自体は as_of の鮮度実測（is_delayed・ADR-071）。
+  const jquants = useJquantsStatus();
+  const delayNote = freshnessNote(jquants, overview?.as_of, overview?.is_delayed ?? false);
 
   // 実データから KPI 行を構築（null のときはモックの構造を踏襲しつつ「—」表示）
   type KpiItem = { label: string; value: string; sub: string; tone?: "up" | "down"; dot?: string };
@@ -490,7 +488,7 @@ export default function Dashboard() {
       <div className="mb-3 grid grid-cols-[3fr_2fr] gap-3 max-[1100px]:grid-cols-1">
         <Card
           title="今日のシグナル（Trend Vane）"
-          meta={signalsDelayed ? "12週遅延" : undefined}
+          meta={signalsDelayed ? delayReasonLabel(jquants) : undefined}
           link={
             <Link href="/signals" className="text-[12px] text-accent">
               すべて

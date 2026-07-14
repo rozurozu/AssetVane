@@ -2,6 +2,7 @@
 
 import { type HealthResponse, getHealth } from "@/lib/api";
 import { fmtDateIso, fmtDateWithWeekday } from "@/lib/format";
+import { planDelayLabel } from "@/lib/jquants";
 import { useEffect, useState } from "react";
 
 // topbar 48px / canvas。データ鮮度バッジ・日付に加えて、backend(/health) への
@@ -16,11 +17,6 @@ type Health = "checking" | "ok" | "down";
 
 /** /health の再チェック間隔（ミリ秒・ADR-038）。down→ok の自己回復はこの周期で起きる。 */
 const HEALTH_POLL_MS = 30000;
-
-/** プラン名を表示用に先頭大文字化（"free" → "Free"）。空なら空文字。 */
-function titleCasePlan(plan: string): string {
-  return plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : "";
-}
 
 export function Topbar() {
   const [health, setHealth] = useState<Health>("checking");
@@ -37,29 +33,27 @@ export function Topbar() {
 
   // 右上のプランバッジ（ADR-061）。plan/遅延日数/登録有無は /health の jquants から取る
   // （旧・ハードコードの "Free・12週" を廃止＝DB プラン由来で動的化）。遅延日数（free=84・
-  // 有料=0）は backend の _PLAN_DELAY_DAYS 定数由来。遅延の有無で配色を変え、遅延ありのときだけ
-  // 「今日 − delay_days」を client の now 基準で導出する（表示中の曜日付き日付と整合・C-10）。
+  // 有料=0）は backend の _PLAN_DELAY_DAYS 定数由来。文言の組み立ては lib/jquants の
+  // planDelayLabel に集約（他画面の注記と同じ語彙にする）。遅延の有無で配色を変え、遅延ありの
+  // ときだけ「今日 − delay_days」を client の now 基準で導出する（表示中の曜日付き日付と整合・C-10）。
   const jq = data?.jquants;
   const delayDays = jq?.delay_days ?? 0;
   const delayLimit =
     now && delayDays > 0
       ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - delayDays)
       : null;
+  const planLabel = planDelayLabel(jq); // 未設定・未取得は null
   // 遅延あり=warning 色 / それ以外（遅延なし・未設定・確認中）=muted 色。
   let planText: string;
   let planDelayed: boolean;
-  if (!jq) {
-    planText = "J-Quants 確認中…"; // 初回 /health 前
-    planDelayed = false;
-  } else if (!jq.configured) {
-    planText = "J-Quants 未設定"; // api_key 未登録（/settings 誘導の含意）
+  if (!planLabel) {
+    planText = jq ? "J-Quants 未設定" : "J-Quants 確認中…"; // api_key 未登録 / 初回 /health 前
     planDelayed = false;
   } else if (delayDays > 0) {
-    const weeks = Math.round(delayDays / 7); // free: 84/7=12（現行「株価12週遅延」を維持）
-    planText = `${titleCasePlan(jq.plan)}・株価${weeks}週遅延（〜${delayLimit ? fmtDateIso(delayLimit) : "—"}）`;
+    planText = `${planLabel}（〜${delayLimit ? fmtDateIso(delayLimit) : "—"}）`; // Free: 株価12週遅延
     planDelayed = true;
   } else {
-    planText = `${titleCasePlan(jq.plan)}・遅延なし`; // light/standard/premium
+    planText = planLabel; // light/standard/premium＝遅延なし
     planDelayed = false;
   }
 

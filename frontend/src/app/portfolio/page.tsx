@@ -37,6 +37,7 @@ import {
   optimizePortfolio,
 } from "@/lib/api";
 import { fmtJpy, pct } from "@/lib/format";
+import { freshnessNote, useJquantsStatus } from "@/lib/jquants";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
@@ -151,13 +152,12 @@ function PortfolioPageInner() {
     setTab("holdings"); // 入力後は保有タブへ戻る
   }
 
+  // 鮮度注記（保有銘柄カードの meta ＋ ページ見出し）。プラン名・遅延幅は焼き込まず /health の
+  // jquants から組む（ADR-061／旧・ハードコードの "J-Quants Free・12 週遅延" を廃止）。遅延の
+  // 有無自体は as_of の鮮度実測（valuation_meta.is_delayed・ADR-071）で、プラン仮定ではない。
+  const jquants = useJquantsStatus();
   const vm = holdings?.valuation_meta;
-  const delayNote =
-    vm?.is_delayed && vm.as_of
-      ? `J-Quants Free・12 週遅延・${vm.as_of} 基準`
-      : vm?.as_of
-        ? `${vm.as_of} 基準`
-        : undefined;
+  const delayNote = freshnessNote(jquants, vm?.as_of, vm?.is_delayed ?? false);
 
   // 資産推移スパークライン用の点列（total_value のみ・2 点以上で描画。描画は TrendSparkline）。
   const trendValues = overview?.trend.map((p) => p.total_value) ?? [];
@@ -373,7 +373,7 @@ function PortfolioPageInner() {
             )}
             {optimizeResult && (
               <div className="space-y-2">
-                <OptimizeTable result={optimizeResult} />
+                <OptimizeTable result={optimizeResult} jquants={jquants} />
                 <button
                   type="button"
                   onClick={() => setOptimizeResult(null)}
@@ -388,11 +388,7 @@ function PortfolioPageInner() {
           {/* 過去シミュレーション（backtest・現保有 buy&hold vs TOPIX）*/}
           <Card
             title="過去シミュレーション（buy&hold vs TOPIX）"
-            meta={
-              backtest?.is_delayed && backtest.as_of
-                ? `12 週遅延・${backtest.as_of} 基準`
-                : (backtest?.as_of ?? undefined)
-            }
+            meta={freshnessNote(jquants, backtest?.as_of, backtest?.is_delayed ?? false)}
           >
             <StatusBlock loading={backtest === null} error={backtestErr}>
               {backtest &&
@@ -475,11 +471,7 @@ function PortfolioPageInner() {
           {overview && trendValues.length >= 2 && (
             <Card
               title="資産推移"
-              meta={
-                overview.is_delayed && overview.as_of
-                  ? `12 週遅延・${overview.as_of} 基準`
-                  : (overview.as_of ?? undefined)
-              }
+              meta={freshnessNote(jquants, overview.as_of, overview.is_delayed)}
             >
               <TrendSparkline
                 values={trendValues}

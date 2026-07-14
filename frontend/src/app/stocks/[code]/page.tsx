@@ -4,6 +4,7 @@ import { CandleChart } from "@/components/chart/CandleChart";
 import { DossierSection } from "@/components/dossier/DossierSection";
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import { getQuotes, getStock } from "@/lib/api";
+import { jquantsSourceNote, useJquantsStatus } from "@/lib/jquants";
 import { useApi } from "@/lib/use-api";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -20,6 +21,9 @@ export default function StockDetailPage() {
   );
   const stock = data?.[0] ?? null;
   const quotes = data?.[1] ?? null;
+  // 日足の取得元注記（旧・ハードコードの "J-Quants Free・約3か月前まで（12週遅延）" を廃止し
+  // /health の実プラン由来に統一＝ADR-061。プランを変えても嘘が残らない）。
+  const jquants = useJquantsStatus();
 
   return (
     <>
@@ -34,9 +38,7 @@ export default function StockDetailPage() {
       <section className="rounded-lg border border-hairline bg-surface-1">
         <div className="flex items-center justify-between border-hairline border-b px-3 py-2">
           <h2 className="font-semibold text-[14px] tracking-[-0.1px]">株価（日足）</h2>
-          <span className="text-[11px] text-ink-subtle">
-            J-Quants Free・約3か月前まで（12週遅延）
-          </span>
+          <span className="text-[11px] text-ink-subtle">{jquantsSourceNote(jquants)}</span>
         </div>
         <div className="p-3">
           <StatusBlock

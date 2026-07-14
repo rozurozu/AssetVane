@@ -2,16 +2,20 @@
 // current → target（×100 %）と delta（増=text-up / 減=text-down・符号付き）を表示。
 // infeasible=true のときは「制約が厳しく解なし」と constraints_applied を提示。
 // 比率は 0..1 で来るので UI でのみ ×100 して %（ADR-008 / phase2-spec.md §0）。
+// 鮮度注記のプラン名・遅延幅は焼き込まず、親（page）が /health から取った jquants を props で受け
+// lib/jquants の freshnessNote で組む（ADR-061・feature は自分で GET しない＝frontend-component-pattern）。
 
 import { DataTable, Td } from "@/components/ui/DataTable";
-import type { OptimizeResult } from "@/lib/api";
+import type { JquantsStatus, OptimizeResult } from "@/lib/api";
 import { deltaPct, pct } from "@/lib/format";
+import { freshnessNote } from "@/lib/jquants";
 
 type Props = {
   result: OptimizeResult;
+  jquants: JquantsStatus | undefined; // /health のプラン状態（未取得なら undefined）
 };
 
-export function OptimizeTable({ result }: Props) {
+export function OptimizeTable({ result, jquants }: Props) {
   // 解なし（infeasible）のときは制約内容を表示して緩め方を案内するのだ。
   if (result.infeasible) {
     const ca = result.constraints_applied;
@@ -71,7 +75,7 @@ export function OptimizeTable({ result }: Props) {
       {/* 遅延・鮮度注記 */}
       {result.is_delayed && result.as_of && (
         <div className="text-[11px] text-ink-subtle">
-          J-Quants Free・12 週遅延・{result.as_of} 基準（評価額は遅延値）
+          {freshnessNote(jquants, result.as_of, true)}（評価額は遅延値）
         </div>
       )}
 

@@ -3,6 +3,7 @@
 import { DataTable, Td } from "@/components/ui/DataTable";
 import { StatusBlock } from "@/components/ui/StatusBlock";
 import { type SignalType, getSignals } from "@/lib/api";
+import { freshnessNote, useJquantsStatus } from "@/lib/jquants";
 import { useApi } from "@/lib/use-api";
 import Link from "next/link";
 import { useState } from "react";
@@ -30,6 +31,9 @@ export default function SignalsPage() {
     (signal) => getSignals(type ? { type } : undefined, signal),
     [type],
   );
+  // 遅延注記のプラン名・遅延幅は /health 由来（ADR-061・ハードコードしない）。遅延の有無自体は
+  // signals の is_delayed＝算出日の鮮度実測（ADR-071）。
+  const jquants = useJquantsStatus();
 
   return (
     <>
@@ -38,7 +42,7 @@ export default function SignalsPage() {
         <div className="mt-0.5 text-[12px] text-ink-muted">
           {data
             ? data.is_delayed
-              ? `今日の強い銘柄。J-Quants Free・12週遅延・${data.date}基準`
+              ? `今日の強い銘柄。${freshnessNote(jquants, data.date, true)}`
               : `今日の強い銘柄。${data.date} 算出`
             : "夜間バッチが算出した「今日の強い銘柄」。行をクリックで株価チャートへ"}
         </div>
