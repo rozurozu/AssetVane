@@ -11,7 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **現状は「Phase 1〜4（Trend Vane / Portfolio Optimizer / AI Advisor / Stock Dossier）＋ Phase 6（Signal Beacon 通知）＋ Phase 7(A)（Sector Lead-Lag）着工済み・Phase 5（AI Alpha Scorer）は推論経路＋初回学習まで実装済み（ADR-066＝Mac コンテナで初回学習を実測・`.pkl` 配置済み）。backend＋frontend が縦に通し検証済み（Phase 4 は 2026-06-05・Phase 6 は 2026-06-06 に実機で Discord digest 到達・冪等まで確認）」**。設計の真実は `docs/` にある。実装を始める前に必ず `docs/` を読むこと。
 
 - **実装済み機能の詳細・残課題・次回運用時の確認事項は `docs/status.md` が正本**（本節にあった長文ステータスを 2026-07-10 に移設。以後の実装状況の追記も `docs/status.md` へ）。設計判断の「なぜ」は `docs/decisions.md`（ADR-001〜092）。
-- **横断の要点**: `CURRENT_PHASE=7`・migration head=0044・pytest 約 1275 green。自己改善ループ／AI 判断改善の各機能はコード green だが、**実 LLM E2E は dev の LLM 未設定（提案 0 件）が共通ボトルネック**＝解錠口は ADR-092（`POST /batch/run-advisor`＋`advisor_turns`・`/advisor-turns`）。
+- **横断の要点**: `CURRENT_PHASE=7`・migration head=0044・pytest 約 1281 green。自己改善ループ／AI 判断改善の各機能はコード green だが、**実 LLM E2E は dev の LLM 未設定（提案 0 件）が共通ボトルネック**＝解錠口は ADR-092（`POST /batch/run-advisor`＋`advisor_turns`・`/advisor-turns`）。
+- **データ取得の落とし穴（ADR-093・2026-07-14）**: J-Quants は**まだデータの無い日（当日・未来日）を 400 でなく 200 + `{"data": []}` で返す**。「空配列＝非営業日」と解釈して `fetch_meta` を前進させてよいのは**確定した過去日だけ**。当日で前進させると翌晩の開始日が当日に張り付き、前日以前を永久に取り逃す（実機で 12 営業日ぶんの日足が欠損し、0 行でも `ok=True` のため 2 週間無通知だった）。新しい取得ジョブを書くときは「空の意味は日付によって違う」を必ず考えること。
 
 ## ドキュメントの地図（実装前に読む）
 

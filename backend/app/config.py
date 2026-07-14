@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     alert_top_n: int = 10  # digest に載せるシグナルの上限（score 降順・残りは件数のみ）
     rebalance_alert_days: int = 14  # ⑦ 最終見直し（policy.updated_at）からの経過閾値（日）
     always_daily_digest: bool = True  # 検知ゼロでも毎朝サマリを送る（False で好機がある日だけ）
+    # 日本株日足（daily_quotes）の鮮度アラート閾値（平日換算・ADR-071/093）。max(date) の翌日〜
+    # 前日の間に「取れているはずなのに取れていない平日」がこの日数以上あれば digest に警告を出す。
+    # fetch_quotes は 0 行でも ok=True（週末・祝日は正常に 0 行）なので runner の失敗通知では
+    # 欠損に気づけない＝ここが最後の安全網（ADR-018 黙って欠損にしない）。5 は通常の連休
+    # （年末年始・GW の平日 3〜4 日）では鳴らず、真の欠損だけを拾う安全側の既定値。
+    quote_staleness_alert_days: int = 5
     # ⑧ 出来高急増（平常 3 倍）の閾値は quant が payload.notable に焼く（ADR-016）。通知層は
     # 閾値を再定義せず notable を読む（score>=alert_score_min または notable で⑧アラート）。
     # 注目シグナルのリデザイン（ADR-067）: 合流ゲート＋AI 選別へ。手法閾値は services/notable.py の

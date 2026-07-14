@@ -490,3 +490,52 @@ def test_build_digest_thesis_watch_absent_for_news_only_without_thesis(temp_db: 
     assert content is not None
     assert "保有の前提崩れの疑い" not in content  # #3 は鳴らない
     assert "保有銘柄の悪材料" in content  # ADR-051 の②には出る
+
+
+# --- ⓪日足の鮮度アラート（ADR-071/093） -------------------------------------------
+
+
+def test_build_digest_warns_when_quotes_stale(temp_db: None) -> None:
+    """日足が閾値超に古ければ digest の最上部に警告が出る（ADR-093 の再発検知）。
+
+    fetch_quotes は 0 行でも ok=True（週末・祝日は正常に 0 行）なので runner の失敗通知では欠損に
+    気づけない。2026-07-02〜07-13 の日足欠損に 2 週間気づけなかった穴を塞ぐ最後の安全網。
+    """
+    repo.upsert_stocks([STOCK])
+    _seed_quote("72030", 1000.0, date="2026-05-25")  # 最終取得が 05-25(月)＝9 平日ぶん欠損
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+
+    assert content is not None
+    assert "日本株の日足が 9 営業日ぶん取得できていません" in content
+    assert "最終取得 2026-05-25" in content
+    # 以下の全セクションの前提なので本文の先頭（タイトル直後）に置く＝1900 字截断から守る。
+    assert content.splitlines()[2].startswith("⚠️ 日本株の日足")
+
+
+def test_build_digest_no_stale_line_when_fresh(temp_db: None) -> None:
+    """前日まで取れていれば鮮度警告は出ない（当日はまだ未掲載なので欠損に数えない）。"""
+    repo.upsert_stocks([STOCK])
+    _seed_quote("72030", 1000.0, date="2026-06-04")  # today=06-05 の前日まで取得済み
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+
+    assert content is not None
+    assert "日本株の日足" not in content
+
+
+def test_build_digest_stale_line_sent_even_when_nothing_else(
+    monkeypatch: pytest.MonkeyPatch, temp_db: None
+) -> None:
+    """検知ゼロでも「データが止まった夜」は必ず届く（鮮度は has_content に含める・ADR-093）。"""
+    monkeypatch.setattr(settings, "always_daily_digest", False)
+    repo.upsert_stocks([STOCK])
+    _seed_quote("72030", 1000.0, date="2026-05-25")
+
+    with get_engine().connect() as conn:
+        content = notify_digest.build_digest_content(conn, TODAY)
+
+    assert content is not None  # always_daily_digest=False でも鮮度警告だけで送る
+    assert "日本株の日足" in content

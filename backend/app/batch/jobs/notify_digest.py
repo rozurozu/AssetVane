@@ -23,7 +23,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import Connection
 
-from app.batch import notify
+from app.batch import calendar, notify
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -57,6 +57,35 @@ def _rebalance_line(conn: Connection, today: str) -> str | None:
     return (
         f"⚠️ リバランス: 前回の方針見直しから {days} 日経過"
         f"（{settings.rebalance_alert_days} 日超）。方針を見直す時期です。"
+    )
+
+
+def _stale_quotes_line(conn: Connection, today: str) -> str | None:
+    """日本株日足（daily_quotes）の鮮度が閾値超に古いときの警告 1 行（ADR-071/093）。
+
+    max(daily_quotes.date) の翌日〜today に挟まる平日数（＝取れているはずなのに取れていない営業日
+    候補）を数え、settings.quote_staleness_alert_days 以上なら警告する。契約プランの仮定ではなく
+    **as_of の鮮度**で判定する（ADR-071）。today は UTC 日付で、02:00 JST 実行時は JST の前日に
+    あたるため「当日はまだ未掲載」を自然に除外できる。
+
+    fetch_quotes は 0 行でも ok=True（週末・祝日は正常に 0 行）なので runner の失敗通知では欠損に
+    気づけない。ここが最後の安全網（ADR-018 黙って欠損にしない）＝ADR-093 のロックイン（2026-07-02
+    〜07-13 の日足欠損に 2 週間気づけなかった）の再発検知。祝日テーブルを持たない設計（calendar.py）
+    ゆえ平日数で近似し、閾値 5 で通常の連休（年末年始・GW の平日 3〜4 日）は誤検知しない。
+    """
+    max_date = repo.get_max_quote_date(conn)
+    if max_date is None:
+        return None  # 初回（まだ 1 行も無い）は鮮度を語れない
+    try:
+        first_missing = (date.fromisoformat(max_date) + timedelta(days=1)).isoformat()
+    except ValueError:
+        return None
+    gap = sum(1 for _ in calendar.candidate_days(first_missing, today))
+    if gap < settings.quote_staleness_alert_days:
+        return None
+    return (
+        f"⚠️ 日本株の日足が {gap} 営業日ぶん取得できていません（最終取得 {max_date}）。"
+        "夜間バッチの fetch_quotes と J-Quants 設定を確認してください。"
     )
 
 
@@ -272,6 +301,11 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
     # ③保有の前提崩れの疑い（ADR-088・#3）。決定論アラート＝risk_lines と同格で has_content に含む。
     thesis_watch = _thesis_watch_lines(conn)
 
+    # ⓪日足の鮮度（ADR-093）。データが古いと以下の注目・提案すべてが古い事実に基づくため、
+    # 情報行（failed_index 等）ではなくアラートとして扱い has_content に含める＝
+    # always_daily_digest=False の設定でも「データが止まった夜」は必ず届く。
+    stale_quotes = _stale_quotes_line(conn, today)
+
     # 経験レビューの下書き件数（ADR-081・Q9）。情報行なので has_content には含めない。
     reviewer_drafts = _reviewer_drafts_line(conn, today)
     # 投資家プロファイルの傾向メモ件数（ADR-082）。同じく情報行（has_content に含めない）。
@@ -279,12 +313,19 @@ def build_digest_content(conn: Connection, today: str) -> str | None:
     # 提案の反証レビュー件数（ADR-086）。同じく情報行（has_content に含めない）。
     skeptic_reviews = _skeptic_reviews_line(conn, today)
 
-    has_content = bool(n_picks or rebalance or proposal or risk_lines or thesis_watch)
+    has_content = bool(
+        n_picks or rebalance or proposal or risk_lines or thesis_watch or stale_quotes
+    )
     if not has_content and not settings.always_daily_digest:
         return None  # 好機がある日だけ送る設定で、何も無い日（[OPEN-N]）
 
     # --- 本文組み立て ---
     lines: list[str] = [f"**📊 AssetVane 朝のダイジェスト（{today}）**", ""]
+
+    # ⓪データの鮮度は最上部（1900 字截断で最も守られる位置）。以下の全セクションの前提だから。
+    if stale_quotes:
+        lines.append(stale_quotes)
+        lines.append("")
 
     # ②は能動配信の主眼。Discord の 1900 字截断で末尾が切れても残るよう注目シグナルより前に置く。
     if risk_lines:

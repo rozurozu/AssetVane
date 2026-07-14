@@ -61,11 +61,12 @@ def _patch(monkeypatch):
 
 
 def test_skips_empty_days_and_advances_fetch_meta(temp_db, _patch, monkeypatch) -> None:
-    # 2026-06-01(月) を最終取得済みとして仕込む → start=2026-06-02(火)。
+    # 2026-06-01(月) を最終取得済みとして仕込む → start は overlap 5 日を重ねて 05-27(水)
+    # （ADR-093: 他 4 ジョブと同じ鮮度プローブ。取得済み日の再取得は UPSERT で冪等）。
     repo.upsert_fetch_meta("daily_quotes", "2026-06-01")
 
-    # 営業日: 06-02(火) 06-03(水) 06-04(木) 06-05(金)。
-    # 06-03 は空（祝日想定でスキップ）、他はデータあり。
+    # 営業日: 05-27(水) 05-28(木) 05-29(金) 06-01(月) 06-02(火) 06-03(水) 06-04(木) 06-05(金)。
+    # 05-27〜06-01・06-03 は空（祝日想定でスキップ）、他はデータあり。
     by_date = {
         "2026-06-02": [_quote("72030", "2026-06-02"), _quote("67580", "2026-06-02")],
         "2026-06-04": [_quote("72030", "2026-06-04")],
@@ -76,19 +77,105 @@ def test_skips_empty_days_and_advances_fetch_meta(temp_db, _patch, monkeypatch) 
 
     result = fetch_quotes.run(full_backfill=False)
 
-    # 営業日 4 日ぶん（06-02〜06-05）を叩く。土日は candidate_days が除外。
-    assert fake.calls == ["2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05"]
+    # overlap 込みで 05-27〜06-05 の平日 8 日を叩く。土日は candidate_days が除外。
+    assert fake.calls == [
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-06-01",
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-04",
+        "2026-06-05",
+    ]
     assert result.ok is True
-    # UPSERT 行数: 2 + 0 + 1 + 1 = 4。
+    # UPSERT 行数: 2 + 1 + 1 = 4（空日は 0）。
     assert result.rows == 4
 
-    # fetch_meta は空日も含め最終営業日まで前進している。
+    # fetch_meta は空日も含め最終営業日まで前進している（06-05 はデータありなので前進する）。
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "daily_quotes")
         assert meta is not None
         assert meta["last_fetched_date"] == "2026-06-05"
         # daily_quotes に 4 行入っている。
         assert repo.get_max_quote_date(conn) == "2026-06-05"
+
+
+def test_empty_today_does_not_advance_cursor(temp_db, _patch, monkeypatch) -> None:
+    """**当日**の空レスではカーソルを進めない（ADR-093 の芯・ロックイン防止の回帰テスト）。
+
+    J-Quants はまだデータの無い日を 400 でなく 200 + {"data": []} で返す。夜間バッチは 02:00 に
+    走るので当日の日足は必ず未掲載＝空。旧実装はこれを「祝日」とみなして fetch_meta を today まで
+    前進させ、翌晩の start が today に張り付いて前日以前を永久に取り逃した（2026-07-02〜07-13 の
+    日足欠損）。当日が空なら fetch_meta は**前日のまま**据え置き、翌晩に取り直せること。
+    """
+    repo.upsert_fetch_meta("daily_quotes", "2026-06-04")  # start=05-30(土)→候補は 06-01 から
+
+    # today(06-05・金) だけ空＝まだ未掲載。それ以前はデータあり。
+    by_date = {
+        "2026-06-01": [_quote("72030", "2026-06-01")],
+        "2026-06-02": [_quote("72030", "2026-06-02")],
+        "2026-06-03": [_quote("72030", "2026-06-03")],
+        "2026-06-04": [_quote("72030", "2026-06-04")],
+    }
+    fake = _FakeAdapter(by_date)
+    monkeypatch.setattr(fetch_quotes, "build_jquants_adapter", lambda: fake)
+
+    result = fetch_quotes.run(full_backfill=False)
+
+    # 当日も「取りには行く」（掲載されていれば取れる）。取れなかっただけ。
+    assert fake.calls[-1] == "2026-06-05"
+    assert result.ok is True
+    assert result.rows == 4
+
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, "daily_quotes")
+        assert meta is not None
+        # ★ today(06-05) には進まない。進めると翌晩 start=06-05 で 06-04 以前を取り逃す。
+        assert meta["last_fetched_date"] == "2026-06-04"
+
+
+def test_cursor_ahead_of_data_is_pulled_back(temp_db, _patch, monkeypatch) -> None:
+    """カーソルが実データより先へ飛んでいたら実データの翌日まで引き戻す（ADR-093 自己修復）。
+
+    ロックイン済みの実機状態（fetch_meta=today なのに daily_quotes は 05-26 止まり＝乖離が overlap
+    の 5 日より大きい）を再現する。overlap だけでは乖離に追いつけず穴が永久に残るため、
+    max(daily_quotes.date)+1 を start の上限にして穴の先頭から取り直す＝手で fetch_meta を巻き戻さ
+    なくても次のバッチで埋まること。
+    """
+    # 実データは 05-26(火) まで。カーソルだけ today(06-05) に張り付いている＝ロックイン後の状態。
+    repo.upsert_daily_quotes([_quote("72030", "2026-05-26")])
+    repo.upsert_fetch_meta("daily_quotes", "2026-06-05")
+
+    by_date = {
+        d: [_quote("72030", d)]
+        for d in (
+            "2026-05-27",
+            "2026-05-28",
+            "2026-05-29",
+            "2026-06-01",
+            "2026-06-02",
+            "2026-06-03",
+            "2026-06-04",
+        )
+        # 06-05(today) は未掲載＝空。
+    }
+    fake = _FakeAdapter(by_date)
+    monkeypatch.setattr(fetch_quotes, "build_jquants_adapter", lambda: fake)
+
+    result = fetch_quotes.run(full_backfill=False)
+
+    # ★ start は実データの翌日 05-27 まで引き戻る（overlap 由来の 05-31 だと 05-27〜05-29 が
+    #   永久に穴のまま残る）。
+    assert fake.calls[0] == "2026-05-27"
+    assert result.ok is True
+    assert result.rows == 7  # 05-27〜06-04 の平日 7 日ぶん＝穴が埋まる
+
+    with get_engine().connect() as conn:
+        assert repo.get_max_quote_date(conn) == "2026-06-04"
+        meta = repo.get_fetch_meta(conn, "daily_quotes")
+        assert meta is not None
+        assert meta["last_fetched_date"] == "2026-06-04"  # 当日は空なので据え置き
 
 
 def test_failure_returns_not_ok(temp_db, _patch, monkeypatch) -> None:
@@ -110,7 +197,7 @@ def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
     本番投入の実走（2026-06-04）で、Free の提供範囲外日が空レスでなく 400 を返し、毎晩の差分が
     失敗扱いになった回帰防止。前線の日は fetch_meta に進めない（翌晩 d から再試行できるように）。
     """
-    repo.upsert_fetch_meta("daily_quotes", "2026-06-01")  # start=2026-06-02(火)
+    repo.upsert_fetch_meta("daily_quotes", "2026-06-01")  # start=2026-05-27（overlap 5 日）
 
     cov_msg = "Your subscription covers the following dates: 2024-03-12 ~ 2026-06-03 ..."
 
@@ -131,8 +218,17 @@ def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
     result = fetch_quotes.run(full_backfill=False)
 
     assert result.ok is True  # 前線到達は失敗ではない
-    assert fake.calls == ["2026-06-02", "2026-06-03", "2026-06-04"]  # 04 で 400 → break
-    assert result.rows == 2  # 06-02・06-03 の 2 行のみ
+    # overlap 込みで 05-27 から叩き、06-04 で 400 → break。
+    assert fake.calls == [
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-06-01",
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-04",
+    ]
+    assert result.rows == 6  # 05-27〜06-03 の平日 6 日ぶん（各 1 行）
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "daily_quotes")
         assert meta is not None
@@ -160,10 +256,11 @@ def test_full_backfill_start_uses_backfill_years(temp_db, _patch, monkeypatch) -
 def test_stop_mid_dayloop_breaks(temp_db, _patch, monkeypatch) -> None:
     """営業日境界で should_stop を見て中断し、残り営業日を取得しない（ADR-036 追補）。
 
-    カーソルを 2026-06-02 に置き start=2026-06-03（水）にする。1 営業日処理中に停止要求 →
-    翌営業日（06-04 木）のループ先頭で break。取れた日まで fetch_meta 前進・detail に中断表示。
+    カーソルを 2026-06-02 に置き start=2026-05-28（木・overlap 5 日）にする。1 営業日処理中に
+    停止要求 → 翌営業日（05-29 金）のループ先頭で break。取れた日まで fetch_meta 前進・detail に
+    中断表示。
     """
-    repo.upsert_fetch_meta("daily_quotes", "2026-06-02")  # start=2026-06-03
+    repo.upsert_fetch_meta("daily_quotes", "2026-06-02")  # start=2026-05-28（overlap 5 日）
 
     class _StoppingAdapter(_FakeAdapter):
         def fetch_daily_quotes_by_date(self, d):  # type: ignore[override]
@@ -171,7 +268,7 @@ def test_stop_mid_dayloop_breaks(temp_db, _patch, monkeypatch) -> None:
             state.request_stop()  # 1 営業日処理中に停止要求が来た状況を模す
             return rows
 
-    fake = _StoppingAdapter({"2026-06-03": [_quote("7203", "2026-06-03")]})
+    fake = _StoppingAdapter({"2026-05-28": [_quote("7203", "2026-05-28")]})
     monkeypatch.setattr(fetch_quotes, "build_jquants_adapter", lambda: fake)
 
     state.begin(full_backfill=False)  # request_stop は running 中のみ受理されるため
@@ -180,10 +277,10 @@ def test_stop_mid_dayloop_breaks(temp_db, _patch, monkeypatch) -> None:
     finally:
         state.end()
 
-    assert fake.calls == ["2026-06-03"]  # 06-04 の営業日先頭で break
+    assert fake.calls == ["2026-05-28"]  # 05-29 の営業日先頭で break
     assert result.ok is True
     assert "停止により中断" in result.detail
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "daily_quotes")
     assert meta is not None
-    assert meta["last_fetched_date"] == "2026-06-03"  # 取れた日まで前進
+    assert meta["last_fetched_date"] == "2026-05-28"  # 取れた日まで前進

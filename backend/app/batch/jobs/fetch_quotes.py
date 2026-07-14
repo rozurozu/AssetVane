@@ -13,7 +13,7 @@ from datetime import date, timedelta
 
 from app.adapters.jquants import JQuantsCoverageError
 from app.batch import calendar, state
-from app.batch.jobs._cursor import backfill_start_date
+from app.batch.jobs._cursor import backfill_start_date, resolve_differential_start
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -26,36 +26,48 @@ _SOURCE = "daily_quotes"
 
 
 def _start_date(*, full_backfill: bool, today: str) -> str:
-    """取得開始日を決める（spec §3.3）。
+    """取得開始日を決める（spec §3.3・ADR-018/093）。
 
     full_backfill: today - BACKFILL_YEARS 年。
-    差分: fetch_meta['daily_quotes'].last_fetched_date の**翌**営業日（曜日関係なく翌日でよい・
-    土日は candidate_days が除外する）。fetch_meta 不在/NULL なら get_max_quote_date で自己修復し、
-    それも無ければ full 相当（today - BACKFILL_YEARS）。
+    差分: fetch_meta['daily_quotes'].last_fetched_date に鮮度プローブ（overlap）を重ねた地点
+    （`_cursor.resolve_differential_start`＝index/us_quotes/fx_rates/fund_navs と同じ規律に統一・
+    ADR-093）。取得済み日の再取得は UPSERT で冪等（ADR-002）。fetch_meta 不在/NULL なら
+    get_max_quote_date で自己修復し、それも無ければ full 相当（today - BACKFILL_YEARS）。
+
+    さらに **実データ（daily_quotes の max(date)）の翌日を start の上限**にする（ADR-093）。
+    カーソルが実データより先へ飛んだ状態（＝未掲載日でロックインした痕）は overlap の幅では
+    追いつけず穴が永久に残るため、実データの続きから取り直せるよう引き戻す。正常時は
+    max(date) == last_fetched なので overlap 側が必ず小さく、この上限は発動しない。
     """
+    backfill_start = backfill_start_date(today, settings.backfill_years)
     if full_backfill:
-        return backfill_start_date(today, settings.backfill_years)
+        return backfill_start
 
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, _SOURCE)
         last_fetched = meta.get("last_fetched_date") if meta else None
-        if last_fetched is None:
-            last_fetched = repo.get_max_quote_date(conn)
+        max_quote = repo.get_max_quote_date(conn)
 
     if last_fetched is None:
-        # 初回相当: full と同じく BACKFILL_YEARS 分を頭から。
-        return backfill_start_date(today, settings.backfill_years)
+        last_fetched = max_quote
 
-    # 取得済み最終日の翌日から（candidate_days が土日を除外する）。
-    return (date.fromisoformat(last_fetched) + timedelta(days=1)).isoformat()
+    # 初回相当（last_fetched が None）なら backfill_start をそのまま返す（_cursor が吸収）。
+    start = resolve_differential_start(last_fetched, backfill_start=backfill_start)
+
+    if max_quote is not None:
+        # 実データの翌日より先へは進めない（カーソル暴走からの自己修復・ADR-093）。
+        resume = (date.fromisoformat(max_quote) + timedelta(days=1)).isoformat()
+        start = min(start, resume)
+    return start
 
 
 def run(*, full_backfill: bool = False) -> JobResult:
     """営業日ループで日足を取得し daily_quotes / fetch_meta を前進させる（spec §3.3）。
 
-    各営業日 d で `fetch_daily_quotes_by_date(d)` → 空でなければ UPSERT。空配列の日（非営業日）
-    もスキップしつつ fetch_meta を前進させる（再開境界を進める）。例外（JQuantsError 等）は握って
-    JobResult(ok=False) で返す（runner が Discord 通知する）。
+    各営業日 d で `fetch_daily_quotes_by_date(d)` → 空でなければ UPSERT。空配列の日は「確定した
+    **過去日**なら非営業日（祝日・臨時休場）」とみなして fetch_meta を前進させ再開境界を進めるが、
+    **当日の空はまだ未掲載**なので前進させない（ADR-093＝ロックイン防止）。例外（JQuantsError 等）
+    は握って JobResult(ok=False) で返す（runner が Discord 通知する）。
     """
     today = date.today().isoformat()
     start = _start_date(full_backfill=full_backfill, today=today)
@@ -82,7 +94,16 @@ def run(*, full_backfill: bool = False) -> JobResult:
             rows = [r for r in rows if r.get("code") and r.get("date")]
             if rows:
                 total_rows += repo.upsert_daily_quotes(rows)
-            # 空配列（祝日・臨時休場）でも fetch_meta を前進させ再開境界を進める。
+            elif d >= today:
+                # ADR-093: **当日の空レスは「非営業日」ではなく「まだ未掲載」**。J-Quants はデータの
+                # 無い日（当日・未来日）を 400 でなく 200 + {"data": []} で返すため、空レスだけでは
+                # 祝日と区別が付かない。夜間バッチは 02:00 に走る＝当日の日足は必ず未掲載なので、
+                # ここで前進させると翌晩の start が today に張り付き、前日以前を永久に取り逃す
+                # （2026-07-02〜07-13 の日足欠損＝ロックイン）。当日は進めず翌晩に取り直す。
+                logger.info("fetch_quotes: %s は未掲載（当日）。カーソルを進めない（ADR-093）。", d)
+                continue
+            # 空配列でも**過去日**なら祝日・臨時休場と確定できるので fetch_meta を前進させ、
+            # 再開境界を進める（カレンダー API に依存しない＝calendar.py の設計）。
             repo.upsert_fetch_meta(_SOURCE, d)
             days += 1
     except Exception as exc:  # noqa: BLE001 — ジョブ境界（JQuantsError 含む）で握り runner に返す

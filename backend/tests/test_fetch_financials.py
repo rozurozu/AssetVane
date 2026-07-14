@@ -73,26 +73,59 @@ def _patch(monkeypatch):
 
 def test_universe_by_date_upserts_and_advances_meta(temp_db, _patch, monkeypatch) -> None:
     repo.upsert_stocks([_stock("72030"), _stock("67580"), _stock("99840")])
-    repo.upsert_fetch_meta("financials", "2026-06-01")  # start=2026-06-02(火)
+    # start は overlap 5 日を重ねて 05-27(水)（ADR-093・fetch_quotes と同じ鮮度プローブ）。
+    repo.upsert_fetch_meta("financials", "2026-06-01")
     by_date = {
         "2026-06-02": [_fin("72030", "2026-06-02"), _fin("67580", "2026-06-02")],
         "2026-06-04": [_fin("99840", "2026-06-04")],
-        # 06-03・06-05 は開示なし（空）
+        # 05-27〜06-01・06-03・06-05 は開示なし（空）
     }
     fake = _FakeAdapter(by_date)
     monkeypatch.setattr(fetch_financials, "build_jquants_adapter", lambda: fake)
 
     result = fetch_financials.run(full_backfill=False)
 
-    assert fake.calls == ["2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05"]
+    assert fake.calls == [
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-06-01",
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-04",
+        "2026-06-05",
+    ]
     assert result.ok is True
-    assert result.rows == 3  # 2 + 0 + 1 + 0
+    assert result.rows == 3  # 2 + 1（他は開示なし）
     with get_engine().connect() as conn:
         count = conn.execute(select(func.count()).select_from(financials_table)).scalar()
         meta = repo.get_fetch_meta(conn, "financials")
     assert count == 3
     assert meta is not None
-    assert meta["last_fetched_date"] == "2026-06-05"  # 空日も含め前進
+    # 空の**過去日**（開示なしと確定できる日）は前進する。ただし当日 06-05 は「開示なし」でなく
+    # 「まだ未掲載」なので進めない＝06-04 で据え置き（ADR-093）。
+    assert meta["last_fetched_date"] == "2026-06-04"
+
+
+def test_empty_today_does_not_advance_cursor(temp_db, _patch, monkeypatch) -> None:
+    """**当日**の空レスではカーソルを進めない（ADR-093・fetch_quotes と同型のロックイン防止）。
+
+    02:00 のバッチ時点で当日の開示は未掲載＝空。ここで前進させると翌晩 start が today に張り付き、
+    前日以前の開示を永久に取り逃す（日足で実際に起きた 2026-07-02〜07-13 の欠損と同じ構造）。
+    """
+    repo.upsert_stocks([_stock("72030")])
+    repo.upsert_fetch_meta("financials", "2026-06-04")  # start=05-30(土)→候補は 06-01 から
+    fake = _FakeAdapter({"2026-06-04": [_fin("72030", "2026-06-04")]})
+    monkeypatch.setattr(fetch_financials, "build_jquants_adapter", lambda: fake)
+
+    result = fetch_financials.run(full_backfill=False)
+
+    assert fake.calls[-1] == "2026-06-05"  # 当日も取りには行く（掲載されていれば取れる）
+    assert result.ok is True
+    with get_engine().connect() as conn:
+        meta = repo.get_fetch_meta(conn, "financials")
+    assert meta is not None
+    assert meta["last_fetched_date"] == "2026-06-04"  # ★ today(06-05) には進まない
 
 
 def test_idempotent(temp_db, _patch, monkeypatch) -> None:
@@ -110,7 +143,7 @@ def test_idempotent(temp_db, _patch, monkeypatch) -> None:
 
 def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
     repo.upsert_stocks([_stock("72030")])
-    repo.upsert_fetch_meta("financials", "2026-06-01")  # start=06-02
+    repo.upsert_fetch_meta("financials", "2026-06-01")  # start=05-27（overlap 5 日）
 
     class _CoverageAdapter:
         def __init__(self) -> None:
@@ -128,8 +161,17 @@ def test_coverage_frontier_stops_cleanly(temp_db, _patch, monkeypatch) -> None:
 
     result = fetch_financials.run(full_backfill=False)
     assert result.ok is True
-    assert fake.calls == ["2026-06-02", "2026-06-03", "2026-06-04"]
-    assert result.rows == 2
+    # overlap 込みで 05-27 から叩き、06-04 で 400 → break。
+    assert fake.calls == [
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-06-01",
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-04",
+    ]
+    assert result.rows == 6  # 05-27〜06-03 の平日 6 日ぶん（各 1 行）
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, "financials")
     assert meta is not None

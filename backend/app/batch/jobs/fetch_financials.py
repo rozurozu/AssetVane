@@ -12,11 +12,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from app.adapters.jquants import JQuantsCoverageError
 from app.batch import calendar, state
-from app.batch.jobs._cursor import backfill_start_date
+from app.batch.jobs._cursor import backfill_start_date, resolve_differential_start
 from app.batch.runner import JobResult
 from app.config import settings
 from app.db import repo
@@ -29,14 +29,20 @@ _SOURCE = "financials"
 
 
 def _start_date(*, full_backfill: bool, today: str) -> str:
-    """取得開始日を決める（fetch_quotes._start_date と同型・ADR-031）。
+    """取得開始日を決める（fetch_quotes._start_date と同型・ADR-031/093）。
 
     full_backfill: today - BACKFILL_YEARS 年。
-    差分: fetch_meta['financials'].last_fetched_date の翌日。不在なら max(disclosed_date) で
-    自己修復し、それも無ければ full 相当（today - BACKFILL_YEARS）。
+    差分: fetch_meta['financials'].last_fetched_date に鮮度プローブ（overlap）を重ねた地点
+    （`_cursor.resolve_differential_start`・ADR-093）。不在なら max(disclosed_date) で自己修復し、
+    それも無ければ full 相当（today - BACKFILL_YEARS）。
+
+    fetch_quotes と違い「実データの翌日」を start の上限には**しない**。日足は毎営業日必ず行が
+    入る（max(date) ＝処理済み最終営業日の真実）が、財務は**開示ゼロの営業日**が普通にあり、
+    max(disclosed_date) は「処理済み最終日」を意味しないため上限に使えない（ADR-093）。
     """
+    backfill_start = backfill_start_date(today, settings.backfill_years)
     if full_backfill:
-        return backfill_start_date(today, settings.backfill_years)
+        return backfill_start
 
     with get_engine().connect() as conn:
         meta = repo.get_fetch_meta(conn, _SOURCE)
@@ -44,18 +50,16 @@ def _start_date(*, full_backfill: bool, today: str) -> str:
         if last_fetched is None:
             last_fetched = repo.get_max_financial_disclosed_date(conn)
 
-    if last_fetched is None:
-        return backfill_start_date(today, settings.backfill_years)
-
-    return (date.fromisoformat(last_fetched) + timedelta(days=1)).isoformat()
+    return resolve_differential_start(last_fetched, backfill_start=backfill_start)
 
 
 def run(*, full_backfill: bool = False) -> JobResult:
     """営業日ループで全銘柄の財務を取得し financials / fetch_meta を前進させる（ADR-031）。
 
-    各営業日 d で `fetch_financials(date=d)` → 開示があれば UPSERT。開示の無い日も fetch_meta を
-    前進させ再開境界を進める。契約範囲外（coverage）は前線到達として正常終了。例外は握って
-    JobResult(ok=False) で返す（runner が Discord 通知する・ADR-018）。
+    各営業日 d で `fetch_financials(date=d)` → 開示があれば UPSERT。開示の無い**過去日**は
+    fetch_meta を前進させ再開境界を進めるが、**当日の空はまだ未掲載**なので前進させない
+    （ADR-093＝fetch_quotes と同型のロックイン防止）。契約範囲外（coverage）は前線到達として
+    正常終了。例外は握って JobResult(ok=False) で返す（runner が Discord 通知する・ADR-018）。
     """
     today = date.today().isoformat()
     start = _start_date(full_backfill=full_backfill, today=today)
@@ -91,6 +95,16 @@ def run(*, full_backfill: bool = False) -> JobResult:
             ]
             if rows:
                 total_rows += repo.upsert_financials(rows)
+            elif d >= today:
+                # ADR-093: 当日の空レスは「開示なし」ではなく「まだ未掲載」（J-Quants はデータの
+                # 無い日を 400 でなく 200 + {"data": []} で返す）。02:00 のバッチ時点で当日の開示は
+                # 未掲載なので、ここで前進させると翌晩 start が today に張り付き、前日以前の開示を
+                # 永久に取り逃す（fetch_quotes と同じロックイン）。当日は進めず翌晩に取り直す。
+                logger.info(
+                    "fetch_financials: %s は未掲載（当日）。カーソルを進めない（ADR-093）。", d
+                )
+                continue
+            # 空配列でも**過去日**なら「その日は開示なし」と確定できるので fetch_meta を前進させる。
             repo.upsert_fetch_meta(_SOURCE, d)
             days += 1
     except Exception as exc:  # noqa: BLE001 — ジョブ境界（JQuantsError 含む）で握り runner に返す
